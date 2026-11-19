@@ -1,0 +1,966 @@
+{
+  "about": "D66 live eval recording (research-eval.ts --record), Hanover tourism_seasonal thread, web fetch off, Google names not allowed. Encrypted fields and signatures stripped; the location's name redacted. Public pages only.",
+  "thread": "tourism_seasonal",
+  "fetch": false,
+  "placesToAi": false,
+  "now": "2026-11-19T21:49:49.068Z",
+  "today": "2026-11-19",
+  "window": {
+    "from": "2026-11-19",
+    "to": "2027-05-18"
+  },
+  "reservedMicroUsd": 5542838,
+  "responses": [
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2T1pZhux9A3zh3FzT8",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01K8Sq4SPqZ816Qy3zzfssjM",
+          "name": "web_search",
+          "input": {
+            "query": "Dartmouth College 2026-27 academic calendar winter term commencement 2027"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01K8Sq4SPqZ816Qy3zzfssjM",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "2026-27 Term Calendar",
+              "url": "https://www.dartmouth.edu/reg/calendar/term/26_27_term_calendars.html",
+              "page_age": "336 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026-2027 Key Dates Academic Calendar",
+              "url": "https://www.dartmouth.edu/reg/calendar/academic/26_27.html",
+              "page_age": "710 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Winter Term 2027",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/winter-term-2027",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Academic Calendars",
+              "url": "http://www.dartmouth.edu/reg/calendar/academic/index.html",
+              "page_age": "346 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth College 5-Year Calendar Description 2024-2025 2025-2026 ...",
+              "url": "http://www.dartmouth.edu/reg/calendar/5_year_calendar.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Academic & Institutional Calendars",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Commencement",
+              "url": "https://home.dartmouth.edu/events/commencement",
+              "page_age": "1257 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Term Calendars",
+              "url": "https://www.dartmouth.edu/reg/calendar/term/",
+              "page_age": "346 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Calendars",
+              "url": "http://www.dartmouth.edu/reg/calendar/",
+              "page_age": "260 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01YDgSUjWe5SJgrTCARWHiqA",
+          "name": "web_search",
+          "input": {
+            "query": "Dartmouth Winter Carnival 2027 dates"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01PHvd1sEgmnfrc2oCrHwDQY",
+          "name": "web_search",
+          "input": {
+            "query": "Dartmouth spring term 2027 classes begin March"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01YDgSUjWe5SJgrTCARWHiqA",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "page_age": "34 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_05292026.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Winter Carnival",
+              "url": "https://students.dartmouth.edu/collis/events/winter-carnival",
+              "page_age": "317 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Winter Carnival",
+              "url": "https://home.dartmouth.edu/about/winter-carnival",
+              "page_age": "1744 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Winter Carnival - Schedule of Events",
+              "url": "https://sites.google.com/dartmouth.edu/winter-carnival-2026/schedule-of-events",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Ice Festival",
+              "url": "https://www.downtowndartmouth.ca/icefestival",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Winter Carnival to Light Up the Night With Frost Lights",
+              "url": "https://home.dartmouth.edu/news/2026/01/winter-carnival-light-night-frost-lights",
+              "page_age": "295 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Quebec Winter Carnival",
+              "url": "https://en.wikipedia.org/wiki/Quebec_Winter_Carnival",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Tradition: Winter Carnival",
+              "url": "https://admissions.dartmouth.edu/follow/blog/paulina-cuadra/dartmouth-tradition-winter-carnival",
+              "page_age": "1373 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01PHvd1sEgmnfrc2oCrHwDQY",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Academic Calendar",
+              "url": "https://graduate.dartmouth.edu/academics/academic-calendar",
+              "page_age": "120 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Spring Term 2027",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/spring-term-2027",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026-2027 Key Dates",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "2027-28 Term Calendar",
+              "url": "http://www.dartmouth.edu/reg/calendar/term/27_28_term_calendars.html",
+              "page_age": "335 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Engineering Academic Calendar",
+              "url": "https://engineering.dartmouth.edu/community/calendar",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "2027-2028 Key Dates Academic Calendar",
+              "url": "http://www.dartmouth.edu/reg/calendar/academic/27_28.html",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026-27 Term Calendar",
+              "url": "https://www.dartmouth.edu/reg/calendar/term/26_27_term_calendars.html",
+              "page_age": "336 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "page_age": "34 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_01232026.pdf",
+              "page_age": "300 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026-2027 Key Dates Academic Calendar",
+              "url": "https://www.dartmouth.edu/reg/calendar/academic/26_27.html",
+              "page_age": "710 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01B7JJ4aHmA5U8q7xJ1gAYp3",
+          "name": "web_search",
+          "input": {
+            "query": "Dartmouth Skiway 2026-27 season opening date"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01B7JJ4aHmA5U8q7xJ1gAYp3",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Northeast Ski Resort Projected Opening Dates 2026/2027",
+              "url": "https://www.onthesnow.com/northeast/projected-openings",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "New England Ski Resort Projected Opening Dates 2026/2027",
+              "url": "https://www.onthesnow.com/new-england/projected-openings",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "New Hampshire Ski Resort Projected Opening Dates 2026/2027",
+              "url": "https://www.onthesnow.com/new-hampshire/projected-openings",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Skiway Lift Ticket Prices and Rates",
+              "url": "https://www.onthesnow.com/new-hampshire/dartmouth-skiway/lift-tickets",
+              "page_age": "395 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Open Ski Resorts in New Hampshire 2026-27",
+              "url": "https://www.onthesnow.com/new-hampshire/open-resorts",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Open Ski Resorts in New England 2026-27",
+              "url": "https://www.onthesnow.com/new-england/open-resorts",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Skiway Ski Resort Area Overview - OnTheSnow",
+              "url": "https://www.onthesnow.com/new-hampshire/dartmouth-skiway/ski-resort",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Skiway Snow Report",
+              "url": "https://www.onthesnow.com/new-hampshire/dartmouth-skiway/skireport",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Skiway Ski Resort",
+              "url": "https://www.skicentral.com/dartmouthskiway.html",
+              "page_age": "2555 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "text",
+          "text": "I found eight dated happenings for Hanover between Nov 19, 2026 and May 18, 2027. The biggest swings come from Dartmouth's calendar. There are two long breaks with few students in town: about Nov 26, 2026 to Jan 4, 2027, and about Mar 17 to Mar 27, 2027. Winter Carnival in February will likely bring the most visitors. Commencement (June 13, 2027) and Reunions (June 11–20, 2027) fall after the window, so I left them out. I found no cancellations or postponements. I couldn't find cited dates for Thanksgiving weekend, Presidents' Day, Memorial Day or any tour-bus arrivals, so those aren't listed.\n\nEVENT: Dartmouth fall term final exams and the start of the winter break. Fall classes ended Nov 17, 2026, and per the registrar "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| November 10, 2026 |\n| Winter term course change period | November 13-17, 2026 |\n| Fall term classes end | November 17, 2026 |\n| Final day, prior to ...",
+              "url": "https://www.dartmouth.edu/reg/calendar/term/26_27_term_calendars.html",
+              "title": "2026-27 Term Calendar"
+            }
+          ],
+          "type": "text",
+          "text": "final examinations begin November 20, 2026"
+        },
+        {
+          "type": "text",
+          "text": ", are "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| November 10, 2026 |\n| Winter term course change period | November 13-17, 2026 |\n| Fall term classes end | November 17, 2026 |\n| Final day, prior to ...",
+              "url": "https://www.dartmouth.edu/reg/calendar/term/26_27_term_calendars.html",
+              "title": "2026-27 Term Calendar"
+            }
+          ],
+          "type": "text",
+          "text": "suspended November 21, 2026"
+        },
+        {
+          "type": "text",
+          "text": ", and "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| November 10, 2026 |\n| Winter term course change period | November 13-17, 2026 |\n| Fall term classes end | November 17, 2026 |\n| Final day, prior to ...",
+              "url": "https://www.dartmouth.edu/reg/calendar/term/26_27_term_calendars.html",
+              "title": "2026-27 Term Calendar"
+            }
+          ],
+          "type": "text",
+          "text": "end November 25, 2026"
+        },
+        {
+          "type": "text",
+          "text": ". Place: Dartmouth College campus. Host: Dartmouth Registrar. Repeats every term. After Nov 25, 2026 most students leave until January, so student foot traffic should drop sharply.\n\nEVENT: Dartmouth Christmas Tree Lighting. Dartmouth's five-year calendar lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Winter Carnival\n\n**December-2026**\n\n| Friday, December 4, 2026 |  | Christmas Tree Lighting (tentative) |\n| --- | --- | --- |\n**January-2027**\n\nTuesda...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ..."
+            }
+          ],
+          "type": "text",
+          "text": "Friday, December 4, 2026 — Christmas Tree Lighting (tentative)"
+        },
+        {
+          "type": "text",
+          "text": ". The time isn't listed. Place: the Dartmouth campus (the Green is typical, but I couldn't confirm it). Host: Dartmouth College. Held yearly. This evening crowd is a likely boost for downtown restaurants.\n\nEVENT: Dartmouth Skiway ski season (projected). OnTheSnow gives a "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Plan Your Trip: **Projected opening date Dec 18, 2026** · Projected closing date Mar 14, 2027 · Projected Days Open 105 · Days Open Last Year 104 · Ye...",
+              "url": "https://www.onthesnow.com/new-hampshire/dartmouth-skiway/ski-resort",
+              "title": "Dartmouth Skiway Ski Resort Area Overview - OnTheSnow"
+            }
+          ],
+          "type": "text",
+          "text": "projected opening date Dec 18, 2026 · Projected closing date Mar 14, 2027"
+        },
+        {
+          "type": "text",
+          "text": ". These are projections that depend on snow, not dates from the Skiway itself. Place: Lyme Center, NH, near Hanover. Host: Dartmouth Skiway. Seasonal, every year. Expect some ski traffic, mostly on weekends and holidays.\n\nEVENT: Dartmouth winter term begins. The registrar lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Winter Term Event: Winter term classes begin; Date: January 5, 2027\n\n# Winter Term 2027\n| Winter Term Event | Date |\n\n| Winter term on-line check-in |...",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/winter-term-2027",
+              "title": "Winter Term 2027"
+            }
+          ],
+          "type": "text",
+          "text": "Winter term online check-in January 4-7, 2027"
+        },
+        {
+          "type": "text",
+          "text": " and "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Winter Term Event: Winter term classes begin; Date: January 5, 2027\n\n# Winter Term 2027\n| Winter Term Event | Date |\n\n| Winter term on-line check-in |...",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/winter-term-2027",
+              "title": "Winter Term 2027"
+            }
+          ],
+          "type": "text",
+          "text": "Winter term classes begin January 5, 2027"
+        },
+        {
+          "type": "text",
+          "text": ". Place: Dartmouth College. Host: Dartmouth Registrar. Repeats every year. Students come back and weekday traffic recovers.\n\nEVENT: Martin Luther King Jr. Day holiday weekend. Dartmouth's calendar marks "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Monday, January 18, 2027 MLK Jr. Day – Classes move to X-hours\n\n**January-2027**\n\nTuesday, January 5, 2027 Winter Term Classes Begin (tentative)\n\nMond...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_05292026.pdf",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ..."
+            }
+          ],
+          "type": "text",
+          "text": "Monday, January 18, 2027 MLK Jr. Day – Classes move to X-hours"
+        },
+        {
+          "type": "text",
+          "text": ". Place: Dartmouth/Hanover. Host: Dartmouth College. A yearly federal holiday weekend, so expect some leisure and ski travel.\n\nEVENT: Dartmouth Winter Carnival. The five-year calendar (dates subject to change) lists Winter Carnival from "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Winter Carnival\n\n**December-2026**\n\n| Friday, December 4, 2026 |  | Christmas Tree Lighting (tentative) |\n| --- | --- | --- |\n**January-2027**\n\nTuesda...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ..."
+            }
+          ],
+          "type": "text",
+          "text": "Thursday, February 4, 2027 – Sunday, February 7, 2027"
+        },
+        {
+          "type": "text",
+          "text": ". The Thayer Board of Advisors also meets "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Winter Carnival\n\n**December-2026**\n\n| Friday, December 4, 2026 |  | Christmas Tree Lighting (tentative) |\n| --- | --- | --- |\n**January-2027**\n\nTuesda...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ..."
+            }
+          ],
+          "type": "text",
+          "text": "Thursday, February 4, 2027 – Saturday, February 6, 2027"
+        },
+        {
+          "type": "text",
+          "text": ". Place: across the Dartmouth campus. Host: Dartmouth College. Held every year since 1911. National Geographic once called it "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "What Dartmouth event inspired a Hollywood movie, triggered an 8-mile traffic jam on the roads leading into Hanover in 1952, and was called “the Mardi ...",
+              "url": "https://home.dartmouth.edu/about/winter-carnival",
+              "title": "Dartmouth Winter Carnival"
+            }
+          ],
+          "type": "text",
+          "text": "\"the Mardi Gras of the North\""
+        },
+        {
+          "type": "text",
+          "text": ". It draws alumni, visitors and heavy weekend crowds.\n\nEVENT: Dartmouth winter term ends, exams, and spring break. Per the registrar, "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| March 2, 2027 |\n| Winter term classes end | March 9, 2027 |\n| Final day, prior to the start of spring term classes, for making changes in spring ter...",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/winter-term-2027",
+              "title": "Winter Term 2027"
+            }
+          ],
+          "type": "text",
+          "text": "Winter term classes end March 9, 2027"
+        },
+        {
+          "type": "text",
+          "text": ", then a "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| March 2, 2027 |\n| Winter term classes end | March 9, 2027 |\n| Final day, prior to the start of spring term classes, for making changes in spring ter...",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/winter-term-2027",
+              "title": "Winter Term 2027"
+            }
+          ],
+          "type": "text",
+          "text": "Pre-Examination break March 10-11, 2027"
+        },
+        {
+          "type": "text",
+          "text": ", "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| March 2, 2027 |\n| Winter term classes end | March 9, 2027 |\n| Final day, prior to the start of spring term classes, for making changes in spring ter...",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/winter-term-2027",
+              "title": "Winter Term 2027"
+            }
+          ],
+          "type": "text",
+          "text": "final examinations begin March 12, 2027"
+        },
+        {
+          "type": "text",
+          "text": ", and "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| March 2, 2027 |\n| Winter term classes end | March 9, 2027 |\n| Final day, prior to the start of spring term classes, for making changes in spring ter...",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/winter-term-2027",
+              "title": "Winter Term 2027"
+            }
+          ],
+          "type": "text",
+          "text": "final examinations end March 16, 2027"
+        },
+        {
+          "type": "text",
+          "text": ". Place: Dartmouth College. Host: Dartmouth Registrar. Repeats every year. Student numbers drop from about Mar 17 until spring term starts.\n\nEVENT: Dartmouth spring term begins. The registrar lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Spring Term Event: Spring term classes begin; Date: March 29, 2027\n\n# Spring Term 2027\n| Spring Term Event | Date |\n| --- | --- |\n| Spring term on-lin...",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/spring-term-2027",
+              "title": "Spring Term 2027"
+            }
+          ],
+          "type": "text",
+          "text": "Spring term on-line check-in March 28-31, 2027"
+        },
+        {
+          "type": "text",
+          "text": " and "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Spring Term Event: Spring term classes begin; Date: March 29, 2027\n\n# Spring Term 2027\n| Spring Term Event | Date |\n| --- | --- |\n| Spring term on-lin...",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/spring-term-2027",
+              "title": "Spring Term 2027"
+            }
+          ],
+          "type": "text",
+          "text": "Spring term classes begin March 29, 2027"
+        },
+        {
+          "type": "text",
+          "text": ". Classes run until "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Spring 2027: **March 29, 2027 -- Spring term classes begin** · May 31, 2027 -- Memorial Day, College Holiday (no classes held) · June 2, 2027 -- Sprin...",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates",
+              "title": "2026-2027 Key Dates"
+            }
+          ],
+          "type": "text",
+          "text": "June 2, 2027"
+        },
+        {
+          "type": "text",
+          "text": ". Place: Dartmouth College. Host: Dartmouth Registrar. Repeats every year. Students are back for the rest of the window."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 229,
+        "cache_creation_input_tokens": 19071,
+        "cache_read_input_tokens": 31371,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 2048,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "server_tool_use": {
+          "web_search_requests": 4,
+          "web_fetch_requests": 0
+        },
+        "iterations": [
+          {
+            "input_tokens": 223,
+            "output_tokens": 73,
+            "cache_read_input_tokens": 3025,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 126,
+            "cache_read_input_tokens": 3025,
+            "cache_creation_input_tokens": 4582,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 4582,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 66,
+            "cache_read_input_tokens": 7607,
+            "cache_creation_input_tokens": 10107,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 10107,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 1783,
+            "cache_read_input_tokens": 17714,
+            "cache_creation_input_tokens": 4382,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 4382,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 68
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    },
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2UoHowizH9nMW3mm6X",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"events\":[{\"title\":\"Dartmouth Fall Term Final Examinations\",\"kind\":\"event\",\"category\":\"school\",\"startDate\":\"2026-11-20\",\"endDate\":\"2026-11-25\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"campus\",\"hostRef\":\"reg\",\"competitor\":null,\"sourceIds\":[\"S1\"],\"dateQuote\":\"Fall term classes end | November 17, 2026\",\"confidence\":\"medium\"},{\"title\":\"Dartmouth Christmas Tree Lighting\",\"kind\":\"event\",\"category\":\"community\",\"startDate\":\"2026-12-04\",\"endDate\":\"2026-12-04\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"campus\",\"hostRef\":\"dc\",\"competitor\":null,\"sourceIds\":[\"S7\"],\"dateQuote\":\"Friday, December 4, 2026 | | Christmas Tree Lighting (tentative)\",\"confidence\":\"high\"},{\"title\":\"Dartmouth Skiway Ski Season (projected)\",\"kind\":\"season\",\"category\":\"sports\",\"startDate\":\"2026-12-18\",\"endDate\":\"2027-03-14\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"skiway\",\"hostRef\":\"skiway\",\"competitor\":null,\"sourceIds\":[\"S27\"],\"dateQuote\":\"Projected opening date Dec 18, 2026** · Projected closing date Mar 14, 2027\",\"confidence\":\"low\"},{\"title\":\"Dartmouth Winter Term Classes Begin\",\"kind\":\"event\",\"category\":\"school\",\"startDate\":\"2027-01-05\",\"endDate\":\"2027-01-05\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"campus\",\"hostRef\":\"reg\",\"competitor\":null,\"sourceIds\":[\"S3\"],\"dateQuote\":\"Winter term classes begin; Date: January 5, 2027\",\"confidence\":\"high\"},{\"title\":\"MLK Jr. Day\",\"kind\":\"event\",\"category\":\"civic\",\"startDate\":\"2027-01-18\",\"endDate\":\"2027-01-18\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"campus\",\"hostRef\":\"dc\",\"competitor\":null,\"sourceIds\":[\"S8\"],\"dateQuote\":\"Monday, January 18, 2027 MLK Jr. Day – Classes move to X-hours\",\"confidence\":\"high\"},{\"title\":\"Dartmouth Winter Term Classes End\",\"kind\":\"event\",\"category\":\"school\",\"startDate\":\"2027-03-09\",\"endDate\":\"2027-03-09\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"campus\",\"hostRef\":\"reg\",\"competitor\":null,\"sourceIds\":[\"S3\"],\"dateQuote\":\"Winter term classes end | March 9, 2027\",\"confidence\":\"high\"},{\"title\":\"Dartmouth Spring Term Classes Begin\",\"kind\":\"event\",\"category\":\"school\",\"startDate\":\"2027-03-29\",\"endDate\":\"2027-03-29\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"campus\",\"hostRef\":\"reg\",\"competitor\":null,\"sourceIds\":[\"S17\",\"S18\"],\"dateQuote\":\"Spring term classes begin; Date: March 29, 2027\",\"confidence\":\"high\"}],\"entities\":[{\"ref\":\"campus\",\"type\":\"venue\",\"name\":\"Dartmouth College campus\",\"sourceIds\":[\"S1\"]},{\"ref\":\"reg\",\"type\":\"organization\",\"name\":\"Dartmouth Registrar\",\"sourceIds\":[\"S3\"]},{\"ref\":\"dc\",\"type\":\"school\",\"name\":\"Dartmouth College\",\"sourceIds\":[\"S7\"]},{\"ref\":\"skiway\",\"type\":\"venue\",\"name\":\"Dartmouth Skiway\",\"sourceIds\":[\"S27\"]}]}"
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 6057,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 1274,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "iterations": [
+          {
+            "input_tokens": 6057,
+            "output_tokens": 1274,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    }
+  ],
+  "expected": {
+    "kind": "recorded",
+    "costMicroUsd": 233214,
+    "searches": 4,
+    "fetches": 0,
+    "continuations": 0,
+    "sources": 29,
+    "verified": {
+      "events": [
+        {
+          "title": "Dartmouth Fall Term Final Examinations",
+          "kind": "event",
+          "category": "school",
+          "start": "2026-11-20",
+          "end": "2026-11-25",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "campus",
+          "hostRef": "reg",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "2026-27 Term Calendar",
+              "url": "https://www.dartmouth.edu/reg/calendar/term/26_27_term_calendars.html"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        },
+        {
+          "title": "Dartmouth Christmas Tree Lighting",
+          "kind": "event",
+          "category": "community",
+          "start": "2026-12-04",
+          "end": "2026-12-04",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "campus",
+          "hostRef": "dc",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Dartmouth Skiway Ski Season (projected)",
+          "kind": "season",
+          "category": "sports",
+          "start": "2026-12-18",
+          "end": "2027-03-14",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "skiway",
+          "hostRef": "skiway",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Dartmouth Skiway Ski Resort Area Overview - OnTheSnow",
+              "url": "https://www.onthesnow.com/new-hampshire/dartmouth-skiway/ski-resort"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "low"
+        },
+        {
+          "title": "Dartmouth Winter Term Classes Begin",
+          "kind": "event",
+          "category": "school",
+          "start": "2027-01-05",
+          "end": "2027-01-05",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "campus",
+          "hostRef": "reg",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Winter Term 2027",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/winter-term-2027"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "MLK Jr. Day",
+          "kind": "event",
+          "category": "civic",
+          "start": "2027-01-18",
+          "end": "2027-01-18",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "campus",
+          "hostRef": "dc",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_05292026.pdf"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Dartmouth Winter Term Classes End",
+          "kind": "event",
+          "category": "school",
+          "start": "2027-03-09",
+          "end": "2027-03-09",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "campus",
+          "hostRef": "reg",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Winter Term 2027",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/winter-term-2027"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Dartmouth Spring Term Classes Begin",
+          "kind": "event",
+          "category": "school",
+          "start": "2027-03-29",
+          "end": "2027-03-29",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "campus",
+          "hostRef": "reg",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Spring Term 2027",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/spring-term-2027"
+            },
+            {
+              "label": "2026-2027 Key Dates",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        }
+      ],
+      "entities": [
+        {
+          "ref": "campus",
+          "type": "venue",
+          "name": "Dartmouth College campus",
+          "sources": [
+            {
+              "label": "2026-27 Term Calendar",
+              "url": "https://www.dartmouth.edu/reg/calendar/term/26_27_term_calendars.html"
+            }
+          ]
+        },
+        {
+          "ref": "reg",
+          "type": "organization",
+          "name": "Dartmouth Registrar",
+          "sources": [
+            {
+              "label": "Winter Term 2027",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/winter-term-2027"
+            }
+          ]
+        },
+        {
+          "ref": "dc",
+          "type": "school",
+          "name": "Dartmouth College",
+          "sources": [
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf"
+            }
+          ]
+        },
+        {
+          "ref": "skiway",
+          "type": "venue",
+          "name": "Dartmouth Skiway",
+          "sources": [
+            {
+              "label": "Dartmouth Skiway Ski Resort Area Overview - OnTheSnow",
+              "url": "https://www.onthesnow.com/new-hampshire/dartmouth-skiway/ski-resort"
+            }
+          ]
+        }
+      ],
+      "drops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "no_source": 0,
+        "unknown_source": 0,
+        "bad_dates": 0,
+        "bad_title": 0,
+        "bad_competitor": 0
+      },
+      "entityDrops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "bad_ref": 0,
+        "bad_name": 0,
+        "no_source": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,813 @@
+{
+  "about": "D66 live eval recording (research-eval.ts --record), Hanover schools thread, web fetch off, Google names not allowed. Encrypted fields and signatures stripped; the location's name redacted. Public pages only.",
+  "thread": "schools",
+  "fetch": false,
+  "placesToAi": false,
+  "now": "2026-11-19T21:49:49.068Z",
+  "today": "2026-11-19",
+  "window": {
+    "from": "2026-11-19",
+    "to": "2027-05-18"
+  },
+  "reservedMicroUsd": 5544625,
+  "responses": [
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2QA8YBTxGHYS8XigZt",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01Ryjnq5wNyLwG2AhZd9sLKH",
+          "name": "web_search",
+          "input": {
+            "query": "Dartmouth academic calendar 2026-27 winter term spring term dates"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01Ryjnq5wNyLwG2AhZd9sLKH",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "2026-27 Term Calendar",
+              "url": "https://www.dartmouth.edu/reg/calendar/term/26_27_term_calendars.html",
+              "page_age": "336 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Winter Term 2026",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/past-years/2025-2026/winter-term-2026",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth College 5-Year Calendar Description 2024-2025 2025-2026 ...",
+              "url": "http://www.dartmouth.edu/reg/calendar/5_year_calendar.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Academic Calendar",
+              "url": "https://graduate.dartmouth.edu/academics/academic-calendar",
+              "page_age": "120 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "2025-2026 Key Dates",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/past-years/2025-2026-key-dates",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Engineering Academic Calendar",
+              "url": "https://engineering.dartmouth.edu/community/calendar",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026-2027 Key Dates",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Final Grade and Transcript Schedule",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027/final-grade-and-transcript-schedule",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Academic Year Calendar 2026-2027",
+              "url": "https://www.du.edu/sites/default/files/2025-10/2026calendar.pdf",
+              "page_age": "408 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01An9QjTH6sHdnb1vtmobvTq",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH Dresden school district calendar 2026-2027 vacation"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_019f3rN8vkE5D2sZydhQ1DZn",
+          "name": "web_search",
+          "input": {
+            "query": "Dartmouth Winter Carnival 2027 dates"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01An9QjTH6sHdnb1vtmobvTq",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Calendar - Hanover High School",
+              "url": "https://hhs.sau70.org/ourschool/calendar",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "School Calendar - SAU 70",
+              "url": "https://www.sau70.org/our-districts/school-calendar",
+              "page_age": "1269 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Calendars and Events",
+              "url": "https://www.hanoverschools.org/district/calendars-and-events",
+              "page_age": "1338 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Calendar - Frances C. Richmond Middle School",
+              "url": "https://rms.sau70.org/our-school/calendar",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "​Draft 1.0​ ​2026-2027 Hanover Public Schools Calendar​ ...",
+              "url": "https://www.hanoverschools.org/sites/g/files/vyhlif3221/f/uploads/appendix_a_-_2026_-_2027_school_district_calendar_draft_1.0.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Draft 2.1 ~ Updated 7/8/26​ 2026-2027 Hanover Public Schools ...",
+              "url": "https://www.hanoverschools.org/sites/g/files/vyhlif3221/f/uploads/hps_2026-2027_calendar_7-13-26.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "​Draft 2.1 ~ Updated 3/25/26​ ​2026-2027 Hanover Public​...",
+              "url": "https://www.hanoverschools.org/sites/g/files/vyhlif3221/f/uploads/draft_2026-2027_hps_calendar_draft_2.1_3-25-26.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "New Hanover County Schools Calendar 2026-2027",
+              "url": "https://northcarolinaschools.us/districts/new-hanover-county-schools/calendar/",
+              "page_age": "148 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "School Year Information",
+              "url": "https://www.hanoverschools.org/district/school-year-information",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "District Calendars - Hanover Township Public Schools",
+              "url": "https://www.hanovertwpschools.com/our-district/district-calendar",
+              "page_age": null
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_019f3rN8vkE5D2sZydhQ1DZn",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "page_age": "34 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_05292026.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Winter Carnival",
+              "url": "https://students.dartmouth.edu/collis/events/winter-carnival",
+              "page_age": "317 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Winter Carnival",
+              "url": "https://home.dartmouth.edu/about/winter-carnival",
+              "page_age": "1744 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Winter Carnival - Schedule of Events",
+              "url": "https://sites.google.com/dartmouth.edu/winter-carnival-2026/schedule-of-events",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Ice Festival",
+              "url": "https://www.downtowndartmouth.ca/icefestival",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Winter Carnival to Light Up the Night With Frost Lights",
+              "url": "https://home.dartmouth.edu/news/2026/01/winter-carnival-light-night-frost-lights",
+              "page_age": "295 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Quebec Winter Carnival",
+              "url": "https://en.wikipedia.org/wiki/Quebec_Winter_Carnival",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Tradition: Winter Carnival",
+              "url": "https://admissions.dartmouth.edu/follow/blog/paulina-cuadra/dartmouth-tradition-winter-carnival",
+              "page_age": "1373 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_0145nxPthngf7UM9uTrSNJV5",
+          "name": "web_search",
+          "input": {
+            "query": "Dartmouth Dimensions admitted students April 2027"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01FD1Akq76eLfFfCGNRLabn3",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover High School SAU 70 2026-27 February vacation April vacation 2027"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_0145nxPthngf7UM9uTrSNJV5",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth hosts first in-person Dimensions in four years - Issuu",
+              "url": "https://issuu.com/thednewspaper/docs/thedart_20230414_a1_daa4caf1c96e46/s/23021720",
+              "page_age": "1308 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Class of 2027 Selected From Record Application Pool",
+              "url": "https://rockefeller.dartmouth.edu/news/2023/03/class-2027-selected-record-application-pool",
+              "page_age": "1359 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Class of 2027 Selected From Record Application Pool",
+              "url": "https://home.dartmouth.edu/news/2023/03/class-2027-selected-record-application-pool",
+              "page_age": "1329 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dimensions of Dartmouth",
+              "url": "https://admissions.dartmouth.edu/apply/admitted-students/dimensions-dartmouth",
+              "page_age": "238 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "So You Got Into Dartmouth, Now What? Dimensions 101",
+              "url": "https://admissions.dartmouth.edu/follow/blog/crystal-wang/so-you-got-dartmouth-now-what-dimensions-101",
+              "page_age": "554 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "A Deep Dive into Dimensions - The Dartmouth",
+              "url": "https://www.thedartmouth.com/article/2024/04/a-deep-dive-into-dimensions",
+              "page_age": "939 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Experience",
+              "url": "https://admissions.dartmouth.edu/apply/admitted-students/experience",
+              "page_age": "238 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Admitted Students",
+              "url": "https://admissions.dartmouth.edu/apply/admitted-students",
+              "page_age": "238 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Video Gallery",
+              "url": "https://admissions.dartmouth.edu/videos?dlbn=14201",
+              "page_age": "1571 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Applications Rise 2% in Second-Largest Pool in College History ...",
+              "url": "https://home.dartmouth.edu/news/2026/03/applications-rise-2-second-largest-pool-college-history",
+              "page_age": "234 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01FD1Akq76eLfFfCGNRLabn3",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "School Calendar - SAU 70",
+              "url": "https://www.sau70.org/our-districts/school-calendar",
+              "page_age": "1269 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Voter Information - SAU 70",
+              "url": "https://www.sau70.org/resources/voter-information",
+              "page_age": "625 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Calendar",
+              "url": "https://res.sau70.org/our-school/handbook/handbook-post/~board/ray-handbook/post/calendar",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "School Year Information",
+              "url": "https://www.hanoverschools.org/district/school-year-information",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Draft 2.1 ~ Updated 7/8/26​ 2026-2027 Hanover Public Schools ...",
+              "url": "https://www.hanoverschools.org/district/calendars-and-events/files/district-calendar-2026-2027",
+              "page_age": "134 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Draft 2.1 ~ Updated 7/8/26​ 2026-2027 Hanover Public Schools ...",
+              "url": "https://www.hanoverschools.org/sites/g/files/vyhlif3221/f/uploads/hps_2026-2027_calendar_7-13-26.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "​Draft 2.1 ~ Updated 3/25/26​ ​2026-2027 Hanover Public​...",
+              "url": "https://www.hanoverschools.org/school-committee/public-meeting-documents/files/appendix-c-2026-2027-hps-calendar-draft",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "​Draft 2.1 ~ Updated 3/25/26​ ​2026-2027 Hanover Public​...",
+              "url": "https://www.hanoverschools.org/sites/g/files/vyhlif3221/f/uploads/draft_2026-2027_hps_calendar_draft_2.1_3-25-26.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "​Draft 1.0​ ​2026-2027 Hanover Public Schools Calendar​ ...",
+              "url": "https://www.hanoverschools.org/sites/g/files/vyhlif3221/f/uploads/appendix_a_-_2026_-_2027_school_district_calendar_draft_1.0.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026-2027 School Calendar",
+              "url": "https://resources.finalsite.net/images/v1771444958/hanovernorwichschoolsorg/vggvfgtpqpa9g5dfkwqe/Dresden2026-27Final_SchoolCalendar.pdf",
+              "page_age": null
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "text",
+          "text": "I found five events for Hanover, NH between November 19, 2026 and May 18, 2027. Dartmouth's 2027 Commencement is outside the window, and I couldn't find a 2027 date for Dimensions, Dartmouth's day for admitted students. I also left out results for Hanover Public Schools at hanoverschools.org, because that is a different town's district, not the Hanover, NH schools (SAU 70).\n\nEVENT: Dartmouth Winter Carnival (the 117th). Dartmouth College's five-year calendar lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Winter Carnival\n\n**December-2026**\n\n| Friday, December 4, 2026 |  | Christmas Tree Lighting (tentative) |\n| --- | --- | --- |\n**January-2027**\n\nTuesda...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ..."
+            }
+          ],
+          "type": "text",
+          "text": "Winter Carnival from Thursday, February 4, 2027 to Sunday, February 7, 2027"
+        },
+        {
+          "type": "text",
+          "text": ". The page says dates are subject to change. It takes place on the Dartmouth campus in Hanover and runs over a long weekend. Times aren't posted yet. It happens every year: it "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Begun in 1911, Dartmouth's Winter Carnival celebrates the beauty of the winter season in the Upper Valley and the achievements of Dartmouth's many win...",
+              "url": "https://students.dartmouth.edu/collis/events/winter-carnival",
+              "title": "Winter Carnival"
+            }
+          ],
+          "type": "text",
+          "text": "began in 1911"
+        },
+        {
+          "type": "text",
+          "text": ", and it once "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "What Dartmouth event inspired a Hollywood movie, triggered an 8-mile traffic jam on the roads leading into Hanover in 1952, and was called “the Mardi ...",
+              "url": "https://home.dartmouth.edu/about/winter-carnival",
+              "title": "Dartmouth Winter Carnival"
+            }
+          ],
+          "type": "text",
+          "text": "triggered an 8-mile traffic jam on the roads leading into Hanover in 1952"
+        },
+        {
+          "type": "text",
+          "text": ".\n\nEVENT: Thayer Board of Advisors meeting. The same Dartmouth five-year calendar lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Winter Carnival\n\n**December-2026**\n\n| Friday, December 4, 2026 |  | Christmas Tree Lighting (tentative) |\n| --- | --- | --- |\n**January-2027**\n\nTuesda...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ..."
+            }
+          ],
+          "type": "text",
+          "text": "Thursday, February 4, 2027 to Saturday, February 6, 2027 Thayer Board of Advisors"
+        },
+        {
+          "type": "text",
+          "text": ". The host is Dartmouth's Thayer School of Engineering in Hanover. No times are given. It overlaps the Winter Carnival weekend.\n\nEVENT: Dartmouth Christmas Tree Lighting. Dartmouth's five-year calendar lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Winter Carnival\n\n**December-2026**\n\n| Friday, December 4, 2026 |  | Christmas Tree Lighting (tentative) |\n| --- | --- | --- |\n**January-2027**\n\nTuesda...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ..."
+            }
+          ],
+          "type": "text",
+          "text": "Friday, December 4, 2026 — Christmas Tree Lighting (tentative)"
+        },
+        {
+          "type": "text",
+          "text": ". It's a one-evening event on the Dartmouth campus in Hanover and happens every year. No time is given.\n\nEVENT: Bernice A. Ray School (Hanover School District, K–5) February vacation. Ray School's 2026-27 calendar lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "FEBRUARY BREAK: School Closed Monday, February 22 through Friday, February 26\n\n## 2026-27 School Calendar\n### Bernice A. Ray School Hanover School Dis...",
+              "url": "https://res.sau70.org/our-school/handbook/handbook-post/~board/ray-handbook/post/calendar",
+              "title": "Calendar"
+            }
+          ],
+          "type": "text",
+          "text": "PRESIDENTS' DAY: School Closed Monday, February 15"
+        },
+        {
+          "type": "text",
+          "text": " (2027). It also lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "FEBRUARY BREAK: School Closed Monday, February 22 through Friday, February 26\n\n## 2026-27 School Calendar\n### Bernice A. Ray School Hanover School Dis...",
+              "url": "https://res.sau70.org/our-school/handbook/handbook-post/~board/ray-handbook/post/calendar",
+              "title": "Calendar"
+            }
+          ],
+          "type": "text",
+          "text": "FEBRUARY BREAK: School Closed Monday, February 22 through Friday, February 26"
+        },
+        {
+          "type": "text",
+          "text": " (2027). These are all-day closures at the school at 26 Reservoir Rd, Hanover, and the break repeats every year. Families may travel that week, or have children home in town.\n\nEVENT: Bernice A. Ray School April vacation. Ray School's 2026-27 calendar lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "FEBRUARY BREAK: School Closed Monday, February 22 through Friday, February 26\n\n## 2026-27 School Calendar\n### Bernice A. Ray School Hanover School Dis...",
+              "url": "https://res.sau70.org/our-school/handbook/handbook-post/~board/ray-handbook/post/calendar",
+              "title": "Calendar"
+            }
+          ],
+          "type": "text",
+          "text": "APRIL BREAK: School Closed Monday, April 19 through Friday, April 23"
+        },
+        {
+          "type": "text",
+          "text": " (2027). These are all-day closures, and the break repeats every year. The middle and high schools (Dresden School District) have their own approved 2026-27 calendar, but the search results didn't show their vacation dates."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 240,
+        "cache_creation_input_tokens": 31137,
+        "cache_read_input_tokens": 32095,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 3025,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 1606,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "server_tool_use": {
+          "web_search_requests": 5,
+          "web_fetch_requests": 0
+        },
+        "iterations": [
+          {
+            "input_tokens": 234,
+            "output_tokens": 71,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 3025,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 3025,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 133,
+            "cache_read_input_tokens": 3025,
+            "cache_creation_input_tokens": 5677,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 5677,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 200,
+            "cache_read_input_tokens": 8702,
+            "cache_creation_input_tokens": 11666,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 11666,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 1202,
+            "cache_read_input_tokens": 20368,
+            "cache_creation_input_tokens": 10769,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 10769,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 274
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    },
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2RPvHSp2ZNoy3QmchE",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"events\":[{\"title\":\"Dartmouth Winter Carnival\",\"kind\":\"event\",\"category\":\"festival\",\"startDate\":\"2027-02-04\",\"endDate\":\"2027-02-07\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"dart\",\"hostRef\":\"dart\",\"competitor\":null,\"sourceIds\":[\"S19\"],\"dateQuote\":\"Winter Carnival\",\"confidence\":\"medium\"},{\"title\":\"Thayer Board of Advisors meeting\",\"kind\":\"event\",\"category\":\"other\",\"startDate\":\"2027-02-04\",\"endDate\":\"2027-02-06\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":null,\"hostRef\":\"thayer\",\"competitor\":null,\"sourceIds\":[\"S19\"],\"dateQuote\":\"Winter Carnival\",\"confidence\":\"low\"},{\"title\":\"Dartmouth Christmas Tree Lighting (tentative)\",\"kind\":\"event\",\"category\":\"community\",\"startDate\":\"2026-12-04\",\"endDate\":\"2026-12-04\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"dart\",\"hostRef\":\"dart\",\"competitor\":null,\"sourceIds\":[\"S19\"],\"dateQuote\":\"Friday, December 4, 2026 | | Christmas Tree Lighting (tentative)\",\"confidence\":\"high\"},{\"title\":\"Ray School February Break - School Closed\",\"kind\":\"closure\",\"category\":\"school\",\"startDate\":\"2027-02-22\",\"endDate\":\"2027-02-26\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"ray\",\"hostRef\":\"ray\",\"competitor\":null,\"sourceIds\":[\"S39\"],\"dateQuote\":\"FEBRUARY BREAK: School Closed Monday, February 22 through Friday, February 26\",\"confidence\":\"high\"}],\"entities\":[{\"ref\":\"dart\",\"type\":\"organization\",\"name\":\"Dartmouth College\",\"sourceIds\":[\"S19\"]},{\"ref\":\"thayer\",\"type\":\"school\",\"name\":\"Thayer School of Engineering\",\"sourceIds\":[\"S19\"]},{\"ref\":\"ray\",\"type\":\"school\",\"name\":\"Bernice A. Ray School\",\"sourceIds\":[\"S39\"]}]}"
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 5539,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 742,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "iterations": [
+          {
+            "input_tokens": 5539,
+            "output_tokens": 742,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    }
+  ],
+  "expected": {
+    "kind": "recorded",
+    "costMicroUsd": 282180,
+    "searches": 5,
+    "fetches": 0,
+    "continuations": 0,
+    "sources": 42,
+    "verified": {
+      "events": [
+        {
+          "title": "Dartmouth Winter Carnival",
+          "kind": "event",
+          "category": "festival",
+          "start": "2027-02-04",
+          "end": "2027-02-07",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "dart",
+          "hostRef": "dart",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        },
+        {
+          "title": "Thayer Board of Advisors meeting",
+          "kind": "event",
+          "category": "other",
+          "start": "2027-02-04",
+          "end": "2027-02-06",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": null,
+          "hostRef": "thayer",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        },
+        {
+          "title": "Dartmouth Christmas Tree Lighting (tentative)",
+          "kind": "event",
+          "category": "community",
+          "start": "2026-12-04",
+          "end": "2026-12-04",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "dart",
+          "hostRef": "dart",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Ray School February Break - School Closed",
+          "kind": "closure",
+          "category": "school",
+          "start": "2027-02-22",
+          "end": "2027-02-26",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "ray",
+          "hostRef": "ray",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Calendar",
+              "url": "https://res.sau70.org/our-school/handbook/handbook-post/~board/ray-handbook/post/calendar"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        }
+      ],
+      "entities": [
+        {
+          "ref": "dart",
+          "type": "organization",
+          "name": "Dartmouth College",
+          "sources": [
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf"
+            }
+          ]
+        },
+        {
+          "ref": "thayer",
+          "type": "school",
+          "name": "Thayer School of Engineering",
+          "sources": [
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf"
+            }
+          ]
+        },
+        {
+          "ref": "ray",
+          "type": "school",
+          "name": "Bernice A. Ray School",
+          "sources": [
+            {
+              "label": "Calendar",
+              "url": "https://res.sau70.org/our-school/handbook/handbook-post/~board/ray-handbook/post/calendar"
+            }
+          ]
+        }
+      ],
+      "drops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "no_source": 0,
+        "unknown_source": 0,
+        "bad_dates": 0,
+        "bad_title": 0,
+        "bad_competitor": 0
+      },
+      "entityDrops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "bad_ref": 0,
+        "bad_name": 0,
+        "no_source": 0
+      }
+    }
+  }
+}

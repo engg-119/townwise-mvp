@@ -1,0 +1,581 @@
+{
+  "about": "D66 live eval recording (research-eval.ts --record), Hanover markets_community thread, web fetch off, Google names not allowed. Encrypted fields and signatures stripped; the location's name redacted. Public pages only.",
+  "thread": "markets_community",
+  "fetch": false,
+  "placesToAi": false,
+  "now": "2026-11-19T21:49:49.068Z",
+  "today": "2026-11-19",
+  "window": {
+    "from": "2026-11-19",
+    "to": "2027-05-18"
+  },
+  "reservedMicroUsd": 5542563,
+  "responses": [
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2TyBLP4LfXqDGpCcRH",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01RuzSYqv1XzEbY8PfUAVS1V",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH community events December 2026"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01RuzSYqv1XzEbY8PfUAVS1V",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Event List",
+              "url": "https://business.mainstreethanover.org/events?from=11%2F1%2F2026&to=12%2F31%2F2026",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Community Events in Hanover, NH - Local Gatherings & Activities ...",
+              "url": "https://www.eventbrite.com/b/nh--hanover/community/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Events",
+              "url": "https://mainstreethanover.org/events/",
+              "page_age": "355 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Discover December Events & Activities in Hanover, NH",
+              "url": "https://www.eventbrite.com/d/nh--hanover/december/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Events from November 12",
+              "url": "https://www.hanoverconservancy.org/events/",
+              "page_age": "141 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Sustainable Hanover",
+              "url": "https://sustainablehanovernh.org/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Calendar • Hanover, NH • CivicEngage",
+              "url": "https://www.hanovernh.org/Calendar.aspx",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover, NH",
+              "url": "https://www.hanovernh.org/",
+              "page_age": "322 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "text",
+          "text": "I found six events in Hanover, NH, all in December 2026. I only did one search, so nothing turned up for January through May 2027. The Hanover Conservancy calendar lists the Adair's Erratic trail opening as \"RESCHEDULED\" to November 14, which is before your window, so I left it out. Some results for \"Main Street Hanover\" (a Christmas Festival on November 28 and a Hot Chocolate & Cookie Stroll on December 12) are for Hanover, Pennsylvania, not New Hampshire, so I left them out too.\n\nEVENT: Celebrate the Season and Tree Lighting, hosted by the Upper Valley Business Alliance as part of the Town of Hanover's \"Home for the Holidays\" series. It happens once a year on the Dartmouth Green and then across downtown Hanover. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "# Home for the Holidays\n## 2026 Event Schedule\n### UVBA's Celebrate the Season in Downtown Hanover\n**Friday, December 4, 2026, 4–7 PM**\n\nJoin the Uppe...",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays",
+              "title": "Home for the Holidays"
+            }
+          ],
+          "type": "text",
+          "text": "Friday, December 4, 2026, 4–7 PM. Join the Upper Valley Business Alliance on the Dartmouth Green for the annual tree lighting, then stay for Celebrate the Season festivities throughout Downtown Hanover."
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: SNOW Many Pancakes!, a one-time breakfast in the Town of Hanover's \"Home for the Holidays\" series at the RW Black Community Center. Exact hours aren't listed. It is on "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "**Saturday, December 5, 2026**\n\nDo you like breakfast food? ",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays",
+              "title": "Home for the Holidays"
+            }
+          ],
+          "type": "text",
+          "text": "Saturday, December 5, 2026"
+        },
+        {
+          "type": "text",
+          "text": ", and "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Featuring yummy breakfast food prepared by the talented culinary students at Hartford Area Career and Technical Center (HACTC), it will take place at ...",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays",
+              "title": "Home for the Holidays"
+            }
+          ],
+          "type": "text",
+          "text": "featuring yummy breakfast food prepared by the talented culinary students at Hartford Area Career and Technical Center (HACTC), it will take place at the RWB Community Center."
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: A free family holiday event in the \"Home for the Holidays\" series, hosted by the Town of Hanover. The place isn't stated. It runs "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "**Saturday, December 5, 2026, 11 am - 1 pm** A free, family-friendly event featuring cookies, voting, and holiday tunes by Grace Wallace and her band....",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays",
+              "title": "Home for the Holidays"
+            }
+          ],
+          "type": "text",
+          "text": "Saturday, December 5, 2026, 11 am - 1 pm A free, family-friendly event featuring cookies, voting, and holiday tunes by Grace Wallace and her band."
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: The Magic Flute family encore, a one-time Met Opera in HD screening at the Hopkins Center (the HOP) in the Town's \"Home for the Holidays\" series. It is "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "The Magic Flute at the HOP **Saturday, December 12, 2026 at 1 pm.",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays",
+              "title": "Home for the Holidays"
+            }
+          ],
+          "type": "text",
+          "text": "Saturday, December 12, 2026 at 1 pm."
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Reading Nature: The Joyful Environmentalist, part of the Hanover Conservancy's Reading Nature book series. It's at the Howe Library, 13 South Street, and people can also join on Zoom. It is on "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "- December 2026\n- Thu 10 Reading Nature: The Joyful Environmentalist by Isabel Losada December 10 @ 6:00 PM - 7:00 PM The Howe Library 13 South Street...",
+              "url": "https://www.hanoverconservancy.org/events/",
+              "title": "Events from November 12"
+            }
+          ],
+          "type": "text",
+          "text": "Thu 10 Reading Nature: The Joyful Environmentalist by Isabel Losada December 10 @ 6:00 PM - 7:00 PM The Howe Library 13 South Street, Hanover, NH"
+        },
+        {
+          "type": "text",
+          "text": ", and the page's event data shows "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "{\"name\":\"Reading Nature: The Joyful Environmentalist by Isabel Losada\",\"startDate\":\"2026-12-10T18:00:00-05:00\",\"endDate\":\"2026-12-10T19:00:00-05:00\",\"...",
+              "url": "https://www.hanoverconservancy.org/events/",
+              "title": "Events from November 12"
+            }
+          ],
+          "type": "text",
+          "text": "\"startDate\":\"2026-12-10T18:00:00-05:00\""
+        },
+        {
+          "type": "text",
+          "text": ".\n\nEVENT: Winter Solstice Sunset Celebration, a one-time event hosted by the Hanover Conservancy at Balch Hill Natural Area on Grasse Road. It is "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "- Mon 21 Winter Solstice Sunset Celebration at Balch Hill December 21 @ 4:00 PM - 5:00 PM Balch Hill Natural Area Grasse Road, Hanover, NH, United Sta...",
+              "url": "https://www.hanoverconservancy.org/events/",
+              "title": "Events from November 12"
+            }
+          ],
+          "type": "text",
+          "text": "Mon 21 Winter Solstice Sunset Celebration at Balch Hill December 21 @ 4:00 PM - 5:00 PM Balch Hill Natural Area Grasse Road, Hanover, NH"
+        },
+        {
+          "type": "text",
+          "text": " (December 21, 2026)."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 204,
+        "cache_creation_input_tokens": 7447,
+        "cache_read_input_tokens": 6050,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 1269,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "server_tool_use": {
+          "web_search_requests": 1,
+          "web_fetch_requests": 0
+        },
+        "iterations": [
+          {
+            "input_tokens": 202,
+            "output_tokens": 58,
+            "cache_read_input_tokens": 3025,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 1211,
+            "cache_read_input_tokens": 3025,
+            "cache_creation_input_tokens": 7447,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 7447,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 34
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    },
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2UpbgoyAFvZ9bHMse5",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"events\":[{\"title\":\"UVBA's Celebrate the Season and Tree Lighting\",\"kind\":\"event\",\"category\":\"festival\",\"startDate\":\"2026-12-04\",\"endDate\":\"2026-12-04\",\"weekdays\":null,\"startTime\":\"16:00\",\"status\":\"scheduled\",\"venueRef\":\"green\",\"hostRef\":\"uvba\",\"competitor\":null,\"sourceIds\":[\"S3\"],\"dateQuote\":\"**Friday, December 4, 2026, 4–7 PM**\",\"confidence\":\"high\"},{\"title\":\"SNOW Many Pancakes!\",\"kind\":\"event\",\"category\":\"community\",\"startDate\":\"2026-12-05\",\"endDate\":\"2026-12-05\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"rwb\",\"hostRef\":\"town\",\"competitor\":null,\"sourceIds\":[\"S3\"],\"dateQuote\":\"**Saturday, December 5, 2026** Do you like breakfast food?\",\"confidence\":\"high\"},{\"title\":\"Free Family Holiday Event (Home for the Holidays)\",\"kind\":\"event\",\"category\":\"community\",\"startDate\":\"2026-12-05\",\"endDate\":\"2026-12-05\",\"weekdays\":null,\"startTime\":\"11:00\",\"status\":\"scheduled\",\"venueRef\":null,\"hostRef\":\"town\",\"competitor\":null,\"sourceIds\":[\"S3\"],\"dateQuote\":\"**Saturday, December 5, 2026, 11 am - 1 pm**\",\"confidence\":\"high\"},{\"title\":\"The Magic Flute Family Encore (Met Opera in HD)\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2026-12-12\",\"endDate\":\"2026-12-12\",\"weekdays\":null,\"startTime\":\"13:00\",\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S3\"],\"dateQuote\":\"The Magic Flute at the HOP **Saturday, December 12, 2026 at 1 pm.\",\"confidence\":\"high\"},{\"title\":\"Reading Nature: The Joyful Environmentalist\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2026-12-10\",\"endDate\":\"2026-12-10\",\"weekdays\":null,\"startTime\":\"18:00\",\"status\":\"scheduled\",\"venueRef\":\"howe\",\"hostRef\":\"cons\",\"competitor\":null,\"sourceIds\":[\"S6\"],\"dateQuote\":\"\\\"startDate\\\":\\\"2026-12-10T18:00:00-05:00\\\"\",\"confidence\":\"high\"},{\"title\":\"Winter Solstice Sunset Celebration at Balch Hill\",\"kind\":\"event\",\"category\":\"community\",\"startDate\":\"2026-12-21\",\"endDate\":\"2026-12-21\",\"weekdays\":null,\"startTime\":\"16:00\",\"status\":\"scheduled\",\"venueRef\":\"balch\",\"hostRef\":\"cons\",\"competitor\":null,\"sourceIds\":[\"S6\"],\"dateQuote\":\"Mon 21 Winter Solstice Sunset Celebration at Balch Hill December 21 @ 4:00 PM - 5:00 PM\",\"confidence\":\"high\"}],\"entities\":[{\"ref\":\"uvba\",\"type\":\"organization\",\"name\":\"Upper Valley Business Alliance\",\"sourceIds\":[\"S3\"]},{\"ref\":\"town\",\"type\":\"organization\",\"name\":\"Town of Hanover\",\"sourceIds\":[\"S3\"]},{\"ref\":\"green\",\"type\":\"venue\",\"name\":\"Dartmouth Green\",\"sourceIds\":[\"S3\"]},{\"ref\":\"rwb\",\"type\":\"venue\",\"name\":\"RW Black Community Center\",\"sourceIds\":[\"S3\"]},{\"ref\":\"hop\",\"type\":\"venue\",\"name\":\"Hopkins Center (the HOP)\",\"sourceIds\":[\"S3\"]},{\"ref\":\"cons\",\"type\":\"organization\",\"name\":\"Hanover Conservancy\",\"sourceIds\":[\"S6\"]},{\"ref\":\"howe\",\"type\":\"venue\",\"name\":\"Howe Library\",\"sourceIds\":[\"S6\"]},{\"ref\":\"balch\",\"type\":\"venue\",\"name\":\"Balch Hill Natural Area\",\"sourceIds\":[\"S6\"]}]}"
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 3885,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 1342,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "iterations": [
+          {
+            "input_tokens": 3885,
+            "output_tokens": 1342,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    }
+  ],
+  "expected": {
+    "kind": "recorded",
+    "costMicroUsd": 117021,
+    "searches": 1,
+    "fetches": 0,
+    "continuations": 0,
+    "sources": 9,
+    "verified": {
+      "events": [
+        {
+          "title": "UVBA's Celebrate the Season and Tree Lighting",
+          "kind": "event",
+          "category": "festival",
+          "start": "2026-12-04",
+          "end": "2026-12-04",
+          "weekdays": null,
+          "startTime": "16:00",
+          "status": "scheduled",
+          "venueRef": "green",
+          "hostRef": "uvba",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "SNOW Many Pancakes!",
+          "kind": "event",
+          "category": "community",
+          "start": "2026-12-05",
+          "end": "2026-12-05",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "rwb",
+          "hostRef": "town",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Free Family Holiday Event (Home for the Holidays)",
+          "kind": "event",
+          "category": "community",
+          "start": "2026-12-05",
+          "end": "2026-12-05",
+          "weekdays": null,
+          "startTime": "11:00",
+          "status": "scheduled",
+          "venueRef": null,
+          "hostRef": "town",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "The Magic Flute Family Encore (Met Opera in HD)",
+          "kind": "event",
+          "category": "arts",
+          "start": "2026-12-12",
+          "end": "2026-12-12",
+          "weekdays": null,
+          "startTime": "13:00",
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Reading Nature: The Joyful Environmentalist",
+          "kind": "event",
+          "category": "arts",
+          "start": "2026-12-10",
+          "end": "2026-12-10",
+          "weekdays": null,
+          "startTime": "18:00",
+          "status": "scheduled",
+          "venueRef": "howe",
+          "hostRef": "cons",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Events from November 12",
+              "url": "https://www.hanoverconservancy.org/events/"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Winter Solstice Sunset Celebration at Balch Hill",
+          "kind": "event",
+          "category": "community",
+          "start": "2026-12-21",
+          "end": "2026-12-21",
+          "weekdays": null,
+          "startTime": "16:00",
+          "status": "scheduled",
+          "venueRef": "balch",
+          "hostRef": "cons",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Events from November 12",
+              "url": "https://www.hanoverconservancy.org/events/"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        }
+      ],
+      "entities": [
+        {
+          "ref": "uvba",
+          "type": "organization",
+          "name": "Upper Valley Business Alliance",
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ]
+        },
+        {
+          "ref": "town",
+          "type": "organization",
+          "name": "Town of Hanover",
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ]
+        },
+        {
+          "ref": "green",
+          "type": "venue",
+          "name": "Dartmouth Green",
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ]
+        },
+        {
+          "ref": "rwb",
+          "type": "venue",
+          "name": "RW Black Community Center",
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ]
+        },
+        {
+          "ref": "hop",
+          "type": "venue",
+          "name": "Hopkins Center (the HOP)",
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ]
+        },
+        {
+          "ref": "cons",
+          "type": "organization",
+          "name": "Hanover Conservancy",
+          "sources": [
+            {
+              "label": "Events from November 12",
+              "url": "https://www.hanoverconservancy.org/events/"
+            }
+          ]
+        },
+        {
+          "ref": "howe",
+          "type": "venue",
+          "name": "Howe Library",
+          "sources": [
+            {
+              "label": "Events from November 12",
+              "url": "https://www.hanoverconservancy.org/events/"
+            }
+          ]
+        },
+        {
+          "ref": "balch",
+          "type": "venue",
+          "name": "Balch Hill Natural Area",
+          "sources": [
+            {
+              "label": "Events from November 12",
+              "url": "https://www.hanoverconservancy.org/events/"
+            }
+          ]
+        }
+      ],
+      "drops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "no_source": 0,
+        "unknown_source": 0,
+        "bad_dates": 0,
+        "bad_title": 0,
+        "bad_competitor": 0
+      },
+      "entityDrops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "bad_ref": 0,
+        "bad_name": 0,
+        "no_source": 0
+      }
+    }
+  }
+}
