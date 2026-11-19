@@ -1,10 +1,11 @@
-# Laptop CI runner
+# Self-hosted CI runners
 
-Runs the checks in `ci.yml`, `security.yml` and `gitleaks.yml` on the owner's Mac while GitHub-hosted runners are unavailable. Never `deploy.yml`. Why, how to start, stop and switch back, and the security notes: `infra/README.md`, "CI on the laptop runner".
+Runs the checks in `ci.yml`, `security.yml` and `gitleaks.yml` on the owner's Mac, and on camo while it has compute to spare, while GitHub-hosted runners are unavailable. Never `deploy.yml`. Why, how to start, stop and switch back, and the security notes: `infra/README.md`, "CI on the laptop runner" and "CI on camo".
 
-- `Dockerfile`: Ubuntu 24.04 for arm64 with the GitHub Actions runner, the Docker CLI and buildx, and what the jobs call. Each pin names its source.
-- `entrypoint.sh`: copies the runner into the job folder (mounted at the same path as on the Mac) and runs exactly one job.
-- `run-runners.sh`: builds the image, keeps N slots of one-job runners, and cleans up on Ctrl-C. One session at a time; each start removes what earlier sessions left.
+- `Dockerfile`: Ubuntu 24.04 for arm64 (the Mac) or amd64 (camo), whichever the engine runs, with the GitHub Actions runner, the Docker CLI and buildx, and what the jobs call. Each pin names its source, per architecture.
+- `entrypoint.sh`: copies the runner into the job folder (mounted at the same path as on the host) and runs exactly one job.
+- `run-runners.sh`: on the Mac, builds the image, keeps N slots of one-job runners, and cleans up on Ctrl-C. One session at a time; each start removes what earlier sessions left.
+- `camo-runners.sh` and `townwise-ci-runners.service`: on camo, the same with up to 4 slots that start runners only while camo is free (load and memory thresholds), run by a user systemd unit.
 
 What each job needs from the runner. When a job changes, keep the image in step:
 
@@ -32,5 +33,6 @@ Everything the image installs is pinned. Bump on a branch, rebuild with `docker 
   ```
 
 - **The GitHub Actions runner.** A just-in-time runner cannot be started with `--disableupdate` (`run` accepts only `--once`, `--jitconfig` and `--startuptype`). So when GitHub releases a newer runner, each job's runner downloads it into its job folder and updates itself before taking the job: it still works, it only costs the download, and that download is not covered by a pin here. GitHub stops assigning jobs to a runner more than 63 days behind. To bump: take the new version's `actions-runner-linux-arm64-<version>.tar.gz` SHA-256 from its release notes ("SHA-256 Checksums", `https://github.com/actions/runner/releases/tag/v<version>`), change the version and the SHA-256 in the Dockerfile, and rebuild. If the new runner needs other libraries, its `installdependencies.sh` fails in the build: add them to the pinned `apt-get install` line.
-- **The Docker CLI and buildx.** From Docker's apt repository: take each `.deb`'s SHA-256 from `https://download.docker.com/linux/ubuntu/dists/noble/stable/binary-arm64/Packages` (signed by `InRelease`, key fingerprint `9DC8 5822 9FC7 DD38 854A E2D8 8D81 803C 0EBF CD88`).
+- **Both architectures.** The Ubuntu package versions are the same for arm64 and amd64 in a snapshot; the runner and the Docker CLI and buildx have one SHA-256 per architecture (the `case "$TARGETARCH"` blocks). Bump both, and build on the Mac and on camo.
+- **The Docker CLI and buildx.** From Docker's apt repository: take each `.deb`'s SHA-256 from `https://download.docker.com/linux/ubuntu/dists/noble/stable/binary-<arm64|amd64>/Packages` (signed by `InRelease`, key fingerprint `9DC8 5822 9FC7 DD38 854A E2D8 8D81 803C 0EBF CD88`).
 - **The base image.** A dated `ubuntu:noble-*` tag by its multi-arch index digest (`docker buildx imagetools inspect ubuntu:<tag>`).

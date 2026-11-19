@@ -597,7 +597,7 @@ GitHub-hosted runners are blocked for this private repository: every job fails a
 
 **What runs there:** every job of `ci.yml` (verify, terraform, id-token-guard, lab), `security.yml` (osv-scanner, semgrep, checkov) and `gitleaks.yml` (gitleaks), while the `CI_RUNS_ON` repository variable points there. On an ARM64 runner the workflows download the arm64 builds of tflint, osv-scanner and gitleaks, each checked against its release's published SHA-256.
 
-**What never runs there: `deploy.yml`.** It runs on camo instead (Deploys on camo, below). Its build jobs run npm and repository code with no id-token, and its deploy job holds the OIDC token. On fresh GitHub-hosted VMs they cannot reach each other; on one Docker host a build job could reach the deploy job's container (on camo they share one, an accepted risk: Deploys on camo, below). `deploy.yml` uses literal labels and never reads `CI_RUNS_ON`, and `id-token-guard` fails unless every job in it has exactly `runs-on: ubuntu-24.04` or exactly camo's `[self-hosted, townwise-deploy]` (an allowlist: no expression, no other self-hosted label, no other list, no other `ubuntu-*` name). Never give a self-hosted runner an `ubuntu-*` label: GitHub does not document whether a job asking for a hosted label can land on a self-hosted runner that carries it. `run-runners.sh` registers only `self-hosted` and `townwise-laptop`.
+**What never runs there: `deploy.yml`.** It runs on camo instead (Deploys on camo, below). Its build jobs run npm and repository code with no id-token, and its deploy job holds the OIDC token. On fresh GitHub-hosted VMs they cannot reach each other; on one Docker host a build job could reach the deploy job's container (on camo they share one, an accepted risk: Deploys on camo, below). `deploy.yml` uses literal labels and never reads `CI_RUNS_ON`, and `id-token-guard` fails unless every job in it has exactly `runs-on: ubuntu-24.04` or exactly camo's `[self-hosted, townwise-deploy]` (an allowlist: no expression, no other self-hosted label, no other list, no other `ubuntu-*` name). Never give a self-hosted runner an `ubuntu-*` label: GitHub does not document whether a job asking for a hosted label can land on a self-hosted runner that carries it. `run-runners.sh` registers only `self-hosted`, `townwise-laptop` and `townwise-ci` (the label camo's CI runners share, CI on camo, below).
 
 **How it works.** `infra/ci-runner/run-runners.sh` keeps N slots (default 2). Each slot asks GitHub for a just-in-time runner config (`generate-jitconfig`, labels `self-hosted` and `townwise-laptop`, runner group 1, named `townwise-laptop-<session>-<slot>-<n>`) and starts a fresh container from the image built from `infra/ci-runner/Dockerfile` (Ubuntu 24.04 for arm64, the Actions runner, the Docker CLI and buildx, and what the jobs call), by the image ID the session resolved at start, so a job that retags `townwise-ci-runner:local` does not change what later runners run. Each container gets:
 
@@ -622,7 +622,8 @@ One session runs at a time: a second start refuses while one is running (a lock 
 **Point CI at it, and switch back:**
 
 ```sh
-gh variable set CI_RUNS_ON -R engg-119/engg-119-mvp --body '["self-hosted","townwise-laptop"]'
+gh variable set CI_RUNS_ON -R engg-119/engg-119-mvp --body '["self-hosted","townwise-ci"]'      # the laptop or camo
+gh variable set CI_RUNS_ON -R engg-119/engg-119-mvp --body '["self-hosted","townwise-laptop"]'  # the laptop only
 gh variable delete CI_RUNS_ON -R engg-119/engg-119-mvp    # back to ubuntu-24.04
 ```
 
@@ -649,6 +650,34 @@ Remove a leftover registration with `gh api -X DELETE repos/engg-119/engg-119-mv
 - `deploy.yml` never runs here (above), and the deploy identity trusts only `deploy.yml` on `main` (step 12).
 
 **Resources.** Each slot gets its own four of the VM's CPUs, so Jest and Vitest start as many workers as on a 4-vCPU runner (with all 16, one verify job peaked near 14 GiB and the VM killed a Jest worker). Measured on 2026-11-11 with two verify jobs at once, the heaviest case: about 10.5 minutes each, up to 6.3 GiB each plus their Mongo and Valkey, 12.4 GiB together of the VM's 15.6 GiB. A verify job's folder holds about 1 GB (mostly `node_modules`) until the job ends. The other jobs take under two minutes each. If Docker Desktop runs other containers, or the Mac needs its memory, use `-n 1` or give Docker Desktop more memory. The image is about 1.2 GB. Docker keeps the images the jobs pull (semgrep 1.6 GB, Mongo 1.3 GB, checkov 0.8 GB, Azurite 0.6 GB, and smaller ones) and the lab job's build cache; `docker image prune` and `docker builder prune` reclaim space.
+
+## CI on camo
+
+camo (the owner's Linux workstation: 20 cores, 62 GiB) runs CI jobs too, but only while it has compute to spare (owner, 2026-11-19). With `CI_RUNS_ON` set to `["self-hosted","townwise-ci"]`, each job goes to whichever of the laptop's or camo's runners is free; `deploy.yml` never runs on these (it needs `townwise-deploy`, Deploys on camo, below).
+
+**How it works.** `infra/ci-runner/camo-runners.sh`, kept up by the user systemd unit `townwise-ci-runners` (linger is on), works like `run-runners.sh` (one fresh container and one just-in-time registration per job, the same image built for amd64), with up to 4 slots of 4 CPUs each (CPUs 0 to 15; 16 to 19 stay free) and a gate:
+
+- A slot starts a runner only when the load from everything but these jobs is under 6 and at least 16 GiB of memory is available. That load is the 1-minute load average minus 4 for each runner running a job, so the jobs' own load does not hold back the next one.
+- When that load reaches 8 or available memory drops under 12 GiB, runners still waiting for a job are withdrawn (GitHub refuses to remove one that has a job), and no new ones start until camo is under the start thresholds again. A job that has started always finishes.
+- The jobs run at `--cpu-shares 256`, so camo's own work wins any contention for their CPUs.
+
+The runners are registered at the `engg-119` organization (default runner group; `engg-119-mvp` is its only repository) with the labels `self-hosted`, `townwise-ci` and `townwise-camo`, named `townwise-camo-<session>-<slot>-<n>`. The registrations come from a fine-grained token whose only permission is the organization's "Self-hosted runners: Read and write", in `~/.config/townwise-ci/token` on camo (mode 600, read by the script, never on a command line). Linux differences from the laptop: the image's runner user takes `ckeith`'s uid (job folders under `~/.townwise-ci/jobs` are bind-mounted at the same path, and native Docker keeps file ownership), the container joins the socket's group (`--group-add`), `host.docker.internal` maps to the host gateway, and a root container removes job files a sibling container left root-owned.
+
+**Set up or update** (from a checkout on the Mac):
+
+```sh
+# Once: a fine-grained token at github.com/settings/personal-access-tokens/new, resource owner engg-119, repository
+# access "Public repositories", organization permission "Self-hosted runners: Read and write" only. Copy it, then:
+pbpaste | ssh camo 'umask 077; mkdir -p ~/.config/townwise-ci && cat > ~/.config/townwise-ci/token'
+# Each update: copy the folder and restart (the script rebuilds the image at start).
+rsync -a --delete infra/ci-runner/ camo:townwise-ci-runners/
+ssh camo 'mkdir -p ~/.config/systemd/user && cp ~/townwise-ci-runners/townwise-ci-runners.service ~/.config/systemd/user/ &&
+  systemctl --user daemon-reload && systemctl --user enable townwise-ci-runners && systemctl --user restart townwise-ci-runners'
+```
+
+**Watch and stop:** `ssh camo journalctl --user -u townwise-ci-runners -f` shows when camo turns free or busy, each runner starting, its job and its result. `systemctl --user stop townwise-ci-runners` removes its containers, job folders and waiting registrations; `disable` keeps it off across reboots. A token that expires or is revoked shows as "GitHub refused a runner config" in the journal; replace the file and restart. To list the registrations: `gh api orgs/engg-119/actions/runners` (needs `gh auth refresh -s admin:org`), or the organization's Settings, Actions, Runners.
+
+**Security.** The same as the laptop's (above), with one difference that matters: the Docker socket is root on camo itself, not on a VM. Any job can read everything on camo, including the deploy runner's credentials (so it could take a deploy job and its OIDC token), the runner token above (so it could register a runner of its own), the coffee-chats runners and `ckeith`'s home folder. That is the reach camo's other runners and the deploy runner's build jobs already have, which the owner accepted (Deploys on camo, below), so only the owner's code runs here: fork pull requests need the owner's approval (step 12), as on the laptop. Testcontainers publish their ports on all of camo's interfaces while a job runs; jobs reach services listening on camo's 0.0.0.0 (Postgres on 5432, for one) through the host gateway, but not ones bound to 127.0.0.1 only.
 
 ## Deploys on camo
 
@@ -722,7 +751,7 @@ If the free tier refuses private access (step 3), M10 adds $0.0191 an hour ($13.
 - **The API's own init container** (`valkey-tls`) can still obtain the API identity's token: the app is an azurerm resource, which has no `identitySettings`. It runs the pinned Valkey image with a fixed script.
 - **`id-token-guard` is a check, not a gate** (GitHub Free has no required checks). The `job_workflow_ref` subject is the enforced control; it cannot tell jobs inside `deploy.yml` apart.
 - **The laptop runner** (CI on the laptop runner): while `CI_RUNS_ON` points at it, code a CI job runs has root on Docker Desktop's VM and, through Docker's file sharing, the owner's home folder. Only the owner's code runs there, unless the owner approves a fork pull request's workflows (step 12 requires approval).
-- **The deploy runner on camo** (Deploys on camo): `deploy.yml`'s build jobs and coffee-chats-mvp's runners share its user and Docker, and it is not reset between jobs, so code either one runs could reach the deploy job's OIDC token. Accepted by the owner while GitHub-hosted runners are blocked.
+- **The deploy runner on camo** (Deploys on camo): `deploy.yml`'s build jobs, camo's CI runners (CI on camo) and coffee-chats-mvp's runners share its user and Docker, and it is not reset between jobs, so code either one runs could reach the deploy job's OIDC token. Accepted by the owner while GitHub-hosted runners are blocked.
 - **Client files behind a private endpoint.** With public network access disabled, any provider call that touched the files account's data plane from a laptop or runner would fail. azurerm 5.11 manages the containers and the lifecycle rule through Resource Manager (`data_plane_available = false`), but CI's mocked plan cannot prove it; the first real apply in step 18 does.
 - **Platform-managed group.** `rg-townwise-prod-infra` holds the environment's load balancer and public IPs. Do not edit it; it goes with the environment.
 - **The lab identity's token is not tied to one calibration** (step 20). It lives about 24 hours, and the callback accepts it for any live calibration. The input is fetched once, and a result needs the result token the input answer hands whoever fetched it. So code running as the lab identity (a compromised lab image, or anyone who can start or update the job) that fetches a sibling calibration's input first, in its unfetched window before that calibration's own job does, can read that input and post a forged result for it: the result is stored as a draft run for that calibration's location, in whichever organization it belongs to, and becomes a published forecast if its scorecard passes the gate and that organization's forecasts are switched on. The calibration's own job then finds its fetch refused (`not_live` in the log, see Logs). It cannot fetch an input twice, or post a result for a calibration whose input it did not fetch. The exposure is no worse than before this change: a compromised lab image already runs every calibration and can forge any result it computes. Binding each fetch to its Container Apps execution (the job sends `CONTAINER_APP_JOB_EXECUTION_NAME`, and the API checks that execution through Resource Manager, which needs `Microsoft.App/jobs/executions/read` for the API identity) is deferred: the owner decided so on 2026-11-10 and re-confirmed it on 2026-11-11. Revoke with step 20.6.
