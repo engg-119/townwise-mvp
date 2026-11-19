@@ -215,6 +215,19 @@ describe('PATCH .../research/events/:eventId', () => {
     expect(await moved.json()).toMatchObject({ error: 'bad_dates' });
   });
 
+  it('takes the Calendar sheet’s full body: a title edit of a season begun a month ago keeps its dates and is never refused', async () => {
+    const eventId = await ownEvent(a, { kind: 'season', category: 'market', title: 'Riverside Farmers Market', titleKey: 'riverside farmers market', start: '2026-05-01', end: '2026-08-31', weekdays: [6, 3] });
+    // The sheet sends every field with every save, the unchanged dates included (weekdays in any order).
+    const res = await patch(a, eventId, {
+      op: 'edit', basedOn: 'base',
+      fields: { title: 'Riverside Market', start: '2026-05-01', end: '2026-08-31', weekdays: [3, 6], startTime: null, where: null },
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json() as { event: EventBody }).event).toMatchObject({ title: 'Riverside Market', start: '2026-05-01', end: '2026-08-31', edited: true });
+    const revision = (await revisionsOf(a)).find((each) => each.eventId === eventId);
+    expect(Object.keys((revision?.fields ?? {}) as object).sort()).toEqual(['startTime', 'title', 'where']);
+  });
+
   it('a hidden event stays hidden when research finds it again (a merge changes the base only)', async () => {
     const eventId = await ownEvent(a);
     expect((await patch(a, eventId, { op: 'hide', basedOn: 'base' })).status).toBe(200);

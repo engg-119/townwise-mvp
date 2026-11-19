@@ -16,6 +16,24 @@ import type { RevisionFields, RevisionRecord } from '../stores/research-revision
 /** At most this many revisions a location; past it an edit answers 409 `too_many_edits`. [CONFIRM: at most 1,000 edits a location] */
 export const MAX_LOCATION_REVISIONS = 1_000;
 
+/**
+ * The dates an edit actually changes: each of `start`, `end` and `weekdays` (sorted, each once) left out when it equals
+ * the event's shown value. The Calendar's edit sheet sends all three with every save, so a title edit of a season that
+ * started weeks ago must not read as a typed start (held to research's window) and be refused.
+ */
+export function changedDates(
+  shown: { readonly start: string; readonly end: string; readonly weekdays: readonly number[] | null },
+  input: { readonly start?: string | undefined; readonly end?: string | undefined; readonly weekdays?: readonly number[] | null | undefined },
+): { start?: string; end?: string; weekdays?: number[] | null } {
+  const weekdays = input.weekdays === undefined || input.weekdays === null ? input.weekdays : [...new Set(input.weekdays)].sort((x, y) => x - y);
+  const sameWeekdays = weekdays !== undefined && JSON.stringify(weekdays) === JSON.stringify(shown.weekdays === null ? null : [...shown.weekdays].sort((x, y) => x - y));
+  return {
+    ...(input.start !== undefined && input.start !== shown.start ? { start: input.start } : {}),
+    ...(input.end !== undefined && input.end !== shown.end ? { end: input.end } : {}),
+    ...(weekdays !== undefined && !sameWeekdays ? { weekdays } : {}),
+  };
+}
+
 /** The values a revision can change, as research found them or as edited. */
 export interface EditableValues {
   readonly title: string;

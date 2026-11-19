@@ -47,7 +47,7 @@ import { fitView, type LatLng } from '../places/view.ts';
 import { COMPETITOR_RADIUS_M, matchCompetitor, pickCompetitors, type Competitor } from '../research/competitors.ts';
 import { isTownId, nextWeeklyRunDay, queuePressRun, researchRuns } from '../research/plan.ts';
 import { parseResearchedId, readResearchedViews, researchedEventsFor, type ResearchedEventView } from '../research/read.ts';
-import { MAX_LOCATION_REVISIONS } from '../research/revisions.ts';
+import { changedDates, MAX_LOCATION_REVISIONS } from '../research/revisions.ts';
 import { researchWindow } from '../research/threads.ts';
 import { datesRefused, MAX_TITLE_CHARS, safeText, TIME } from '../research/verify.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -371,23 +371,25 @@ function checkedFields(view: ResearchedEventView, input: z.infer<typeof editFiel
   if (title === null) throw new AppError(400, 'bad_title', 'That title can’t be used');
   const where = input.where === undefined || input.where === null ? input.where : safeText(input.where, MAX_WHERE_CHARS);
   if (where === null && input.where !== null && input.where !== undefined) throw new AppError(400, 'bad_where', 'That place can’t be used');
-  const weekdays = input.weekdays === undefined || input.weekdays === null ? input.weekdays : [...new Set(input.weekdays)].sort((x, y) => x - y);
-  const datesChanged = input.start !== undefined || input.end !== undefined || input.weekdays !== undefined;
+  // Only the dates that differ from the shown event count as typed (the edit sheet sends all three every time).
+  const dates = changedDates(view, input);
+  const { weekdays } = dates;
+  const datesChanged = dates.start !== undefined || dates.end !== undefined || weekdays !== undefined;
   // A start the edit keeps is held to no window: research accepted it when found, so an ongoing season's end or weekdays
   // stay editable after its start has passed. A start the person types is held to the window as research's is.
-  const startWindow = input.start !== undefined ? window : {
+  const startWindow = dates.start !== undefined ? window : {
     from: view.start < window.from ? view.start : window.from, to: view.start > window.to ? view.start : window.to,
   };
   if (datesChanged && datesRefused({
-    kind: view.kind, startDate: input.start ?? view.start, endDate: input.end ?? view.end,
+    kind: view.kind, startDate: dates.start ?? view.start, endDate: dates.end ?? view.end,
     weekdays: weekdays === undefined ? (view.weekdays === null ? null : [...view.weekdays]) : weekdays,
   }, startWindow)) {
     throw new AppError(400, 'bad_dates', 'Those dates can’t be used');
   }
   return {
     ...(title !== undefined ? { title } : {}),
-    ...(input.start !== undefined ? { start: input.start } : {}),
-    ...(input.end !== undefined ? { end: input.end } : {}),
+    ...(dates.start !== undefined ? { start: dates.start } : {}),
+    ...(dates.end !== undefined ? { end: dates.end } : {}),
     ...(weekdays !== undefined ? { weekdays } : {}),
     ...(input.startTime !== undefined ? { startTime: input.startTime } : {}),
     ...(where !== undefined ? { where } : {}),

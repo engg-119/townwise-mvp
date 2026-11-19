@@ -24,7 +24,7 @@ import { z } from 'zod';
 import { applyChange, eventCorrectionCandidate } from '../../agent/apply.ts';
 import { isoDate } from '../../dates.ts';
 import { parseResearchedId, readResearchedViews, type ResearchedEventView } from '../../research/read.ts';
-import { MAX_LOCATION_REVISIONS } from '../../research/revisions.ts';
+import { changedDates, MAX_LOCATION_REVISIONS } from '../../research/revisions.ts';
 import { researchWindow } from '../../research/threads.ts';
 import { datesRefused, MAX_TITLE_CHARS, safeText, TIME } from '../../research/verify.ts';
 import type { RevisionFields } from '../../stores/research-revisions.ts';
@@ -112,19 +112,21 @@ export function checkEdit(view: ResearchedEventView, edit: EditInput, window: { 
   const title = edit.title === undefined ? undefined : safeText(edit.title, MAX_TITLE_CHARS);
   const where = edit.where === undefined || edit.where === null ? edit.where : safeText(edit.where, MAX_WHERE_CHARS);
   if (title === null || (where === null && edit.where !== null && edit.where !== undefined)) return 'bad_title';
-  const weekdays = edit.weekdays === undefined || edit.weekdays === null ? edit.weekdays : [...new Set(edit.weekdays)].sort((x, y) => x - y);
-  const datesChanged = edit.start !== undefined || edit.end !== undefined || edit.weekdays !== undefined;
-  const startWindow = edit.start !== undefined ? window : {
+  // Only the dates that differ from the shown event count as typed (the edit sheet sends all three every time).
+  const dates = changedDates(view, edit);
+  const { weekdays } = dates;
+  const datesChanged = dates.start !== undefined || dates.end !== undefined || weekdays !== undefined;
+  const startWindow = dates.start !== undefined ? window : {
     from: view.start < window.from ? view.start : window.from, to: view.start > window.to ? view.start : window.to,
   };
   if (datesChanged && datesRefused({
-    kind: view.kind, startDate: edit.start ?? view.start, endDate: edit.end ?? view.end,
+    kind: view.kind, startDate: dates.start ?? view.start, endDate: dates.end ?? view.end,
     weekdays: weekdays === undefined ? (view.weekdays === null ? null : [...view.weekdays]) : weekdays,
   }, startWindow)) return 'bad_dates';
   return {
     ...(title !== undefined ? { title } : {}),
-    ...(edit.start !== undefined ? { start: edit.start } : {}),
-    ...(edit.end !== undefined ? { end: edit.end } : {}),
+    ...(dates.start !== undefined ? { start: dates.start } : {}),
+    ...(dates.end !== undefined ? { end: dates.end } : {}),
     ...(weekdays !== undefined ? { weekdays } : {}),
     ...(edit.startTime !== undefined ? { startTime: edit.startTime } : {}),
     ...(where !== undefined ? { where } : {}),
