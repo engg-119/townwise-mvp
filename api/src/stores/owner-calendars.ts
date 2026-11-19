@@ -442,8 +442,9 @@ export interface OwnerCalendarStore {
   labeledEvents(scope: OrgScope, locationId: string, calendarId: string, opts?: { unlabeled?: boolean }): Promise<LabeledEvent[] | null>;
   /**
    * D58: TownwiseAI's labels, each written only on a current row of this file calendar that no one has labeled, and the
-   * calendar marked sorted with its sortedAt. Resolves how many rows were labeled; null for a missing calendar or one
-   * that is not a file.
+   * calendar marked sorted with its sortedAt; a confirmed calendar that gained a label goes back to sorted, so no model
+   * label trains a forecast before an admin confirms it. Resolves how many rows were labeled; null for a missing
+   * calendar or one that is not a file.
    */
   setLabels(scope: OrgScope, locationId: string, calendarId: string, labels: readonly { uid: string; booking: Booking }[], now: Date): Promise<number | null>;
   /**
@@ -788,6 +789,8 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
         labeled = written.modifiedCount;
       }
       await markSorted(file.key, now, true);
+      // New AI labels on a confirmed calendar wait for an admin again: it goes back to sorted until the next confirm.
+      if (labeled > 0) await Source.updateOne({ ...file.key, 'bookings.state': 'confirmed' }, { $set: { 'bookings.state': 'sorted' } });
       return labeled;
     },
     async setLabel(scope, locationId, calendarId, uid, booking, now) {

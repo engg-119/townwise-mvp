@@ -8,12 +8,14 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { scopeForNewOrg } from '../src/access/policy.ts';
 import type { OwnerCalendarView } from '../src/handlers/owner-calendars.ts';
 import { addChatUsage, addGrant, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { message, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
 import { fakeLabRunner, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
 import { call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
+const STAFF = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
 const SENTINEL_LABEL = 'Sentinel master calendar';
 /** Two past events, three upcoming; private columns that are never kept. */
 const EXPORT = [
@@ -214,6 +216,23 @@ describe('labels and Use for forecasts', () => {
     // A past event's label changes no note.
     expect(await label(t, calendar.id, 'p2', 'buyout')).toMatchObject({ status: 200, body: { noteMade: false, noteKept: false } });
     expect(await notesOf(t)).toHaveLength(3);
+  });
+
+  it('a sort that labels a confirmed calendar sends it back to sorted, so its new labels train nothing until confirmed again', async () => {
+    const t = await tenant();
+    const calendar = await addExport(t);
+    await label(t, calendar.id, 'p1', 'party');
+    expect(await confirm(t, calendar.id)).toMatchObject({ status: 200 });
+    model.script(answer({ e1: 'buyout', e2: 'other', e3: 'party', e4: 'party' }));
+    const sorted = await sort(t, calendar.id);
+    expect(sorted).toMatchObject({ status: 200, body: { sent: 4, labeled: 4 } });
+    expect((sorted.body.calendar as OwnerCalendarView).bookings).toMatchObject({ state: 'sorted' });
+    const scope = scopeForNewOrg(STAFF, t.orgId);
+    expect(await server.ctx.stores.ownerCalendars.bookingsBetween(scope, t.locationId, { from: '2025-01-01', to: '2027-12-31' })).toEqual([]);
+    expect(await notesOf(t)).toEqual([]);
+    // Confirming again uses them and notes the upcoming bookings.
+    expect(await confirm(t, calendar.id)).toMatchObject({ status: 200, body: { notesMade: 2 } });
+    expect(await server.ctx.stores.ownerCalendars.bookingsBetween(scope, t.locationId, { from: '2025-01-01', to: '2027-12-31' })).toHaveLength(4);
   });
 
   it('skips an upcoming booking a private-event or closure note already covers', async () => {

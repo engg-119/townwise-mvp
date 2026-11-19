@@ -102,6 +102,7 @@ function monthOf(at: Date): string {
 
 /**
  * POST /api/org/locations/:locationId/owner-calendars/:calendarId/bookings/sort: Sort with TownwiseAI (design decision 8).
+ * On a confirmed calendar, any new label sends it back to sorted: the model's labels wait for an admin's confirm again.
  * After the calendar (404, 409 not_a_file_calendar): 503 chat_unavailable without a model; one of the calendar's 3
  * sorts an hour (429 rate_limited); the calendar's unlabeled events in batches (booking-sort.ts); the most every batch
  * can cost reserved from the organization's TownwiseAI month (409 chat_budget_exhausted when it can't, before any call),
@@ -216,10 +217,12 @@ export async function labelCalendarBooking(ctx: TownwiseContext, req: Request, r
   });
   let noteMade = false;
   let noteKept = false;
-  if (calendar.bookings?.state === 'confirmed' && before.endDate >= todayAt(ctx, location) && body.booking !== before.booking) {
+  if (calendar.bookings?.state === 'confirmed' && before.endDate >= todayAt(ctx, location)) {
+    // Not only on a change: a retry after a note write that failed still makes it (noteBookings skips a linked event).
     noteMade = isBooked(body.booking)
       && (await noteBookings(ctx, caller, location, calendar.id, [{ ...before, booking: body.booking, bookingBy: 'person' }], 1)).made === 1;
-    noteKept = !noteMade && (await ctx.stores.notes.linkedTo(scope, location.id, calendar.id)).some((note) => note.fromEvent?.uid === before.uid);
+    noteKept = !noteMade && body.booking !== before.booking
+      && (await ctx.stores.notes.linkedTo(scope, location.id, calendar.id)).some((note) => note.fromEvent?.uid === before.uid);
   }
   res.status(200).json({ calendar: await viewOf(ctx, caller, location, calendar.id), noteMade, noteKept });
 }
