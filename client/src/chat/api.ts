@@ -5,6 +5,7 @@ import { withOrgId } from '../portal/api';
 import { dataItemSchema, type DataItem } from '../portal/data/api';
 import { createNote, NOTE_EFFECTS, NOTE_KINDS, noteSchema, type Note } from '../portal/locations/api';
 import { knownRuleSuggestions, ruleScheduleSchema, ruleSchema, type Rule, type RuleSuggestion } from '../portal/rules/api';
+import { OWNER_REASONS } from '../portal/schemas';
 import type { SseEvent } from '../api/sse';
 import { agentAutoSchema, agentChangeItemSchema, noteSuggestionSchema, type AgentAuto, type NoteSuggestion } from './agentChanges';
 import type { SourceLink } from './tools';
@@ -597,6 +598,27 @@ const questionSchema = z.discriminatedUnion('kind', [
 ]);
 export type Question = z.infer<typeof questionSchema>;
 
+/**
+ * D65 (openspec change forecast-training-status, design decision 5): what started a forecast run. A system start's
+ * causes, or, with none, who asked: `asked` an org admin, `staff` Townwise staff, `unknown` a system start from before D65.
+ */
+export const OWNER_CAUSES = ['weekly', 'sales', 'person_change', 'townwise_ai', 'asked', 'staff', 'unknown'] as const;
+export type OwnerCause = (typeof OWNER_CAUSES)[number];
+
+/**
+ * D65 (design decisions 6 to 8): a finished forecast run, dated when it finished: what started it, what happened to its
+ * run in the owner codes (never the staff gate words), whether it was the location's first forecast, and the days it
+ * used (null on a run from before D65 or one that failed before it read them). Codes, dates and day counts only: no
+ * accuracy and no guest or sales figure, so it is the same under view-as. The words are forecastRuns.ts's. A cause or
+ * reason this client doesn't know leaves the item out, like an unknown kind, rather than wording it wrong.
+ */
+export const forecastMadeItemSchema = z.object({
+  at: z.string(), kind: z.literal('forecast_made'), calibrationId: z.string(), causes: z.array(z.enum(OWNER_CAUSES)),
+  outcome: z.enum(['published', 'kept', 'not_run']), reason: z.enum(OWNER_REASONS), firstForecast: z.boolean(),
+  dayCount: z.number().int().nullable(), firstDate: dateSchema.nullable(), lastDate: dateSchema.nullable(), newDays: z.number().int().nullable(),
+});
+export type ForecastMadeItem = z.infer<typeof forecastMadeItemSchema>;
+
 const activitySchema = z.discriminatedUnion('kind', [
   z.object({ at: z.string(), kind: z.literal('upload_applied'), firstDate: dateSchema, lastDate: dateSchema, dayCount: z.number().int() }),
   z.object({
@@ -610,6 +632,7 @@ const activitySchema = z.discriminatedUnion('kind', [
   }),
   /** D59: a change TownwiseAI saved on its own, with whether Undo is offered. */
   agentChangeItemSchema,
+  forecastMadeItemSchema,
 ]);
 export type ActivityItem = z.infer<typeof activitySchema>;
 

@@ -13,8 +13,9 @@ import { ErrorNotice, LoadingLine, StatusTag } from '../../portal/ui/feedback';
 import { Eyebrow, Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { changeLine, savesLine } from '../agentChanges';
-import type { ActivityItem, Budget } from '../api';
+import type { ActivityItem, Budget, ForecastMadeItem } from '../api';
 import { dayText, formatCount, KIND_LABEL, rangeText, weekdayName } from '../format';
+import { runDetailLine, runOutcomeLine } from '../forecastRuns';
 import { readsLine, type ToolContext } from '../tools';
 import { openQuestions, openRuleSuggestions, type AgentPanelState, type SendToChat } from '../useAgentPanel';
 import { ActivityChange, AgentAutoSwitch, NoteSuggestionsSection, WaitingLine } from './AgentChanges';
@@ -34,6 +35,8 @@ import { SuggestionsSection } from './SuggestionCard';
 // above the activity a line counts what it wasn't sure of and links to the log of every change, the switch for working
 // on its own sits after the weekly suggestions' switches, the events a file read wasn't sure of wait under it in "Not
 // sure from your files", and How TownwiseAI works says it saves what it's sure of while that switch is on.
+// D65 (openspec change forecast-training-status): each finished forecast run is an activity line in the owner's words
+// (forecastRuns.ts), with what started it and the days it used under it; no accuracy and no guest figure.
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -80,7 +83,21 @@ export function activityLine(item: ActivityItem): string {
     // D59: a change TownwiseAI saved on its own; the panel draws it with Undo (ActivityChange).
     case 'agent_change':
       return changeLine(item);
+    // D65: a finished forecast run; the panel draws its cause and days under it (ForecastRun).
+    case 'forecast_made':
+      return runOutcomeLine(item);
   }
+}
+
+/** D65: a finished forecast run: what happened, then a small line with what started it and the days it used. */
+function ForecastRun(props: { item: ForecastMadeItem }): React.JSX.Element {
+  const detail = runDetailLine(props.item);
+  return (
+    <View style={styles.item}>
+      <Text style={styles.itemText}>{activityLine(props.item)}</Text>
+      {detail === null ? null : <Text style={styles.muted}>{detail}</Text>}
+    </View>
+  );
 }
 
 function QuestionsSection(props: {
@@ -179,7 +196,9 @@ function ActivitySection(props: { panel: AgentPanelState; locationId: string; re
               <Text style={styles.when}>{when}</Text>
               {item.kind === 'agent_change'
                 ? <ActivityChange item={item} locationId={props.locationId} readOnlyId={props.readOnlyId} onOthersChanged={props.panel.reload} />
-                : <Text style={styles.itemText}>{activityLine(item)}</Text>}
+                : item.kind === 'forecast_made'
+                  ? <ForecastRun item={item} />
+                  : <Text style={styles.itemText}>{activityLine(item)}</Text>}
             </View>
           );
         })}
