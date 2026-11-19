@@ -47,10 +47,11 @@ export async function targetStates(
 ): Promise<Map<string, Target>> {
   const applied = changes.filter((change) => change.status === 'applied');
   const ids = (action: AgentChangeAction): string[] => applied.filter((change) => change.action === action).map((change) => change.targetId);
-  const [notes, items, uploads] = await Promise.all([
+  const [notes, items, uploads, rules] = await Promise.all([
     ctx.stores.notes.byIds(scope, ids('note.add')),
     ctx.stores.files.byIds(scope, ids('item.add')),
     Promise.all(ids('sales_days.add').map((id) => ctx.stores.uploads.get(scope, locationId, id))),
+    ctx.stores.businessRules.byIds(scope, ids('rule.add')),
   ]);
   // Slice 2: a calendar's labels are there while any label of that sort is still TownwiseAI's, unchanged.
   const labelRows = applied.filter((change) => change.action === 'booking.label');
@@ -59,6 +60,7 @@ export async function targetStates(
   )));
   const labelsThere = new Set(labelRows.filter((_, index) => (labelCounts[index] ?? 0) > 0).map((change) => change.id));
   const noteById = new Map(notes.map((note) => [note.id, note]));
+  const ruleById = new Map(rules.map((rule) => [rule.id, rule]));
   const itemIds = new Set(items.filter((file) => file.status !== 'deleting').map((file) => file.id));
   const uploadIds = new Set(uploads.flatMap((upload) => (upload === null ? [] : [upload.id])));
   const target = (state: TargetState, author: string | null = null): Target => ({ state, author });
@@ -71,7 +73,10 @@ export async function targetStates(
     if (change.action === 'item.add') return [change.id, target(itemIds.has(change.targetId) ? 'there' : 'gone')];
     if (change.action === 'sales_days.add') return [change.id, target(uploadIds.has(change.targetId) ? 'there' : 'gone')];
     if (change.action === 'booking.label') return [change.id, target(labelsThere.has(change.id) ? 'there' : 'gone')];
-    return [change.id, target('there')];
+    // Slice 3: a rule, as a note: changed once a person edited it since it was applied.
+    const rule = ruleById.get(change.targetId);
+    if (rule === undefined) return [change.id, target('gone')];
+    return [change.id, target(rule.updatedAt.getTime() === change.targetUpdatedAt?.getTime() ? 'there' : 'changed', rule.createdBy)];
   }));
 }
 

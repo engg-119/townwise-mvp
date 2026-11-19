@@ -3,7 +3,7 @@
 // (POST .../agent/changes/:changeId/undo). Undo is ordered for retries, with no transactions: the ledger row goes
 // `applied` to `undoing` by compare-and-set; the target is removed only while it is unchanged since it was applied (a
 // note by compare-and-set on its updatedAt; an item through the file removal; days through the upload removal D34's undo
-// uses); then the row goes `undoing` to `undone`, and only the call whose compare-and-set lands records
+// uses; slice 3, a rule by compare-and-set on its updatedAt); then the row goes `undoing` to `undone`, and only the call whose compare-and-set lands records
 // `agent.change_undone`. A target a person changed since leaves the row `adopted` (409 changed_since); one deleted since
 // leaves it `undone` (200). A retry of any step finishes it. A calibration already started is never undone. Undo per
 // calendar (slice 2, a `booking.label` change): the notes that calendar's sort made are undone first, each as its own
@@ -167,9 +167,14 @@ async function removeTarget(ctx: TownwiseContext, caller: MemberPrincipal, locat
       await calendars.unsortIfUnlabeled(scope, location.id, change.targetId, ctx.now());
       return cleared > 0 ? 'removed' : 'gone';
     }
-    case 'rule.add':
-      // Not written before slice 3.
-      return 'gone';
+    case 'rule.add': {
+      // Slice 3: as a note, by compare-and-set on the rule's updatedAt.
+      const rule = await ctx.stores.businessRules.find(scope, location.id, change.targetId);
+      if (rule === null) return 'gone';
+      if (change.targetUpdatedAt?.getTime() !== rule.updatedAt.getTime()) return 'changed';
+      if (await ctx.stores.businessRules.removeIf(scope, location.id, rule.id, rule.updatedAt)) return 'removed';
+      return (await ctx.stores.businessRules.find(scope, location.id, change.targetId)) === null ? 'gone' : 'changed';
+    }
   }
 }
 
@@ -238,7 +243,10 @@ async function undoRow(
     });
     // A target already gone on a retry may be what an earlier attempt removed: the refit is wanted either way, and the
     // pass clears the mark when nothing it reads changed.
-    if (change.startDate !== null && change.endDate !== null) {
+    if (change.action === 'rule.add' && change.startDate !== null) {
+      // A rule marks from its start, as a person's rule does (handlers/rules.ts).
+      await wantRefitFor(ctx, scope, location.id, { startDate: change.startDate, endDate: change.startDate });
+    } else if (change.startDate !== null && change.endDate !== null) {
       await wantRefitFor(ctx, scope, location.id, change.action === 'sales_days.add' ? 'always' : { startDate: change.startDate, endDate: change.endDate });
     }
     ctx.logger.info({ orgId: scope.orgId, locationId: location.id, changeId: change.id, action: change.action, removed }, 'townwise.agent_change_undone');

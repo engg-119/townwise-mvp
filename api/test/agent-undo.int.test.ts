@@ -2,7 +2,8 @@
 // A note is removed while unchanged and the row reads undone, recorded once with ids only; a note a person edited since
 // answers 409 changed_since and the row reads adopted; one deleted since answers 200; a retry after a stop at each step
 // finishes it; sales days need an org admin and a summary item its file's adder or an org admin; another location's id
-// answers 404, view-as is refused, and a change still being applied answers 409. Synthetic notes and days only.
+// answers 404, view-as is refused, and a change still being applied answers 409; (slice 3) a rule TownwiseAI added is
+// undone by any member while unchanged, and one an org admin edited since is theirs. Synthetic notes and days only.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -246,3 +247,43 @@ describe('POST .../agent/changes/:changeId/undo (D59)', () => {
     expect(await errorOf(await undo(t, t.member, applying.id))).toEqual({ status: 409, error: 'change_in_progress' });
   });
 });
+
+describe('Undo of a rule TownwiseAI added (D59 slice 3)', () => {
+  async function appliedRule(t: Team, text: string, date = '2026-07-04'): Promise<{ changeId: string; ruleId: string }> {
+    const ruleId = id();
+    const result = await applyChange(server.ctx, t.scope, {
+      action: 'rule.add', locationId: t.locationId, sourceKind: 'weekly', sourceId: null, targetId: ruleId, confidence: 'high', why: null,
+      onBehalfOf: null, actor: TOWNWISE_AI_ACTOR, text,
+      schedule: { kind: 'closure', startDate: date, endDate: date, weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    });
+    expect(result.outcome).toBe('applied');
+    return { changeId: result.change?.id ?? '', ruleId };
+  }
+
+  it('any member removes it while unchanged; an org admin’s edit makes it theirs (409 changed_since, adopted)', async () => {
+    const t = await team();
+    const { changeId, ruleId } = await appliedRule(t, 'Closed on Independence Day');
+    const rules = await call(server, `/api/org/locations/${t.locationId}/rules`, { session: t.member });
+    expect((await rules.json() as { rules: { id: string; createdByEmail: string }[] }).rules)
+      .toEqual([expect.objectContaining({ id: ruleId, createdByEmail: 'TownwiseAI' })]);
+    expect((await panel(t, t.member)).activity.find((item) => item.kind === 'agent_change')).toMatchObject({ changeId, undoable: true, action: 'rule.add' });
+    const res = await undo(t, t.member, changeId);
+    expect(res.status).toBe(200);
+    expect(await server.connection.collection('tw_business_rules').findOne({ _id: oid(ruleId) })).toBeNull();
+    expect(await rowOf(changeId)).toMatchObject({ status: 'undone' });
+    expect((await undoneEvents(t)).map((event) => event.details)).toEqual([{ locationId: t.locationId, action: 'rule.add', sourceKind: 'weekly' }]);
+
+    const edited = await appliedRule(t, 'Closed on the Fifth', '2026-07-05');
+    server.clock.advance(1_000);
+    const patch = await call(server, `/api/org/locations/${t.locationId}/rules/${edited.ruleId}`, {
+      session: t.admin, method: 'PATCH', json: { text: 'Closed on the Fifth of July' },
+    });
+    expect(patch.status).toBe(200);
+    expect((await panel(t, t.member)).activity.find((item) => item.kind === 'agent_change' && item.changeId === edited.changeId))
+      .toMatchObject({ undoable: false });
+    expect(await errorOf(await undo(t, t.member, edited.changeId))).toEqual({ status: 409, error: 'changed_since' });
+    expect(await rowOf(edited.changeId)).toMatchObject({ status: 'adopted' });
+    expect(await server.connection.collection('tw_business_rules').findOne({ _id: oid(edited.ruleId) })).toMatchObject({ text: 'Closed on the Fifth of July' });
+  });
+});
+

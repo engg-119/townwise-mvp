@@ -3,7 +3,8 @@
 // audit event. The unique { orgId, locationId, key } index refuses a rule that differs only in case. A rule may carry a
 // `schedule` (D31): a note's fields but its detail, which the forecast read applies as it applies notes (spec 14.5). A
 // rule stored without one has no `schedule` field at all. A schedule may repeat each year (D46, `season`); a schedule
-// stored without one has no `season` field.
+// stored without one has no `season` field. D59 slice 3: a rule TownwiseAI added on its own (agent/apply.ts) carries
+// `agent: { changeId, at }`, its ledger row and its `updatedAt` then; Undo removes it only while unchanged (removeIf).
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
@@ -60,6 +61,8 @@ interface BusinessRuleFields {
   schedule?: ScheduleFields;
   createdBy: string;
   byStaff?: boolean;
+  /** D59 slice 3: a rule TownwiseAI added on its own: its ledger row and the rule's `updatedAt` then. Absent otherwise. */
+  agent?: { changeId: Types.ObjectId; at: Date };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -97,6 +100,11 @@ function businessRuleSchema(): Schema<BusinessRuleFields> {
     schedule: { type: scheduleSchema(), required: false },
     createdBy: { type: String, required: true },
     byStaff: { type: Boolean },
+    agent: {
+      type: new Schema({
+        changeId: { type: Schema.Types.ObjectId, required: true }, at: { type: Date, required: true },
+      }, { _id: false, strict: 'throw' }),
+    },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },
   }, { strict: true, versionKey: false, read: 'primary' });
@@ -121,6 +129,8 @@ export interface BusinessRuleRecord {
   readonly createdBy: string;
   /** Made by Townwise staff in open as admin (D25); shown as "Townwise staff", never the staff email. */
   readonly byStaff: boolean;
+  /** D59 slice 3: set on a rule TownwiseAI added on its own (its ledger row, and its updatedAt then); null otherwise (absent in older fixtures). */
+  readonly agent?: { readonly changeId: string; readonly at: Date } | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -133,11 +143,17 @@ export interface BusinessRuleStore {
   scheduled(scope: OrgScope, locationId: string): Promise<BusinessRuleRecord[]>;
   /** One rule of this location, else null (another location's or organization's id included). */
   find(scope: OrgScope, locationId: string, ruleId: string): Promise<BusinessRuleRecord | null>;
+  /** D59 slice 3: the rules of the organization with these ids (Undo's and the activity's reads). */
+  byIds(scope: OrgScope, ids: readonly string[]): Promise<BusinessRuleRecord[]>;
   count(scope: OrgScope, locationId: string): Promise<number>;
   /** `id`, when given, becomes the rule's id. A duplicate id or key throws the duplicate key error. */
   create(
     scope: OrgScope, locationId: string,
-    input: { text: string; schedule: RuleSchedule | null; addedVia: RuleVia; createdBy: string; now: Date; id?: string; byStaff?: boolean },
+    input: {
+      text: string; schedule: RuleSchedule | null; addedVia: RuleVia; createdBy: string; now: Date; id?: string; byStaff?: boolean;
+      /** D59 slice 3: the ledger row of a rule TownwiseAI adds on its own; `at` is `now`. */
+      agent?: { changeId: string };
+    },
   ): Promise<BusinessRuleRecord>;
   /**
    * Writes only the fields given: `text`, and `schedule` (null takes it off). Fields left out keep what they hold now,
@@ -148,6 +164,8 @@ export interface BusinessRuleStore {
     scope: OrgScope, locationId: string, ruleId: string, change: { text?: string; schedule?: RuleSchedule | null }, now: Date,
   ): Promise<BusinessRuleRecord | null>;
   remove(scope: OrgScope, locationId: string, ruleId: string): Promise<boolean>;
+  /** D59 slice 3 (Undo): deletes the rule only while its updatedAt is this one, by compare-and-set. */
+  removeIf(scope: OrgScope, locationId: string, ruleId: string, updatedAt: Date): Promise<boolean>;
   /** Location deletion. Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
@@ -197,6 +215,7 @@ function toRule(doc: BusinessRuleFields & { _id: Types.ObjectId }): BusinessRule
     schedule: doc.schedule === undefined ? null : toSchedule(doc.schedule),
     createdBy: doc.createdBy,
     byStaff: doc.byStaff === true,
+    agent: doc.agent === undefined ? null : { changeId: doc.agent.changeId.toHexString(), at: doc.agent.at },
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -218,6 +237,11 @@ export function createBusinessRuleStore(connection: Connection): BusinessRuleSto
       const doc = await Rule.findOne({ _id: ruleId, orgId: scope.orgId, locationId }).lean();
       return doc === null ? null : toRule(doc);
     },
+    async byIds(scope, ids) {
+      if (ids.length === 0) return [];
+      const docs = await Rule.find({ orgId: scope.orgId, _id: trusted({ $in: ids.map((id) => new Types.ObjectId(id)) }) }).lean();
+      return docs.map(toRule);
+    },
     count(scope, locationId) {
       return Rule.countDocuments({ orgId: scope.orgId, locationId });
     },
@@ -226,7 +250,9 @@ export function createBusinessRuleStore(connection: Connection): BusinessRuleSto
         ...(input.id === undefined ? {} : { _id: new Types.ObjectId(input.id) }),
         orgId: scope.orgId, locationId, text: input.text, key: ruleKey(input.text), addedVia: input.addedVia,
         ...(input.schedule === null ? {} : { schedule: scheduleFieldsOf(input.schedule) }),
-        createdBy: input.createdBy, ...(input.byStaff === true ? { byStaff: true } : {}), createdAt: input.now, updatedAt: input.now,
+        createdBy: input.createdBy, ...(input.byStaff === true ? { byStaff: true } : {}),
+        ...(input.agent === undefined ? {} : { agent: { changeId: new Types.ObjectId(input.agent.changeId), at: input.now } }),
+        createdAt: input.now, updatedAt: input.now,
       });
       return toRule(doc.toObject());
     },
@@ -248,6 +274,9 @@ export function createBusinessRuleStore(connection: Connection): BusinessRuleSto
     async remove(scope, locationId, ruleId) {
       const result = await Rule.deleteOne({ _id: ruleId, orgId: scope.orgId, locationId });
       return result.deletedCount === 1;
+    },
+    async removeIf(scope, locationId, ruleId, updatedAt) {
+      return (await Rule.deleteOne({ _id: ruleId, orgId: scope.orgId, locationId, updatedAt })).deletedCount === 1;
     },
     async removeForLocation(scope, locationId) {
       return (await Rule.deleteMany({ orgId: scope.orgId, locationId })).deletedCount;

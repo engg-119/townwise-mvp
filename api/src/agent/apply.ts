@@ -1,17 +1,18 @@
 // The one writer of TownwiseAI's own changes (D59, openspec change auto-apply-agent-reads design decisions 5, 6, 7 and
 // 9): every source calls applyChange with a typed candidate, and it answers `applied`, `duplicate`, `conflict` or
-// `invalid`. It only adds: a note (`note.add`), a summary item (`item.add`), missing sales days (`sales_days.add`) or
+// `invalid`. It only adds: a note (`note.add`), a summary item (`item.add`), missing sales days (`sales_days.add`),
 // (slice 2) the labels of a file calendar sorted on import (`booking.label`, one change per calendar, whose writer labels
 // only a calendar nobody sorted, labeled or confirmed, and then confirms it for forecasts, so the confirm covers only its
-// own labels); it never changes or deletes anything else that exists. There are no transactions (DocumentDB), so the writes are ordered
+// own labels) or (slice 3) a closure or hours rule (`rule.add`, through D31's rules: refused `invalid` at the 30-rule
+// limit or when a rule with its words exists); it never changes or deletes anything else that exists. There are no transactions (DocumentDB), so the writes are ordered
 // for retries: the ledger row is inserted `applying` under the planned target id and a dedupe key unique per location in
 // every status; the target is written under that id (a second create fails on its primary key and counts as done); the
 // row is set `applied` with the target's updatedAt by compare-and-set; the audit event is recorded only by the call
 // whose compare-and-set lands; then the location is marked as wanting a refit when the change touches a training day. A
 // retry finds the row by its key, sees its own planned target, and finishes the steps left. A key another change holds,
 // in any status (an undone one included), is a duplicate, so nothing undone is ever made again. Before the row, a note
-// is checked against the notes and scheduled rules a person made on its days: one that decides a day differently is a
-// conflict, and the candidate waits as a suggestion instead (the caller's choice). Logs and audit events carry ids,
+// or a rule is checked against the notes and scheduled rules a person made on its days: one that decides a day
+// differently is a conflict, and the candidate waits as a suggestion instead (the caller's choice). Logs and audit events carry ids,
 // the action and the source kind only: never a title, a why, a file name or a figure.
 import { createHash } from 'node:crypto';
 
@@ -22,6 +23,7 @@ import type { OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter } from '../audit.ts';
 import { isBuyout, isClosure, saysOpen, type Entry } from '../closed-days.ts';
+import { utcDay } from '../dates.ts';
 import { isAgentNote } from '../forecasts/adjust.ts';
 import { eachDay } from '../forecasts/file.ts';
 import type {
@@ -29,9 +31,10 @@ import type {
 } from '../stores/agent-changes.ts';
 import { MAX_WHY_CHARS } from '../stores/agent-changes.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
-import type { RuleSchedule } from '../stores/business-rules.ts';
+import { MAX_RULES, type BusinessRuleRecord, type RuleSchedule } from '../stores/business-rules.ts';
 import type { AiSource } from '../stores/files.ts';
 import type { NoteContent, NoteLink, NoteRecord } from '../stores/notes.ts';
+import { closureKeyOf } from './closure-suggestions.ts';
 import { noteCovers } from './questions.ts';
 import { wantRefitFor } from './refit.ts';
 
@@ -69,6 +72,16 @@ export interface NoteCandidate extends CandidateBase {
 }
 
 /**
+ * Slice 3: a closure or hours rule to add, as TownwiseAI (`createdBy` and `addedVia` `townwise_ai`), through D31's rules
+ * (the caller made `text` with ruleTextOf and `schedule` with readRuleSchedule).
+ */
+export interface RuleCandidate extends CandidateBase {
+  readonly action: 'rule.add';
+  readonly text: string;
+  readonly schedule: RuleSchedule;
+}
+
+/**
  * An item, missing sales days or a calendar's labels, written by the caller's own writer under the planned id. `key` is
  * the content the dedupe key is made of. `write` is handed the ledger row (`applying`; a retry gets the same row, so its
  * `appliedAt` is a time planned before any write) and resolves the target's updatedAt, or null when it added nothing
@@ -93,7 +106,10 @@ export interface WrittenFacts {
   readonly dates: { readonly startDate: string; readonly endDate: string } | null;
 }
 
-export type ChangeCandidate = NoteCandidate | WrittenCandidate;
+export type ChangeCandidate = NoteCandidate | RuleCandidate | WrittenCandidate;
+
+/** What applyChange reads and writes through: the stores, the clock, and the logger an audit failure is logged to. */
+export type ApplyContext = Pick<TownwiseContext, 'stores' | 'now' | 'logger'>;
 
 export interface ApplyResult {
   readonly outcome: ApplyOutcome;
@@ -112,19 +128,32 @@ function folded(text: string): string {
   return text.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+/** A schedule's fields in a fixed order, its weekdays sorted (slice 3's rule key, for a schedule that is not a closure). */
+function scheduleParts(schedule: RuleSchedule): unknown[] {
+  const season = schedule.season ?? null;
+  return [
+    schedule.kind, schedule.startDate, schedule.endDate, schedule.weekdays === null ? null : [...schedule.weekdays].sort((a, b) => a - b),
+    schedule.effect, schedule.expectedGuests, schedule.startTime, schedule.endTime, season === null ? null : [season.from, season.to],
+  ];
+}
+
 /**
  * The dedupe key of a change (design decision 5): a hash of the action and its content normalized. A note's is its kind,
- * dates, weekdays (in order), effect and folded title, so the same event from a PDF and a photo is one change; an item's
- * and days' are the caller's key (the file they came from).
+ * dates, weekdays (in order), effect and folded title, so the same event from a PDF and a photo is one change; a rule's
+ * (slice 3) is a closure's key (agent/closure-suggestions.ts, which leaves out a standing closure's start, so "Closed on
+ * Mondays" undone is never added again from a later week's history) or any other schedule's fields; an item's and days'
+ * are the caller's key (the file they came from).
  */
-export function dedupeKeyOf(candidate: { action: AgentChangeAction; note?: NoteContent; key?: string }): string {
+export function dedupeKeyOf(candidate: { action: AgentChangeAction; note?: NoteContent; schedule?: RuleSchedule; key?: string }): string {
   const parts: unknown[] = [candidate.action];
-  const { note } = candidate;
+  const { note, schedule } = candidate;
   if (note !== undefined) {
     parts.push(
       note.kind, note.startDate, note.endDate, note.weekdays === null ? null : [...note.weekdays].sort((a, b) => a - b), note.effect,
       note.title === null ? null : folded(note.title),
     );
+  } else if (schedule !== undefined) {
+    parts.push(...(schedule.kind === 'closure' ? [closureKeyOf(schedule)] : scheduleParts(schedule)));
   } else {
     parts.push(candidate.key ?? '');
   }
@@ -145,25 +174,33 @@ export interface PersonsEntries {
   readonly rules: readonly RuleSchedule[];
 }
 
-/** A note covers at most this many days for the conflict check (a closure TownwiseAI writes spans at most 14). */
+/** A candidate is checked on at most this many days (a closure TownwiseAI writes spans at most 14; a standing rule, its first 400). */
 const CONFLICT_DAYS = 400;
 
 /**
- * Whether a note conflicts with a person's (design decision 7): on a day it covers, a note a person made (not one
- * TownwiseAI saved and nobody edited) or a person's scheduled rule decides the day differently than the candidate does
- * (closed, booked or open). A candidate that decides nothing (an `other` note with an unknown effect) never conflicts.
- * Pure.
+ * Whether a note (slice 3: or a rule's schedule) conflicts with a person's (design decision 7): on a day it covers (a
+ * schedule with no end, its first 400), a note a person made (not one TownwiseAI saved and nobody edited) or a person's
+ * scheduled rule decides the day differently than the candidate does (closed, booked or open). A candidate that decides
+ * nothing (an `other` note with an unknown effect) never conflicts. Pure.
  */
-export function conflictsWith(note: NoteContent, persons: PersonsEntries): boolean {
-  const own = decisionOf(note);
+export function conflictsWith(candidate: NoteContent | RuleSchedule, persons: PersonsEntries): boolean {
+  const own = decisionOf(candidate);
   if (own === null) return false;
   const notes = persons.notes.filter((each) => !isAgentNote(each));
-  const days = eachDay(note.startDate, note.endDate).slice(0, CONFLICT_DAYS).filter((day) => noteCovers(note, day));
+  const limit = utcDay(new Date(`${candidate.startDate}T00:00:00.000Z`), CONFLICT_DAYS - 1);
+  const last = candidate.endDate === null || candidate.endDate > limit ? limit : candidate.endDate;
+  const days = eachDay(candidate.startDate, last).filter((day) => noteCovers(candidate, day));
   return days.some((day) => [...notes.filter((each) => noteCovers(each, day)), ...persons.rules.filter((rule) => noteCovers(rule, day))]
     .some((entry) => {
       const theirs = decisionOf(entry);
       return theirs !== null && theirs !== own;
     }));
+}
+
+/** Slice 3: a rule TownwiseAI added on its own that nobody edited since (its updatedAt still the one it was applied at). */
+export function isAgentRule(rule: Pick<BusinessRuleRecord, 'agent' | 'updatedAt'>): boolean {
+  const agent = rule.agent ?? null;
+  return agent !== null && agent.at.getTime() === rule.updatedAt.getTime();
 }
 
 /** The why, one line, at most 200 UTF-16 units and never between the two halves of a surrogate pair; null when empty. */
@@ -175,8 +212,36 @@ function cutWhy(why: string | null): string | null {
   return fitted === '' ? null : fitted;
 }
 
+/**
+ * Slice 3: the rule under the planned id, as TownwiseAI: written now, or found (an earlier attempt, or a racing one, wrote
+ * it); null when D31 refuses it (the 30-rule limit, or a rule with its words in any case), so nothing was added.
+ */
+async function writeRule(ctx: ApplyContext, scope: OrgScope, candidate: RuleCandidate, change: AgentChangeRecord): Promise<BusinessRuleRecord | null> {
+  const rules = ctx.stores.businessRules;
+  const existing = await rules.find(scope, candidate.locationId, candidate.targetId);
+  if (existing !== null) return existing;
+  if (await rules.count(scope, candidate.locationId) >= MAX_RULES) return null;
+  let rule: BusinessRuleRecord;
+  try {
+    rule = await rules.create(scope, candidate.locationId, {
+      text: candidate.text, schedule: candidate.schedule, addedVia: 'townwise_ai', createdBy: TOWNWISE_AI_AUTHOR, now: ctx.now(),
+      id: candidate.targetId, agent: { changeId: change.id },
+    });
+  } catch (err) {
+    if (!isDuplicateKeyError(err)) throw err;
+    // The planned id (a racing attempt wrote it), or a rule with these words in any case (D31 refuses a second).
+    return rules.find(scope, candidate.locationId, candidate.targetId);
+  }
+  // Two adds racing past the limit: the later one takes its rule back, as the rules route does.
+  if (await rules.count(scope, candidate.locationId) > MAX_RULES) {
+    await rules.remove(scope, candidate.locationId, rule.id);
+    return null;
+  }
+  return rule;
+}
+
 /** The note under the planned id: written now, or found (an earlier attempt, or a racing one, wrote it). */
-async function writeNote(ctx: TownwiseContext, scope: OrgScope, candidate: NoteCandidate, change: AgentChangeRecord): Promise<NoteRecord | null> {
+async function writeNote(ctx: ApplyContext, scope: OrgScope, candidate: NoteCandidate, change: AgentChangeRecord): Promise<NoteRecord | null> {
   const existing = await ctx.stores.notes.find(scope, candidate.locationId, candidate.targetId);
   if (existing !== null) return existing;
   try {
@@ -191,10 +256,21 @@ async function writeNote(ctx: TownwiseContext, scope: OrgScope, candidate: NoteC
   }
 }
 
-/** The dates a change covers, for its row and the refit; null for an item. */
-function datesOf(candidate: ChangeCandidate): { startDate: string; endDate: string } | null {
+/** The dates a change covers, for its row; null for an item. A rule's end is null when it has none (slice 3). */
+function datesOf(candidate: ChangeCandidate): { startDate: string; endDate: string | null } | null {
   if (candidate.action === 'note.add') return { startDate: candidate.note.startDate, endDate: candidate.note.endDate };
+  if (candidate.action === 'rule.add') return { startDate: candidate.schedule.startDate, endDate: candidate.schedule.endDate };
   return candidate.dates;
+}
+
+/**
+ * The days a change's refit check reads (agent/refit.ts): a note's dates; a rule's start, as a person's rule marks one
+ * (handlers/rules.ts); a written change's row dates (its writer may set what it actually wrote). Null for none.
+ */
+function refitDates(candidate: ChangeCandidate, current: AgentChangeRecord): { startDate: string; endDate: string } | null {
+  if (candidate.action === 'note.add') return { startDate: candidate.note.startDate, endDate: candidate.note.endDate };
+  if (candidate.action === 'rule.add') return { startDate: candidate.schedule.startDate, endDate: candidate.schedule.startDate };
+  return current.startDate === null || current.endDate === null ? null : { startDate: current.startDate, endDate: current.endDate };
 }
 
 /**
@@ -202,19 +278,24 @@ function datesOf(candidate: ChangeCandidate): { startDate: string; endDate: stri
  * it. A conflict is checked only before the row exists, so a retry of a change already begun never turns into one.
  */
 export async function applyChange(
-  ctx: TownwiseContext, scope: OrgScope, candidate: ChangeCandidate, persons?: PersonsEntries,
+  ctx: ApplyContext, scope: OrgScope, candidate: ChangeCandidate, persons?: PersonsEntries,
 ): Promise<ApplyResult> {
   const { stores } = ctx;
-  const dedupeKey = dedupeKeyOf(candidate.action === 'note.add' ? { action: candidate.action, note: candidate.note } : candidate);
+  const dedupeKey = dedupeKeyOf(candidate.action === 'note.add' ? { action: candidate.action, note: candidate.note }
+    : candidate.action === 'rule.add' ? { action: candidate.action, schedule: candidate.schedule } : candidate);
   let row = await stores.agentChanges.findByKey(scope, candidate.locationId, dedupeKey);
   if (row !== null && row.targetId !== candidate.targetId) return { outcome: 'duplicate', change: row };
   if (row === null) {
-    if (candidate.action === 'note.add') {
+    if (candidate.action === 'note.add' || candidate.action === 'rule.add') {
+      const checked = candidate.action === 'note.add' ? candidate.note : candidate.schedule;
+      const to = checked.endDate ?? utcDay(new Date(`${checked.startDate}T00:00:00.000Z`), CONFLICT_DAYS - 1);
       const entries = persons ?? {
-        notes: await stores.notes.overlapping(scope, candidate.locationId, { from: candidate.note.startDate, to: candidate.note.endDate }),
-        rules: (await stores.businessRules.scheduled(scope, candidate.locationId)).flatMap((rule) => (rule.schedule === null ? [] : [rule.schedule])),
+        notes: await stores.notes.overlapping(scope, candidate.locationId, { from: checked.startDate, to }),
+        // A person's rules: one TownwiseAI added and nobody edited since is not a person's (slice 3).
+        rules: (await stores.businessRules.scheduled(scope, candidate.locationId))
+          .flatMap((rule) => (rule.schedule === null || isAgentRule(rule) ? [] : [rule.schedule])),
       };
-      if (conflictsWith(candidate.note, entries)) return { outcome: 'conflict', change: null };
+      if (conflictsWith(checked, entries)) return { outcome: 'conflict', change: null };
     }
     const dates = datesOf(candidate);
     const inserted = await stores.agentChanges.insertApplying(scope, {
@@ -222,16 +303,17 @@ export async function applyChange(
       action: candidate.action, targetId: candidate.targetId, dedupeKey, confidence: candidate.confidence, why: cutWhy(candidate.why),
       onBehalfOf: candidate.onBehalfOf, startDate: dates?.startDate ?? null, endDate: dates?.endDate ?? null,
       ...(candidate.action === 'note.add' ? { noteKind: candidate.note.kind } : {}),
-      ...(candidate.action !== 'note.add' && candidate.count !== undefined ? { count: candidate.count } : {}), now: ctx.now(),
+      ...(candidate.action === 'rule.add' ? { noteKind: candidate.schedule.kind } : {}),
+      ...((candidate.action === 'item.add' || candidate.action === 'sales_days.add' || candidate.action === 'booking.label') && candidate.count !== undefined
+        ? { count: candidate.count } : {}),
+      now: ctx.now(),
     });
     row = inserted.record;
     // Another change took the key between the read and the insert.
     if (!inserted.created && row.targetId !== candidate.targetId) return { outcome: 'duplicate', change: row };
   }
-  // A written change's dates are the row's: its writer may set what it actually wrote (a calendar sort's labels).
   const wantRefit = async (current: AgentChangeRecord): Promise<void> => {
-    const dates = candidate.action === 'note.add' ? datesOf(candidate)
-      : current.startDate === null || current.endDate === null ? null : { startDate: current.startDate, endDate: current.endDate };
+    const dates = refitDates(candidate, current);
     if (dates !== null) await wantRefitFor(ctx, scope, candidate.locationId, candidate.action === 'sales_days.add' ? 'always' : dates);
   };
   if (row.status !== 'applying') {
@@ -242,6 +324,8 @@ export async function applyChange(
   let updatedAt: Date | null;
   if (candidate.action === 'note.add') {
     updatedAt = (await writeNote(ctx, scope, candidate, row))?.updatedAt ?? null;
+  } else if (candidate.action === 'rule.add') {
+    updatedAt = (await writeRule(ctx, scope, candidate, row))?.updatedAt ?? null;
   } else {
     const wrote = await candidate.write(row);
     if (wrote === null || wrote instanceof Date) {

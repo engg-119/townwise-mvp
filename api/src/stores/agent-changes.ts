@@ -15,12 +15,17 @@ import type { NoteKind } from './notes.ts';
 export const AGENT_CHANGES_COLLECTION = 'tw_agent_changes';
 
 /**
- * What TownwiseAI may do (design decision 6). `rule.add` (slice 3) is not written yet. `booking.label` (slice 2) is one
- * row per file calendar sorted on import: its target is the calendar, and it covers every label that sort set.
+ * What TownwiseAI may do (design decision 6). `booking.label` (slice 2) is one row per file calendar sorted on import: its
+ * target is the calendar, and it covers every label that sort set. `rule.add` (slice 3) is a closure or hours rule the
+ * weekly pass or the sales history was sure of.
  */
 export type AgentChangeAction = 'note.add' | 'item.add' | 'sales_days.add' | 'rule.add' | 'booking.label';
-/** Where the change came from: `file` (slice 1) and `calendar` (slice 2) are written. */
-export type AgentSourceKind = 'file' | 'calendar' | 'weekly' | 'chat';
+/**
+ * Where the change came from: `file` (slice 1), `calendar` (slice 2), and (slice 3) `weekly` (the weekly pass's notes,
+ * rules and spotted calendar events) and `sales` (a closed weekday the sales history shows, D46). `chat` is slice 4's.
+ */
+export type AgentSourceKind = 'file' | 'calendar' | 'weekly' | 'sales' | 'chat';
+export const AGENT_SOURCE_KINDS: readonly AgentSourceKind[] = ['file', 'calendar', 'weekly', 'sales', 'chat'];
 export type AgentChangeStatus = 'applying' | 'applied' | 'undoing' | 'undone' | 'adopted';
 export type AgentConfidence = 'high' | 'medium' | 'low';
 
@@ -50,7 +55,7 @@ interface ChangeFields {
   /** The dates the change covers (a note's), for the activity's words; null for an item. */
   startDate: string | null;
   endDate: string | null;
-  /** A note's kind, for the activity's words; absent otherwise. */
+  /** A note's kind (slice 3: a rule schedule's), for the activity's words; absent otherwise. */
   noteKind?: NoteKind;
   /** How many records the change added, for the activity's words (a calendar sort's labels); absent otherwise. */
   count?: number;
@@ -64,7 +69,7 @@ function changeSchema(): Schema<ChangeFields> {
   const schema = new Schema<ChangeFields>({
     orgId: { type: Schema.Types.ObjectId, required: true },
     locationId: { type: Schema.Types.ObjectId, required: true },
-    sourceKind: { type: String, required: true, enum: ['file', 'calendar', 'weekly', 'chat'] },
+    sourceKind: { type: String, required: true, enum: AGENT_SOURCE_KINDS },
     sourceId: { type: String, default: null },
     action: { type: String, required: true, enum: AGENT_CHANGE_ACTIONS },
     targetId: { type: Schema.Types.ObjectId, required: true },
@@ -174,6 +179,11 @@ export interface AgentChangeStore {
   /** D59 slice 2: every change from one source (a calendar's labels and notes, for its Undo), oldest first. */
   listBySource(scope: OrgScope, locationId: string, source: { kind: AgentSourceKind; id: string }): Promise<AgentChangeRecord[]>;
   findByKey(scope: OrgScope, locationId: string, dedupeKey: string): Promise<AgentChangeRecord | null>;
+  /**
+   * D59 slice 3: how many changes of `action` the location has with appliedAt at or after `since`, in any status (an undone
+   * rule still counts toward the week's 2).
+   */
+  countSince(scope: OrgScope, locationId: string, input: { action: AgentChangeAction; since: Date }): Promise<number>;
   /** The location's changes newest first, `limit` a page, older than `before` when given. */
   page(scope: OrgScope, locationId: string, input: { before?: { at: Date; id: string }; limit: number }): Promise<AgentChangePage>;
   /** Deleting a location (D44). Resolves the number deleted. */
@@ -286,6 +296,9 @@ export function createAgentChangeStore(connection: Connection): AgentChangeStore
     async findByKey(scope, locationId, dedupeKey) {
       const doc = await Change.findOne({ ...of(scope, locationId), dedupeKey }).lean();
       return doc === null ? null : toChange(doc);
+    },
+    countSince(scope, locationId, input) {
+      return Change.countDocuments({ ...of(scope, locationId), action: input.action, appliedAt: trusted({ $gte: input.since }) });
     },
     async page(scope, locationId, input) {
       const before = input.before;

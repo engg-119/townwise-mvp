@@ -2,15 +2,17 @@
 // the action and the source kind only) and a refit wanted only for a training day; a crash between the steps finished by
 // a retry with one note; two sources racing write one note; a person's covering note blocks; an undone change is never
 // made again; a writer that adds nothing frees its key; (slice 2) a calendar's labels are one change whose retry writes at
-// the time planned first. Synthetic notes and days only.
+// the time planned first; (slice 3) a rule is added as TownwiseAI's, a person's rule blocks a conflicting one, D31's
+// limit and words refuse one, and an undone closure is never added again from another start. Synthetic notes and days only.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
-import { applyChange, dedupeKeyOf, TOWNWISE_AI_AUTHOR, type NoteCandidate } from '../src/agent/apply.ts';
+import { applyChange, dedupeKeyOf, TOWNWISE_AI_AUTHOR, type NoteCandidate, type RuleCandidate } from '../src/agent/apply.ts';
 import { TOWNWISE_AI_ACTOR } from '../src/audit.ts';
+import { MAX_RULES, type RuleSchedule } from '../src/stores/business-rules.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
 import { addLocation, addSalesDay, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
@@ -217,5 +219,102 @@ describe('applyChange', () => {
     expect((await label((at) => Promise.resolve(at))).outcome).toBe('applied');
     expect(seen).toHaveLength(2);
     expect(await rowsOf(p)).toHaveLength(1);
+  });
+});
+
+const MONDAYS: RuleSchedule = {
+  kind: 'closure', startDate: '2026-06-08', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+};
+
+function ruleCandidate(p: Place, over: Partial<RuleCandidate> = {}): RuleCandidate {
+  return {
+    action: 'rule.add', locationId: p.locationId, sourceKind: 'sales', sourceId: null, targetId: id(), confidence: 'high',
+    why: 'No sales on 13 of 13 Mondays.', onBehalfOf: null, actor: TOWNWISE_AI_ACTOR, text: 'Closed on Mondays', schedule: MONDAYS, ...over,
+  };
+}
+
+async function rulesOf(p: Place): Promise<Record<string, unknown>[]> {
+  return server.connection.collection('tw_business_rules').find({ locationId: new Types.ObjectId(p.locationId) }).toArray();
+}
+
+describe('applyChange, slice 3: rules', () => {
+  it('adds a rule under its planned id as TownwiseAI’s, with its ledger row, its start and no end', async () => {
+    const p = await place();
+    const c = ruleCandidate(p);
+    const result = await applyChange(server.ctx, p.scope, c);
+    expect(result.outcome).toBe('applied');
+    const [rule] = await rulesOf(p);
+    expect(rule).toMatchObject({ _id: new Types.ObjectId(c.targetId), createdBy: 'townwise_ai', addedVia: 'townwise_ai', text: 'Closed on Mondays' });
+    expect((rule?.agent as { at: Date }).at).toEqual(rule?.updatedAt);
+    expect(String((rule?.agent as { changeId: unknown }).changeId)).toBe(result.change?.id);
+    expect(result.change).toMatchObject({
+      action: 'rule.add', sourceKind: 'sales', status: 'applied', startDate: '2026-06-08', endDate: null, noteKind: 'closure', count: null,
+      dedupeKey: dedupeKeyOf({ action: 'rule.add', schedule: MONDAYS }),
+    });
+    expect(result.change?.targetUpdatedAt).toEqual(rule?.updatedAt);
+    const events = (await auditEvents(server)).filter((event) => event.action === 'agent.change_applied' && String(event.orgId) === p.orgId);
+    expect(events.map((event) => event.details)).toEqual([{ locationId: p.locationId, action: 'rule.add', sourceKind: 'sales' }]);
+  });
+
+  it('a standing closure undone is never added again, even from a later start', async () => {
+    const p = await place();
+    const first = await applyChange(server.ctx, p.scope, ruleCandidate(p));
+    const change = first.change;
+    if (change === null) throw new Error('no change');
+    await server.ctx.stores.agentChanges.markUndoing(p.scope, p.locationId, change.id, { by: 'person', now: server.clock.now() });
+    await server.ctx.stores.businessRules.remove(p.scope, p.locationId, change.targetId);
+    await server.ctx.stores.agentChanges.markUndone(p.scope, p.locationId, change.id, { by: 'person', now: server.clock.now() });
+    const later = await applyChange(server.ctx, p.scope, ruleCandidate(p, { schedule: { ...MONDAYS, startDate: '2026-07-06' } }));
+    expect(later.outcome).toBe('duplicate');
+    expect(await rulesOf(p)).toEqual([]);
+  });
+
+  it('a person’s note or rule deciding a covered day differently is a conflict; their same closure is not', async () => {
+    const p = await place();
+    await server.ctx.stores.notes.create(p.scope, p.locationId, {
+      kind: 'private_event', startDate: '2026-06-15', endDate: '2026-06-15', weekdays: null, effect: 'more_guests', expectedGuests: 30,
+      detail: null, title: null, startTime: null, endTime: null,
+    }, { createdBy: 'person', now: server.clock.now() });
+    expect(await applyChange(server.ctx, p.scope, ruleCandidate(p))).toEqual({ outcome: 'conflict', change: null });
+    const q = await place();
+    await server.ctx.stores.businessRules.create(q.scope, q.locationId, {
+      text: 'Open Mondays for brunch', addedVia: 'page', createdBy: 'person', now: server.clock.now(),
+      schedule: { ...MONDAYS, kind: 'opening', effect: 'more_guests', expectedGuests: 20 },
+    });
+    expect((await applyChange(server.ctx, q.scope, ruleCandidate(q))).outcome).toBe('conflict');
+    const r = await place();
+    await server.ctx.stores.businessRules.create(r.scope, r.locationId, {
+      text: 'Shut Mondays', addedVia: 'page', createdBy: 'person', now: server.clock.now(), schedule: MONDAYS,
+    });
+    expect((await applyChange(server.ctx, r.scope, ruleCandidate(r))).outcome).toBe('applied');
+    expect(await rowsOf(p)).toEqual([]);
+  });
+
+  it('D31 refuses one at the 30-rule limit or with words a rule has in another case: invalid, and its key is free again', async () => {
+    const p = await place();
+    await server.ctx.stores.businessRules.create(p.scope, p.locationId, {
+      text: 'CLOSED ON MONDAYS', addedVia: 'page', createdBy: 'person', now: server.clock.now(), schedule: null,
+    });
+    expect(await applyChange(server.ctx, p.scope, ruleCandidate(p))).toEqual({ outcome: 'invalid', change: null });
+    expect(await rowsOf(p)).toEqual([]);
+    const q = await place();
+    for (let index = 0; index < MAX_RULES; index += 1) {
+      await server.ctx.stores.businessRules.create(q.scope, q.locationId, {
+        text: `Rule ${String(index)}`, addedVia: 'page', createdBy: 'person', now: server.clock.now(), schedule: null,
+      });
+    }
+    expect((await applyChange(server.ctx, q.scope, ruleCandidate(q))).outcome).toBe('invalid');
+    expect(await rulesOf(q)).toHaveLength(MAX_RULES);
+  });
+
+  it('a rule starting on or before the last stored sales day wants a refit; a later one does not', async () => {
+    const p = await place();
+    await addSalesDay(server, { orgId: p.orgId, locationId: p.locationId, date: '2026-05-31', guests: 100, netSalesCents: null });
+    expect((await applyChange(server.ctx, p.scope, ruleCandidate(p))).outcome).toBe('applied');
+    expect(await refitOf(p)).toBeUndefined();
+    const q = await place();
+    await addSalesDay(server, { orgId: q.orgId, locationId: q.locationId, date: '2026-05-31', guests: 100, netSalesCents: null });
+    expect((await applyChange(server.ctx, q.scope, ruleCandidate(q, { schedule: { ...MONDAYS, startDate: '2026-05-04' } }))).outcome).toBe('applied');
+    expect(await refitOf(q)).toEqual({ wantedAt: server.clock.now() });
   });
 });
