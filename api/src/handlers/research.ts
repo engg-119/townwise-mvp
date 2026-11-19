@@ -19,7 +19,7 @@
 // POST /api/org/locations/:locationId/research/run (`org.research.run`, org admin, `1kb`, the `research` limiter, never
 // open as admin): Research now. A run of the location's own threads, due at once, that never queues the town's run.
 // 202 { run }; 409 research_running while the location has a live run (the one-live-run index answers a racing press
-// the same); 409 too_soon within 6 hours of the location's last run; 503 research_off while research does not run here
+// the same); 409 too_soon within 6 hours of the location's last run (not one that ended `budget`); 503 research_off while research does not run here
 // or the organization's switch is off. It logs ids only.
 //
 // PATCH /api/org/research { on, orgId? } (`org.research.switch`, org admin, `2kb`, open as admin may only turn it off):
@@ -254,7 +254,10 @@ export async function getCompetition(ctx: TownwiseContext, req: Request, res: Re
 
 // ---- Research now and the organization's switch ---------------------------------------------------------------------
 
-/** Research now waits this long after the location's last run, from its finish (its creation while it has none). */
+/**
+ * Research now waits this long after the location's last run, from its finish (its creation while it has none), unless
+ * that run ended `budget`.
+ */
 export const PRESS_AFTER_MS = 6 * 3_600_000;
 /**
  * The statuses that hold the location's live slot, as stores/research-shared.ts LIVE_RUN_STATUSES (only the research
@@ -282,7 +285,9 @@ export async function pressResearch(ctx: TownwiseContext, req: Request, res: Res
   // A live run is always the location's newest (the index allows no other while it lives), so one read answers both.
   const last = await ctx.stores.researchLocations.lastRun(scope, location.id);
   if (last !== null && LIVE.includes(last.status)) throw researchRunning();
-  if (last !== null && ctx.now().getTime() - (last.finishedAt ?? last.createdAt).getTime() < PRESS_AFTER_MS) {
+  // A run that ended `budget` had every thread refused before any call, so it spent nothing and sent nothing: Research
+  // now, which the automatic share does not bound, runs right after it (the "Little budget left" scenario).
+  if (last !== null && last.status !== 'budget' && ctx.now().getTime() - (last.finishedAt ?? last.createdAt).getTime() < PRESS_AFTER_MS) {
     throw new AppError(409, 'too_soon', 'This location was researched in the last 6 hours');
   }
   const run = await queuePressRun(ctx, scope, location);

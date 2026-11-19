@@ -287,6 +287,13 @@ describe('POST /api/org/locations/:locationId/research/run (Research now)', () =
     expect(await runsOf(t)).toHaveLength(2);
   });
 
+  it('runs right after a run that ended budget (every thread refused, nothing spent)', async () => {
+    const t = await tenant();
+    await locationRun(t, { key: 'w:2026-06-01', trigger: 'weekly', ends: { neighborhood: { status: 'budget' }, competitors: { status: 'budget' } }, finish: 'budget' });
+    expect((await press(t)).status).toBe(202);
+    expect(await runsOf(t)).toHaveLength(2);
+  });
+
   it('answers 503 research_off while the organization’s switch is off or research does not run here, queuing nothing', async () => {
     const t = await tenant();
     expect(await errorOf(await press(t, t.admin, deployOff))).toEqual({ status: 503, error: 'research_off' });

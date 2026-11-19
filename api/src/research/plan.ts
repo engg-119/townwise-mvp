@@ -218,7 +218,12 @@ async function insertLocationRun(
 
 /** The location's week's run, unless one was created in the last 6 days or one is live. */
 export async function planLocationRun(ctx: PlanContext, scope: OrgScope, location: LocationRecord): Promise<PlanOutcome> {
-  if (ctx.config.researchOrgMonthlyUsd <= 0) return 'off';
+  if (ctx.config.researchOrgMonthlyUsd <= 0) {
+    // The share at 0 plans no automatic run, but Research now still queues one: complete it if its threads went missing,
+    // or the location would hold a live run with nothing to claim.
+    await completeLocationThreads(ctx, scope, location);
+    return 'off';
+  }
   const now = ctx.now();
   if (recent(await ctx.stores.researchLocations.lastRun(scope, location.id), now)) {
     await completeLocationThreads(ctx, scope, location);
