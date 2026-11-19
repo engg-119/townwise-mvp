@@ -121,12 +121,15 @@ function daysSince(count: number): string {
   return count === 1 ? 'the 1 day since' : `the ${String(count)} days since`;
 }
 
-/** Words for `stale`, null for every other state. */
+/**
+ * Words for `stale`, null for every other state. D65: while a refit runs they say the days aren't in it yet rather than
+ * when Townwise refits, which the updating sentence after them would contradict.
+ */
 function staleWords(calibration: Calibration): string | null {
   if (calibration.state !== 'stale') return null;
   const made = `Forecast made from your sales through ${shortDate(calibration.dataThrough)}.`;
   const since = daysSince(calibration.newerDays);
-  if (calibration.nextRefresh === null) {
+  if (calibration.nextRefresh === null || calibration.updating?.stage === 'running') {
     return `${made} ${since.charAt(0).toUpperCase()}${since.slice(1)} ${calibration.newerDays === 1 ? 'isn’t' : 'aren’t'} in it yet.`;
   }
   return `${made} Townwise refits on ${shortDate(calibration.nextRefresh)} with ${since}.`;

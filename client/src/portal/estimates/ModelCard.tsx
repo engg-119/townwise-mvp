@@ -84,13 +84,14 @@ export function liveLine(live: LiveAccuracy | null): string {
  * D42: the words for a `stale` calibration, as the API's calibrationWords gives them: "Forecast made from your sales
  * through Sun, Nov 15. Townwise refits on Mon, Nov 23 with the 6 days since.", or with the weekly refresh off "… The 6
  * days since aren’t in it yet."; null in every other state (a `calibrated` run's own line already says what it saw).
+ * D65: while a refit runs, the second form too, so the card never says the refit is both next Monday and happening now.
  */
 export function staleLine(calibration: Calibration): string | null {
   if (calibration.state !== 'stale') return null;
   const day = (date: string): string => shortDate(date).replace(/, \d{4}$/, '');
   const made = `Forecast made from your sales through ${day(calibration.dataThrough)}.`;
   const since = calibration.newerDays === 1 ? '1 day since' : `${String(calibration.newerDays)} days since`;
-  if (calibration.nextRefresh === null) return `${made} The ${since} ${calibration.newerDays === 1 ? 'isn’t' : 'aren’t'} in it yet.`;
+  if (calibration.nextRefresh === null || updatingOf(calibration)?.stage === 'running') return `${made} The ${since} ${calibration.newerDays === 1 ? 'isn’t' : 'aren’t'} in it yet.`;
   return `${made} Townwise refits on ${day(calibration.nextRefresh)} with the ${since}.`;
 }
 

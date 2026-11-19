@@ -87,7 +87,7 @@ describe('calibrationWords', () => {
     const calibrated = calibrationOf(COVERAGE, { dataThrough: '2026-11-21', newerDays: 0 }, '2026-11-30', RUNNING);
     expect(calibrationWords(calibrated, ZONE, NOW)).toBe('Updating your forecast, started 2:14 PM.');
     const one = calibrationOf(COVERAGE, { dataThrough: '2026-11-20', newerDays: 1 }, '2026-11-30', RUNNING);
-    expect(calibrationWords(one, ZONE, NOW)).toBe('Forecast made from your sales through Fri, Nov 20. Townwise refits on Mon, Nov 30 with the 1 day since. Updating your forecast with 1 new day, started 2:14 PM.');
+    expect(calibrationWords(one, ZONE, NOW)).toBe('Forecast made from your sales through Fri, Nov 20. The 1 day since isn’t in it yet. Updating your forecast with 1 new day, started 2:14 PM.');
     const stale = calibrationOf(COVERAGE, { dataThrough: '2026-11-15', newerDays: 6 }, null, RUNNING);
     expect(calibrationWords(stale, ZONE, NOW)).toBe('Forecast made from your sales through Sun, Nov 15. The 6 days since aren’t in it yet. Updating your forecast with 6 new days, started 2:14 PM.');
   });

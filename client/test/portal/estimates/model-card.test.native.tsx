@@ -225,8 +225,9 @@ describe('D65: a forecast being updated, on a location page', () => {
     await withState({ state: 'stale', ...SALES, dataThrough: '2026-11-15', newerDays: 6, nextRefresh: '2026-11-23', updating: { stage: 'running', since } });
     const link = await appScreen.findByRole('link', { name: 'Updating your forecast with 6 new days, started 2:14 PM.' });
     expect(link.props.href).toBe('/locations/l1/agent?panel=activity');
-    // Beside the stale line, which still says what the published forecast saw.
-    expect(appScreen.getByText('Forecast made from your sales through Sun, Nov 15. Townwise refits on Mon, Nov 23 with the 6 days since.')).toBeTruthy();
+    // Beside the stale line, which still says what the published forecast saw, but not that the refit is next Monday.
+    expect(appScreen.getByText('Forecast made from your sales through Sun, Nov 15. The 6 days since aren’t in it yet.')).toBeTruthy();
+    expect(appScreen.queryByText(/Townwise refits on/)).toBeNull();
   });
 
   test('a first forecast building and next, in the In progress block', async () => {

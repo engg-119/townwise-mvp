@@ -55,6 +55,7 @@ While `updating` is not null, the model card (P24) SHALL show a sentence saying 
 #### Scenario: Model card while a refit runs
 - **WHEN** a stale location with 6 newer days has a calibration running since 2:14 PM
 - **THEN** the model card reads "Updating your forecast with 6 new days, started 2:14 PM."
+- **AND** its stale line reads "The 6 days since aren’t in it yet." rather than when Townwise refits
 
 #### Scenario: Dashboard with two locations
 - **WHEN** one of an organization's two locations is updating

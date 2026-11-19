@@ -45,7 +45,7 @@ GET /api/org reads the newest calibration once per location, as it already reads
 
 ### 3. Where it shows, and the words
 
-Words are client functions in `client/src/portal/upload/copy.ts` beside `calibrationHeading`, pure and pinned, with `formatTime` ("2:14 PM", the viewer's time zone) and `plural`; a `since` on an earlier day than the viewer's today adds the short date ("Sun, Nov 15, 11:58 PM"). "Building" is used only for `running`; no `waiting` sentence contains it or a time, and none promises that a forecast will be published (14.1). "First forecast" words follow the state: `not_calibrated` means no forecast now. [CONFIRM: every updating sentence below]
+Words are client functions in `client/src/portal/upload/copy.ts` beside `calibrationHeading`, pure and pinned, with `formatTime` ("2:14 PM", the viewer's time zone) and `plural`; a `since` on an earlier day than the viewer's today adds the short date ("Sun, Nov 15, 11:58 PM"). "Building" is used only for `running`; no `waiting` sentence contains it or a time, and none promises that a forecast will be published (14.1). "First forecast" words follow the state: `not_calibrated` means no forecast now. While a refit runs, the stale line beside it drops “Townwise refits on {day} with the {n} days since.” for “The {n} days since aren’t in it yet.” (its `nextRefresh` null form), so the card and the overview tool never say the refit is both next Monday and happening now; “Forecast made from your sales through {day}.” stays. [CONFIRM: every updating sentence below, and the stale line’s days-since form while a refit runs]
 
 | Where | `running`, published run | `running`, first forecast | `waiting` |
 |---|---|---|---|
