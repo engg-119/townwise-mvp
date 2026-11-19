@@ -13,7 +13,7 @@ import { METRIC_NOUN, metricNumber, shortDate, signedPercent, type Metric } from
 import { formatCount, plural } from '../format';
 import { UploadAction } from '../locations/parts';
 import { Actions } from '../ui/Button';
-import { Skeleton, WeekTileShapes } from '../skeleton';
+import { Skeleton, SkeletonText, WeekTileShapes } from '../skeleton';
 import { Panel } from '../ui/layout';
 import { PhraseParts } from '../ui/PhraseParts';
 import { Eyebrow, Small } from '../ui/text';
@@ -140,8 +140,17 @@ export function lastWeekGlance(comparison: LastWeek, metric: Metric): string {
   return plainOf(lastWeekGlancePhrase(comparison, metric));
 }
 
-function LastWeekTile(props: { comparison: LastWeek; metric: Metric; locationId: string; readOnlyId: string | null }): React.JSX.Element {
+function LastWeekTile(props: { comparison: LastWeek; metric: Metric; locationId: string; readOnlyId: string | null; loading: boolean }): React.JSX.Element {
   const { comparison, metric } = props;
+  // UI review 2026-11-19: until last week's forecast read answers, the tile waits rather than say the sales stop and
+  // then swap it for the forecast's words.
+  if (props.loading) {
+    return (
+      <Tile eyebrow="Last week">
+        <Skeleton name="last-week-tile" label="Loading last week"><SkeletonText lines={2} lastWidth="70%" /></Skeleton>
+      </Tile>
+    );
+  }
   const stale = comparison.state === 'no_recent' || comparison.state === 'no_days';
   const error = lastWeekErrorGlancePhrase(comparison);
   return (
@@ -185,6 +194,8 @@ export function Glance(props: {
   /** The forecast read is still out: the first tile waits for it rather than show last year's total first. */
   forecastLoading: boolean;
   lastWeek: LastWeek;
+  /** Last week's forecast read is still out: its tile waits for it (UI review 2026-11-19). */
+  lastWeekLoading: boolean;
   next: NextEvent | null;
   calendar: Calendar;
   /** The last day Home reads the calendar for. */
@@ -200,7 +211,7 @@ export function Glance(props: {
         tablet
         items={[
           { key: 'week', span: 4, node: <ThisWeekTile week={props.week} metric={metric} forecast={props.forecast} forecastLoading={props.forecastLoading} /> },
-          { key: 'last', span: 4, node: <LastWeekTile comparison={props.lastWeek} metric={metric} locationId={props.locationId} readOnlyId={props.readOnlyId} /> },
+          { key: 'last', span: 4, node: <LastWeekTile comparison={props.lastWeek} metric={metric} locationId={props.locationId} readOnlyId={props.readOnlyId} loading={props.lastWeekLoading} /> },
           { key: 'next', span: 4, node: <NextTile next={props.next} calendar={props.calendar} until={props.until} /> },
         ]}
       />

@@ -1,6 +1,6 @@
 import { Link } from 'expo-router';
-import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { openAsAdminOrgId } from '../../portal/api';
 import { usePortal } from '../../portal/PortalProvider';
@@ -28,7 +28,8 @@ export function changesHref(locationId: string): string {
 
 /** One change: its line, and Undo while it may be undone here. */
 export function ChangeLine(props: {
-  change: Pick<AgentChange, 'action' | 'noteKind' | 'weekdays' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'status' | 'undoable'> & { id: string };
+  change: Pick<AgentChange, 'action' | 'noteKind' | 'weekdays' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'sourcePasted' | 'status' | 'undoable'>
+    & { id: string };
   locationId: string;
   readOnlyId: string | null;
   /** The line's own style (the activity's or the log's). */
@@ -46,12 +47,18 @@ export function ChangeLine(props: {
   const [state, setState] = useState<{ status: AgentChange['status']; undoing: boolean; error: string | null; final: boolean }>({
     status: change.status, undoing: false, error: null, final: false,
   });
+  // UI review 2026-11-19: an Undo that worked takes its button away, so on web focus moves to the line, which now says
+  // it was undone, rather than falling to the page.
+  const lineRef = useRef<React.ComponentRef<typeof Text>>(null);
+  const [undid, setUndid] = useState(0);
+  useEffect(() => { if (undid > 0 && Platform.OS === 'web') lineRef.current?.focus(); }, [undid]);
   const undo = (): void => {
     if (state.undoing) return;
     setState((current) => ({ ...current, undoing: true, error: null }));
     undoChange(api, props.locationId, change.id).then(
       (after) => {
         setState({ status: after.status, undoing: false, error: null, final: false });
+        setUndid((n) => n + 1);
         if (change.action === 'booking.label' && after.status === 'undone') onOthersChanged?.();
       },
       (error: unknown) => {
@@ -63,7 +70,7 @@ export function ChangeLine(props: {
   const offered = change.undoable && state.status === 'applied' && !state.final;
   return (
     <View style={styles.change}>
-      <Text style={props.textStyle ?? styles.itemText}>{changeLine({ ...change, status: state.status })}</Text>
+      <Text ref={lineRef} tabIndex={-1} style={props.textStyle ?? styles.itemText}>{changeLine({ ...change, status: state.status })}</Text>
       {offered ? (
         <Button
           variant="link"

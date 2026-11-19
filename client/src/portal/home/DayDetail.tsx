@@ -8,7 +8,7 @@ import { noteWords } from '../analytics/panel';
 import { eventLine, thisDayPhrase, type MonthDay } from '../analytics/week';
 import { shortDate, type Metric } from '../analytics/words';
 import { ReasonMark } from '../calendar/CalendarDay';
-import { noteTitleOf, shortReasons, type CalendarDayView, type ShortReason } from '../calendar/model';
+import { besideClosed, noteTitleOf, shortReasons, type CalendarDayView, type ShortReason } from '../calendar/model';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay } from '../estimates/api';
 import { formatCount, plural } from '../format';
 import type { LoadState } from '../hooks';
@@ -74,8 +74,9 @@ export function forecastDayLines(day: ForecastDay): string[] {
  * with its reason for its sources and, before a line whose words say the direction, Why's mark (shortReasons). Home
  * passes a forecast day only from today on.
  */
-export function whyRows(day: Pick<ForecastDay, 'reasons' | 'model'>, count: number): ShortReason[] {
-  return shortReasons(day, false, count);
+export function whyRows(day: Pick<ForecastDay, 'reasons' | 'model' | 'status'>, count: number): ShortReason[] {
+  // A closed day's Forecast part says Closed already (UI review 2026-11-19).
+  return besideClosed(day, shortReasons(day, false, count));
 }
 
 /** The Reorder part's line: how the next order relates to `date`, or why Townwise can't say. */

@@ -5,7 +5,8 @@ Tests first in every group. Run single suites only (`npm run test:unit -w @townw
 - [x] 0.1 The coordinator took the owner's decisions on the owner's behalf (design, "Decisions taken for the owner"); each ships as a `[CONFIRM: ...]` marker in the D56 row.
 - [x] 0.2 D56 is this change's number (D54 and D55 were taken by other sessions on 2026-11-17).
 - [ ] 0.3 Timing spike, skipped on 2026-11-18: one real order guide as a PDF and as an .xlsx through a scripted chat turn, recording seconds from the turn's claim to the attachment's parse, to the tool's run and to `done`, and output tokens. Fix `ORDER_SETUP_ITEMS_MAX` (and the client's `CHAT_SETUP_ITEMS_MAX`) from it.
-- [ ] 0.4 Owner: approve or edit the privacy wording (7.5). It shipped unapproved on 2026-11-18, in its own commit, under a `[CONFIRM]` marker on D56.
+- [x] 0.4 Owner: approve or edit the privacy wording (7.5). It shipped unapproved on 2026-11-18, in its own commit, under a `[CONFIRM]` marker on D56.
+  - Owner approved on 2026-11-19: the privacy wording of 7.5, as shipped; its `[CONFIRM]` marker in `privacy.tsx` and on D56 was removed.
 
 ## 1. Shared suggestions and answer checks
 
@@ -51,3 +52,4 @@ Tests first in every group. Run single suites only (`npm run test:unit -w @townw
 - [x] 7.3 `api/README.md`: Orders flow 7, the audit row, the two endpoints, `tw_order_cards`.
 - [x] 7.4 `client/MODULE.md`: the order tools paragraph and a `## Local changes` entry naming `test/portal/orders/setupCard.test.ts` (phase A's client files) and the phase B tests.
 - [x] 7.5 `client/app/(marketing)/privacy.tsx`, ahead of 0.4 on the coordinator's word, in its own commit so it can be dropped or reworded alone, and without the date line (another branch sets it): the new "Files you attach to a TownwiseAI message" paragraph and the edits to the conversation, "Files you let TownwiseAI read" and Anthropic sentences, with the date; update the pins in `client/test/marketing/pages.test.web.tsx`, `privacy-forecasts.test.web.tsx` and `privacy-suggestions.test.web.tsx`, and add "Privacy says what attaching a file to a TownwiseAI message sends and what an ordering suggestion keeps (D36, D56)". Rebase on whichever of the other branches editing that page landed first.
+  - Owner approved on 2026-11-19 (0.4).

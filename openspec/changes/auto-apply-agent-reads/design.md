@@ -138,7 +138,7 @@ Alternatives: a calibration per change (hits the 4 a day and charges $0.10 each)
 
 ### 13. Switches, defaults and who acts
 
-- **`agentAuto`** on `tw_orgs` (`{ on, at, by }`, absent reads on), via `PATCH /api/org/agent-auto` (`org.agent_auto.switch`, `org_admin`). Staff open as admin may only turn it off, as with `calendarTitlesToAi`. The deploy switch `TOWNWISE_AGENT_AUTO` defaults to true, and both must be on. [CONFIRM: TownwiseAI works on its own by default]
+- **`agentAuto`** on `tw_orgs` (`{ on, at, by }`, absent reads on), via `PATCH /api/org/agent-auto` (`org.agent_auto.switch`, `org_admin`). Staff open as admin may only turn it off, as with `calendarTitlesToAi`. The deploy switch `TOWNWISE_AGENT_AUTO` defaults to true, and both must be on.
 - **While on:** automatic triggers run and decision 7 applies. This includes reads a person pressed, which now also leave medium and low events as suggestions. [CONFIRM: a read someone asked for follows the same confidence bar]
 - **While off:** no automatic trigger runs, presses behave exactly as today (D34 writes all events, D58 waits for confirm), suggestions wait, and refits wanted still run, since they send nothing anywhere.
 - **Calendar titles:** an automatic sort or a brought-forward pass sends titles only while `calendarTitlesToAi` is also on.
@@ -148,7 +148,7 @@ Alternatives: a calibration per change (hits the 4 a day and charges $0.10 each)
 ### 14. Privacy and consent
 
 - **What newly goes to Anthropic:** stored files other than sales exports, on store (as on a D34 press); a file calendar's titles, dates and hours, on import (as on a D58 press); and the weekly request more often after a calendar change. Never a sales figure on its own, a description, or a file kept from TownwiseAI. Anthropic does not train on API data.
-- **Privacy page** (`client/app/(marketing)/privacy.tsx`): rewrite "Files you let TownwiseAI read" to say that unless an org admin turns it off, TownwiseAI reads each file added to Your data, except a sales export Townwise read into days and any file whose box was unchecked. Add a "Changes TownwiseAI makes" item: what it may add, that each shows with Undo, that it never changes or deletes what exists, and the log. Reword the Anthropic item's "nothing is sent to Anthropic unless you use it" sentence. Reword the Sorting bookings item for the sort on import (slice 2). [CONFIRM: privacy wording for TownwiseAI working on its own]
+- **Privacy page** (`client/app/(marketing)/privacy.tsx`): rewrite "Files you let TownwiseAI read" to say that unless an org admin turns it off, TownwiseAI reads each file added to Your data, except a sales export Townwise read into days and any file whose box was unchecked. Add a "Changes TownwiseAI makes" item: what it may add, that each shows with Undo, that it never changes or deletes what exists, and the log. Reword the Anthropic item's "nothing is sent to Anthropic unless you use it" sentence. Reword the Sorting bookings item for the sort on import (slice 2).
 - **In the app:** P25's How TownwiseAI works replaces "it never saves a note without you" with "It saves what it's sure of and shows each change here with Undo. Anything it isn't sure of waits for you." The switch's words sit beside the weekly suggestions switch. [CONFIRM: the panel's and switch's words]
 - **Sawtooth:** the 2026-11-15 consent covers product use. Event invoices and booking PDFs can name customers, so the owner tells Sawtooth's owner before the switch is on in production, as for open as admin after join. [CONFIRM: Sawtooth's 2026-11-15 consent covers automatic reads, and its owner is told first]
 
@@ -232,6 +232,7 @@ Optional fields only: `agentAuto` on orgs, `ai.auto` on reads, `agent` on notes 
 Owner questions (only the first blocks production; none blocks building slice 1):
 
 1. Do you approve that, by default, TownwiseAI sends every file added to Your data (PDFs, sheets, Word documents, photos, ZIPs; not sales exports Townwise read into days) to Anthropic without a press, and the privacy wording in decision 14? Will you tell Sawtooth's owner first?
+   Answered by the owner on 2026-11-19: yes, on by default, and the privacy wording in decision 14 is approved. Production keeps `TOWNWISE_AGENT_AUTO=false` only until the owner confirms Sawtooth's owner has been told (decision 14), then it flips to true.
 2. In slice 3, should business rules TownwiseAI is sure of be applied (default: yes, at most 2 a week), or always wait?
 
 [DECISION NEEDED] items (gaps shown honestly, not settled here):

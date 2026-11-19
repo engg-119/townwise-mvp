@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { MemberPrincipal, OrgScope } from '../src/access/policy.ts';
 import { activityFor, agentChangeSource, ACTIVITY_SOURCES, type ActivityInput } from '../src/agent/activity.ts';
-import { changeView, mayUndo, targetStates, undoable, type Target, type TargetState } from '../src/agent/changes.ts';
+import { changeView, mayUndo, pastedSources, targetStates, undoable, type Target, type TargetState } from '../src/agent/changes.ts';
 import type { TownwiseContext } from '../src/app.ts';
 import type { AgentChangeRecord } from '../src/stores/agent-changes.ts';
 
@@ -37,7 +37,11 @@ const VIEW_AS: Caller = { role: 'org_admin', userId: 'admin', viewAs: { grantId:
 /** A context whose stores answer `changes` and their targets: notes by id (with their updatedAt), items and uploads. */
 function contextWith(
   changes: readonly AgentChangeRecord[],
-  targets: { notes?: Record<string, Date>; items?: string[]; uploads?: string[]; labels?: Record<string, number>; rules?: Record<string, Date> } = {},
+  targets: {
+    notes?: Record<string, Date>; items?: string[]; uploads?: string[]; labels?: Record<string, number>; rules?: Record<string, Date>;
+    /** Source files that are text pasted on Your data, and ones that are uploaded text files. */
+    pasted?: string[]; uploaded?: string[];
+  } = {},
 ): TownwiseContext {
   return {
     stores: {
@@ -50,7 +54,12 @@ function contextWith(
         const updatedAt = targets.rules?.[id];
         return updatedAt === undefined ? [] : [{ id, updatedAt, createdBy: 'townwise_ai' }];
       })) },
-      files: { byIds: (_scope: OrgScope, wanted: readonly string[]) => Promise.resolve(wanted.filter((id) => targets.items?.includes(id)).map((id) => ({ id, status: 'kept' }))) },
+      files: { byIds: (_scope: OrgScope, wanted: readonly string[]) => Promise.resolve(wanted.flatMap((id) => {
+        const text = { id, status: 'kept', purpose: 'reference', kind: 'text', addedVia: null, source: null };
+        if (targets.pasted?.includes(id) === true) return [{ ...text, folder: 'notes' }];
+        if (targets.uploaded?.includes(id) === true) return [{ ...text, folder: null }];
+        return targets.items?.includes(id) === true ? [{ id, status: 'kept' }] : [];
+      })) },
       uploads: { get: (_scope: OrgScope, _location: string, id: string) => Promise.resolve(targets.uploads?.includes(id) === true ? { id } : null) },
       ownerCalendars: {
         aiLabelCount: (_scope: OrgScope, _location: string, id: string, at: Date) => Promise.resolve(at.getTime() === AT.getTime() ? targets.labels?.[id] ?? 0 : 0),
@@ -73,12 +82,29 @@ describe('TownwiseAI’s changes in its activity (D59)', () => {
     expect(items).toEqual([
       {
         at: AT.toISOString(), kind: 'agent_change', changeId: note.id, action: 'note.add', sourceKind: 'file', status: 'applied',
-        startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', weekdays: null, count: null, undoable: true,
+        startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', weekdays: null, count: null, undoable: true, sourcePasted: false,
       },
       expect.objectContaining({ changeId: undone.id, status: 'undone', undoable: false }),
     ]);
     expect(JSON.stringify(items)).not.toContain(SENTINEL);
     expect(ACTIVITY_SOURCES.at(-1)).toBe(agentChangeSource);
+  });
+
+  // UI review 2026-11-19: a change read from text pasted on Your data says so; one from an uploaded text file doesn't.
+  it('marks a change from pasted text, in the activity and the log', async () => {
+    const pastedFile = 'p'.repeat(24);
+    const uploadedFile = 'u'.repeat(24);
+    const fromPaste = change({ sourceId: pastedFile });
+    const fromUpload = change({ sourceId: uploadedFile });
+    const fromCalendar = change({ sourceKind: 'calendar', sourceId: pastedFile });
+    const ctx = contextWith([fromPaste, fromUpload, fromCalendar], { pasted: [pastedFile], uploaded: [uploadedFile] });
+    const items = await activityFor(input(ctx, MEMBER), [agentChangeSource]);
+    expect(items.map((item) => (item.kind === 'agent_change' ? item.sourcePasted : null))).toEqual([true, false, false]);
+    const pasted = await pastedSources(ctx, SCOPE, [fromPaste, fromUpload, fromCalendar]);
+    const states = await targetStates(ctx, SCOPE, LOCATION, [fromPaste]);
+    expect(changeView(MEMBER, fromPaste, states, pasted).sourcePasted).toBe(true);
+    expect(changeView(MEMBER, fromUpload, states, pasted).sourcePasted).toBe(false);
+    expect(changeView(MEMBER, fromPaste, states).sourcePasted).toBe(false);
   });
 
   it('offers no Undo once a person edited the note, once it is gone, under view-as, or with no caller', async () => {
@@ -162,7 +188,7 @@ describe('who may undo, and the log’s view (D59)', () => {
     const there = await activityFor(input(contextWith([labels], { labels: { [calendarId]: 3 } }), ADMIN), [agentChangeSource]);
     expect(there).toEqual([{
       at: AT.toISOString(), kind: 'agent_change', changeId: labels.id, action: 'booking.label', sourceKind: 'calendar', status: 'applied',
-      startDate: '2025-07-12', endDate: '2026-06-20', noteKind: null, weekdays: null, count: 12, undoable: true,
+      startDate: '2025-07-12', endDate: '2026-06-20', noteKind: null, weekdays: null, count: 12, undoable: true, sourcePasted: false,
     }]);
     expect(await activityFor(input(contextWith([labels], { labels: { [calendarId]: 3 } }), MEMBER), [agentChangeSource]))
       .toEqual([expect.objectContaining({ undoable: false })]);
@@ -178,7 +204,7 @@ describe('who may undo, and the log’s view (D59)', () => {
     const states = new Map<string, Target>([[row.id, { state: 'there', author: 'townwise_ai' }]]);
     expect(changeView(MEMBER, row, states)).toEqual({
       id: row.id, at: AT.toISOString(), action: 'note.add', sourceKind: 'file', sourceRef: `f_${'f'.repeat(24)}`, status: 'applied',
-      startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', weekdays: null, count: null, why: SENTINEL, undoable: true,
+      startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', weekdays: null, count: null, why: SENTINEL, undoable: true, sourcePasted: false,
       targetId: row.targetId,
     });
     expect(changeView(VIEW_AS, row, states)).toMatchObject({ why: null, undoable: false });

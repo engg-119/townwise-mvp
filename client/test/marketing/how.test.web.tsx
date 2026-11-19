@@ -155,7 +155,7 @@ test('the stage is decorative: aria-hidden, nothing focusable, illustrations onl
 
   const visuals = [...stageOf(root).querySelectorAll<HTMLElement>('.hw-vz > .hv')];
   expect(visuals.map((visual) => visual.querySelector('.hv-cap')?.textContent)).toEqual([
-    'Hanover, NH. Dates from public calendars.', 'Illustration, not real output', 'Illustration, not real output', 'Planned. Illustration.',
+    'Hanover, NH. Dates from public calendars.', 'Illustration, not real output', 'Illustration, not real output', 'Illustration, not real output',
   ]);
   // 01: the real Hanover dates, staggered; 02 and 03: no axis numbers; 04: placeholders only.
   const dates = [...at(visuals, 0).querySelectorAll<HTMLElement>('.v1-l li')];

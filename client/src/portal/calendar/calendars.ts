@@ -47,9 +47,8 @@ export const CALENDARS_COPY = {
   /**
    * Above "Import a calendar file" and "Add a link", said once for both (calendar-event-suggestions design decision 11:
    * an add from this popover sends `titlesNotice`, and a file's or link's titles go into the weekly call only when its
-   * add did). [CONFIRM: the add screens' words on the weekly reading of titles] Its second sentence says a calendar file
-   * is read when it is imported where TownwiseAI works on its own (D59 slice 2). [CONFIRM: the import screen's and the
-   * titles switch's words on a calendar file sorted on import]
+   * add did). Its second sentence says a calendar file is read when it is imported where TownwiseAI works on its own
+   * (D59 slice 2). Approved by the owner on 2026-11-19.
    */
   weeklyReading: 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of events on a calendar you add here, with email addresses and phone numbers removed, to suggest notes for private events. Where TownwiseAI works on its own, it also reads the titles, dates and hours of every event in a calendar file when it is imported, past ones included, to label your bookings, and uses those labels for forecasts at once, with Undo. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading, or the sending of your calendars’ titles, on the TownwiseAI page.',
 } as const;
@@ -62,8 +61,7 @@ const HELP_KEPT = 'Townwise keeps each event’s title, dates and hours until yo
  * What the privacy page (app/(marketing)/privacy.tsx) says of kept calendars, in the popover's words, with the sentence
  * on Google calendars only while the list answers them on (`google.available`), so a release with them off says nothing
  * of them. It names a calendar file's sort, by a press (D58) or on import (D59 slice 2), and its labels' use for
- * forecasts, as the privacy page's Sorting bookings with TownwiseAI item does. [CONFIRM: the import screen's and the
- * titles switch's words on a calendar file sorted on import]
+ * forecasts, as the privacy page's Sorting bookings with TownwiseAI item does. Approved by the owner on 2026-11-19.
  */
 export function helpText(google: boolean): string {
   return [HELP_IMPORT, google ? HELP_GOOGLE : null, HELP_KEPT].filter((part) => part !== null).join(' ');
@@ -80,7 +78,7 @@ export function nativeLine(google: boolean): string {
  * The explainer's paragraphs: what Townwise reads, who sees it, and how its access ends. The second also says the
  * weekly suggestions read the titles (calendar-event-suggestions design decision 11: a connect from this explainer
  * sends `titlesNotice`, and a Google calendar's titles go into the weekly call only when its connection's did).
- * [CONFIRM: the Google connect explainer's words on the weekly reading of titles]
+ * Approved by the owner on 2026-11-19.
  */
 const EXPLAINER_PARAGRAPHS = [
   'Sign in with Google to pick calendars from your Google account. Townwise reads each event’s title, dates and hours, and nothing else, about every 6 hours, repeating events included.',

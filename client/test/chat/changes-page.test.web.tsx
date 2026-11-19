@@ -126,6 +126,35 @@ test('slice 2: a calendar sorted on import is one line with its count and Undo, 
     .toBe('You changed this since, so it’s yours now. Delete it from Your calendars if you don’t want it.');
 });
 
+// UI review 2026-11-19: Undo takes itself away, so focus stays on the change's line (now "… Undone.") rather than
+// falling to the page.
+test('after Undo, focus stays on the change’s line, which says it was undone', async () => {
+  const api = fakeChatApi();
+  const id = '000000000000000000000003';
+  api.reads[LOG] = () => ({ changes: [change(3)], next: null });
+  api.respond[`${LOG}/${id}/undo`] = () => ({ change: change(3, { status: 'undone', undoable: false }) });
+  renderAt(api);
+  const list = await screen.findByRole('list', { name: 'TownwiseAI’s changes' });
+  const line = 'Added a note: Closure, Jul 4, 2026, from a file you added.';
+  const undo = within(list).getByRole('button', { name: `Undo: ${line}` });
+  undo.focus();
+  fireEvent.click(undo);
+  const undone = await within(list).findByText(`${line} Undone.`);
+  expect(within(list).queryByRole('button', { name: `Undo: ${line}` })).toBeNull();
+  expect(document.activeElement).toBe(undone);
+});
+
+// UI review 2026-11-19: a change from text pasted on Your data names pasted text, not a file.
+test('a change from pasted text says so', async () => {
+  const api = fakeChatApi();
+  api.reads[LOG] = () => ({ changes: [change(1, { sourcePasted: true })], next: null });
+  renderAt(api);
+  const list = await screen.findByRole('list', { name: 'TownwiseAI’s changes' });
+  expect(within(list).getByText('Added a note: Closure, Jul 4, 2026, from text you pasted.')).toBeTruthy();
+  expect(changeLine({ action: 'item.add', noteKind: null, startDate: null, endDate: null, count: null, sourceKind: 'file', sourcePasted: true, status: 'applied' }))
+    .toMatch(/from text you pasted\.$/);
+});
+
 test('slice 5: a closure TownwiseAI saved from a calendar’s answer says it came from your calendar', () => {
   const line = changeLine({
     action: 'note.add', noteKind: 'closure', startDate: '2026-12-24', endDate: '2026-12-26', count: null, sourceKind: 'calendar', status: 'applied',

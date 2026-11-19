@@ -10,9 +10,12 @@ import { usePortal } from '../PortalProvider';
 import { LinkButton } from '../ui/Button';
 import { Checkbox } from '../ui/Checkbox';
 import { Mono, Small } from '../ui/text';
+import { useLoad } from '../hooks';
 import { AI, cantReadLine, optInLine, type OptInState } from './aiCopy';
-import { readWithAi } from './api';
+import { getItem, isCalendarFileName, readWithAi, type DataItem } from './api';
 import { DATA } from './copy';
+import { CalendarImport } from './item/CalendarImport';
+import { CALENDAR_IMPORT } from './item/copy';
 
 // “Add a file” on Your data (D28): any kind of file, up to the stored-file cap, kept as it is for reference. It
 // reuses the history drop step's queue with the purpose `reference`: the same chunks, caps and retries. Nothing here
@@ -29,6 +32,11 @@ import { DATA } from './copy';
 // as each upload completes, and only a checked box sends `aiAuto: true` (files/uploadQueue.ts), so a file that finishes
 // while it is unchecked is kept from TownwiseAI. Once the person changes the box, their choice stays until the page
 // closes. [CONFIRM: privacy wording for TownwiseAI working on its own]
+//
+// UI review 2026-11-19: a calendar file (an .ics or .ical file, kept as `other`) is imported as a calendar once stored
+// (D60), never sent to TownwiseAI, checked or not. Beside it, once it finishes, its item is read and the line says what
+// the import did, as its page does (item/CalendarImport.tsx): added with the calendar's link, or why not with Try again
+// where a retry may mend it; never that TownwiseAI can't read it.
 
 /** A finished file the person let TownwiseAI read: its stored file's id and how asking went. */
 interface Asked { fileId: string; ai: OptInState }
@@ -71,7 +79,7 @@ export function AddFile(props: {
     setAsked((current) => {
       const next = { ...current };
       for (const item of fresh) {
-        if (!optIn || aiOff || item.fileId === null) {
+        if (!optIn || aiOff || item.fileId === null || isCalendarDone(item)) {
           next[item.key] = null;
           continue;
         }
@@ -115,7 +123,9 @@ export function AddFile(props: {
   }, [taken, onAsked]);
 
   const helpId = `${useId().replace(/:/g, '')}-ai-help`;
-  const shown = queue.items.filter((item) => item.state !== 'cancelled' && (item.state !== 'done' || (asked[item.key] ?? null) !== null));
+  const shown = queue.items.filter((item) => (
+    item.state !== 'cancelled' && (item.state !== 'done' || (asked[item.key] ?? null) !== null || isCalendarDone(item))
+  ));
   return (
     <View style={styles.box}>
       <FilePicker
@@ -144,7 +154,9 @@ export function AddFile(props: {
             return (
               <View key={item.key} role="listitem" style={styles.item}>
                 <Mono tone="white">{item.name}</Mono>
-                <Small>{item.state === 'done' && ai !== undefined ? optInLine(ai) : queueLine(item)}</Small>
+                {item.state === 'done' && item.fileId !== null && isCalendarDone(item)
+                  ? <CalendarFileLine locationId={locationId} fileId={item.fileId} />
+                  : <Small>{item.state === 'done' && ai !== undefined ? optInLine(ai) : queueLine(item)}</Small>}
               </View>
             );
           })}
@@ -152,6 +164,24 @@ export function AddFile(props: {
       )}
     </View>
   );
+}
+
+/** A finished file the API keeps as a calendar file: imported as a calendar, never sent to TownwiseAI. */
+function isCalendarDone(item: { state: string; file: { kind: string; name: string | null } | null; name: string }): boolean {
+  return item.state === 'done' && item.file?.kind === 'other' && isCalendarFileName(item.file.name ?? item.name);
+}
+
+/** What importing a calendar file just added did, from its item (D60), as its page says it. */
+function CalendarFileLine(props: { locationId: string; fileId: string }): React.JSX.Element {
+  const { api } = usePortal();
+  const { locationId, fileId } = props;
+  const { state } = useLoad(useCallback(() => getItem(api, locationId, `f_${fileId}`), [api, locationId, fileId]));
+  // The item Try again answered, once pressed.
+  const [after, setAfter] = useState<DataItem | null>(null);
+  const item = after ?? (state.status === 'ready' ? state.data : null);
+  if (item === null) return <Small>{state.status === 'failed' ? CALENDAR_IMPORT.unknown : CALENDAR_IMPORT.checking}</Small>;
+  if ((item.calendar ?? null) === null) return <Small>{CALENDAR_IMPORT.unknown}</Small>;
+  return <CalendarImport item={item} readOnlyId={null} showItem={setAfter} />;
 }
 
 const styles = StyleSheet.create({

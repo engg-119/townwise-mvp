@@ -143,10 +143,10 @@ function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
     // Weekly suggestions: on by default (owner directive 2026-11-16) until an org admin turns them off. [CONFIRM]
     weeklySuggestions: doc.weeklySuggestions == null
       ? { on: true, at: null } : { on: doc.weeklySuggestions.on, at: doc.weeklySuggestions.at },
-    // Calendar titles to TownwiseAI: on by default (owner, 2026-11-17) until an org admin turns them off. [CONFIRM]
+    // Calendar titles to TownwiseAI: on by default (owner, 2026-11-17; approved 2026-11-19) until an org admin turns them off.
     calendarTitlesToAi: doc.calendarTitlesToAi == null
       ? { on: true, at: null } : { on: doc.calendarTitlesToAi.on, at: doc.calendarTitlesToAi.at },
-    // D59: TownwiseAI works on its own by default (owner rule 2026-11-16) until an org admin turns it off. [CONFIRM]
+    // D59: TownwiseAI works on its own by default (owner rule 2026-11-16; approved 2026-11-19) until an org admin turns it off.
     agentAuto: doc.agentAuto == null ? { on: true, at: null } : { on: doc.agentAuto.on, at: doc.agentAuto.at },
   };
 }
