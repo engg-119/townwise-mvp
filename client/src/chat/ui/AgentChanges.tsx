@@ -28,7 +28,7 @@ export function changesHref(locationId: string): string {
 
 /** One change: its line, and Undo while it may be undone here. */
 export function ChangeLine(props: {
-  change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'sourceKind' | 'status' | 'undoable'> & { id: string };
+  change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'status' | 'undoable'> & { id: string };
   locationId: string;
   readOnlyId: string | null;
   /** The line's own style (the activity's or the log's). */

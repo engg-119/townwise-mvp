@@ -3,16 +3,18 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { undoErrorText } from '../../src/chat/agentChanges';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
-import { fakeChatApi, type FakeChatApi } from '../helpers/chat';
+import { fakeChatApi, refusal, type FakeChatApi } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 
 // D59: TownwiseAI's log of its changes (/locations/[locationId]/agent/changes) on web: every change, newest first,
 // with what it was made from, its why, Undo while offered and the next page on demand. Under view-as it reads, with no
-// why and no Undo. Synthetic changes.
+// why and no Undo. Slice 2: a calendar sorted on import is one line with how many events it labeled, and only an org
+// admin may undo it. Synthetic changes.
 
 const LOG = '/api/org/locations/l1/agent/changes';
 
@@ -85,4 +87,32 @@ test('under view-as it reads with no why and no Undo, and says nothing changed w
   empty.reads[LOG] = () => ({ changes: [], next: null });
   renderAt(empty);
   expect(await screen.findByText('TownwiseAI hasn’t changed anything here on its own yet.')).toBeTruthy();
+});
+
+test('slice 2: a calendar sorted on import is one line with its count and Undo, and a refusal says only an org admin can', async () => {
+  const api = fakeChatApi();
+  const id = '000000000000000000000002';
+  api.reads[LOG] = () => ({
+    changes: [
+      change(2, { action: 'booking.label', sourceKind: 'calendar', sourceRef: null, noteKind: null, count: 12, startDate: '2025-07-12', endDate: '2026-06-20', why: null }),
+      // An older API's answer has no count.
+      change(1, { action: 'booking.label', sourceKind: 'calendar', sourceRef: null, noteKind: null, startDate: null, endDate: null, why: null, undoable: false }),
+    ],
+    next: null,
+  });
+  api.respond[`${LOG}/${id}/undo`] = () => ({
+    change: change(2, { action: 'booking.label', sourceKind: 'calendar', sourceRef: null, noteKind: null, count: 12, startDate: '2025-07-12', endDate: '2026-06-20', why: null, status: 'undone', undoable: false }),
+  });
+  renderAt(api, meOf(ACCESS.admin));
+  const list = await screen.findByRole('list', { name: 'TownwiseAI’s changes' });
+  const line = 'Added booking labels on 12 events, used for forecasts, from a calendar you imported.';
+  expect(within(list).getByText(line)).toBeTruthy();
+  expect(within(list).getByText('Added booking labels, used for forecasts, from a calendar you imported.')).toBeTruthy();
+  fireEvent.click(within(list).getByRole('button', { name: `Undo: ${line}` }));
+  expect(await within(list).findByText(`${line} Undone.`)).toBeTruthy();
+  expect(within(list).queryByRole('button', { name: `Undo: ${line}` })).toBeNull();
+  expect(api.writes).toEqual([{ method: 'POST', path: `${LOG}/${id}/undo`, body: undefined }]);
+  expect(undoErrorText(refusal(403, 'forbidden'), 'booking.label')).toBe('Only an org admin can undo booking labels.');
+  expect(undoErrorText(refusal(409, 'changed_since'), 'booking.label'))
+    .toBe('You changed this since, so it’s yours now. Delete it from Your calendars if you don’t want it.');
 });

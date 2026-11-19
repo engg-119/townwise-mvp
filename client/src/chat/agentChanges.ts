@@ -18,11 +18,14 @@ export const CHANGE_ACTIONS = ['note.add', 'item.add', 'sales_days.add', 'rule.a
 const actionSchema = z.enum(CHANGE_ACTIONS);
 const statusSchema = z.enum(['applying', 'applied', 'undoing', 'undone', 'adopted']);
 const sourceKindSchema = z.enum(['file', 'calendar', 'weekly', 'chat']);
+/** How many records a change added (a calendar sort's labels, slice 2); null otherwise, absent from an older API. */
+const countSchema = z.number().int().nonnegative().nullable().optional().transform((count) => count ?? null);
 
 /** The activity's item for one change: no title, why, file name or figure. */
 export const agentChangeItemSchema = z.object({
   at: z.string(), kind: z.literal('agent_change'), changeId: z.string(), action: actionSchema, sourceKind: sourceKindSchema,
-  status: statusSchema, startDate: dateSchema.nullable(), endDate: dateSchema.nullable(), noteKind: NOTE_KIND.nullable(), undoable: z.boolean(),
+  status: statusSchema, startDate: dateSchema.nullable(), endDate: dateSchema.nullable(), noteKind: NOTE_KIND.nullable(),
+  count: countSchema, undoable: z.boolean(),
 });
 export type AgentChangeItem = z.infer<typeof agentChangeItemSchema>;
 
@@ -46,7 +49,7 @@ export type NoteSuggestion = z.infer<typeof noteSuggestionSchema>;
 /** A change as the log lists it: the why is null under view-as. */
 export const agentChangeSchema = z.object({
   id: z.string(), at: z.string(), action: actionSchema, sourceKind: sourceKindSchema, sourceRef: z.string().nullable(), status: statusSchema,
-  startDate: dateSchema.nullable(), endDate: dateSchema.nullable(), noteKind: NOTE_KIND.nullable(), why: z.string().nullable(),
+  startDate: dateSchema.nullable(), endDate: dateSchema.nullable(), noteKind: NOTE_KIND.nullable(), count: countSchema, why: z.string().nullable(),
   undoable: z.boolean(), targetId: z.string().nullable(),
 });
 export type AgentChange = z.infer<typeof agentChangeSchema>;
@@ -102,24 +105,29 @@ function pageOf(action: AgentChange['action']): string {
   return action === 'note.add' ? 'Notes' : action === 'rule.add' ? 'Business rules' : action === 'booking.label' ? 'Your calendars' : 'Your data';
 }
 
-/** What a change added, in a few words: "a note: Private event, Jun 13, 2026". */
-function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate'>): string {
+/**
+ * What a change added, in a few words: "a note: Private event, Jun 13, 2026", or (slice 2) "booking labels on 12
+ * events, used for forecasts".
+ */
+function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count'>): string {
   const dates = change.startDate === null || change.endDate === null ? '' : rangeText(change.startDate, change.endDate);
   switch (change.action) {
     case 'note.add': return `a note: ${change.noteKind === null ? 'Note' : KIND_LABEL[change.noteKind]}${dates === '' ? '' : `, ${dates}`}`;
     case 'sales_days.add': return `sales days you didn’t have${dates === '' ? '' : ` for ${dates}`}`;
     case 'item.add': return 'a summary of a file';
     case 'rule.add': return 'a business rule';
-    case 'booking.label': return 'a booking label';
+    case 'booking.label':
+      return change.count === null ? 'booking labels, used for forecasts'
+        : `booking labels on ${change.count === 1 ? '1 event' : `${String(change.count)} events`}, used for forecasts`;
   }
 }
 
 const SOURCE_WORDS: Readonly<Record<AgentChange['sourceKind'], string>> = {
-  file: 'from a file you added', calendar: 'from your calendar', weekly: 'from its weekly look ahead', chat: 'from your message',
+  file: 'from a file you added', calendar: 'from a calendar you imported', weekly: 'from its weekly look ahead', chat: 'from your message',
 };
 
 /** The activity's and the log's line for a change. */
-export function changeLine(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'sourceKind' | 'status'>): string {
+export function changeLine(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'status'>): string {
   const added = `Added ${whatOf(change)}, ${SOURCE_WORDS[change.sourceKind]}.`;
   if (change.status === 'undone') return `${added} Undone.`;
   if (change.status === 'adopted') return `${added} You changed it since, so it’s yours.`;
@@ -137,7 +145,10 @@ export function undoErrorText(error: unknown, action: AgentChange['action']): st
   if (error instanceof ApiError && error.kind === 'http') {
     if (error.code === 'changed_since') return `You changed this since, so it’s yours now. Delete it from ${pageOf(action)} if you don’t want it.`;
     if (error.code === 'view_as_read_only') return 'View-as is read-only, so you can’t undo this.';
-    if (error.code === 'forbidden') return action === 'sales_days.add' ? 'Only an org admin can undo added sales days.' : 'You can’t undo this.';
+    if (error.code === 'forbidden') {
+      if (action === 'sales_days.add') return 'Only an org admin can undo added sales days.';
+      return action === 'booking.label' ? 'Only an org admin can undo booking labels.' : 'You can’t undo this.';
+    }
     if (error.status === 404) return 'This change is gone.';
   }
   return 'Couldn’t undo this. Try again.';
@@ -150,7 +161,7 @@ export function undoErrorFinal(error: unknown): boolean {
 }
 
 /** The switch's words (design decision 14). [CONFIRM: the panel's and switch's words] */
-export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add to Your data and saves what it’s sure of, such as a dated private event, so the forecast updates. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
+export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add to Your data, and sorts the bookings in each calendar file you import, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
 
 /** How TownwiseAI works' sentence, by the switch (design decision 14). [CONFIRM: the panel's and switch's words] */
 export function savesLine(on: boolean): string {

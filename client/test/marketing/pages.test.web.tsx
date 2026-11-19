@@ -271,7 +271,7 @@ test('Privacy names Anthropic as TownwiseAI’s provider, says nothing is sent u
   const anthropic = items.find((item) => item.textContent.startsWith('Anthropic,'));
   if (anthropic === undefined) throw new Error('no Anthropic item');
   // Weekly suggestions (weekly-forecast-suggestions) are the one flow nobody presses: the sentence says so first.
-  expect(anthropic.textContent).toContain('which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Apart from TownwiseAI’s weekly suggestions and, where it works on its own, the files it reads on its own (see Files you let TownwiseAI read, under Your restaurant’s sales data), nothing is sent to Anthropic unless you use it, or Townwise staff use it while they have your organization open as its admin (see Who can see it, under Your restaurant’s sales data).');
+  expect(anthropic.textContent).toContain('which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Apart from TownwiseAI’s weekly suggestions and, where it works on its own, the files it reads on its own (see Files you let TownwiseAI read, under Your restaurant’s sales data) and the calendar files it sorts when they are imported (see Sorting bookings with TownwiseAI), nothing is sent to Anthropic unless you use it, or Townwise staff use it while they have your organization open as its admin (see Who can see it, under Your restaurant’s sales data).');
   // D25: staff in open as admin can run TownwiseAI and drop files, so neither sentence may say only “you”.
   expect(anthropic.textContent).not.toContain('Nothing is sent to Anthropic unless you use it.');
   expect(anthropic.textContent).toContain('when you, or Townwise staff helping you, drop a file');
