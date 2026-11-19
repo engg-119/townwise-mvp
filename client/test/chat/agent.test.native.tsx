@@ -437,6 +437,32 @@ describe('the side panel', () => {
     expect(within(screen.getByTestId('chat-panel-row')).getByTestId('agent-side')).toBeTruthy();
   });
 
+  test('D65: ?panel=activity opens the row expanded at 390px, What it’s been doing first, and drops the parameter', async () => {
+    at(390);
+    const { router } = await renderAgent(meOf(ACCESS.member), fakeChatApi(), orgOf('member'), '/locations/l1/agent?panel=activity');
+    const row = within(await screen.findByTestId('chat-landing')).getByRole('button', { name: 'Questions and activity (2)' });
+    expect(row.props.accessibilityState).toMatchObject({ expanded: true });
+    const side = within(screen.getByTestId('chat-panel-row')).getByTestId('agent-side');
+    await within(side).findByText('Saved a note you approved: Closure, Nov 26, 2026.');
+    const headings = within(side).getAllByRole('heading').map((heading) => heading.props.children as unknown);
+    expect(headings[0]).toBe('What it’s been doing');
+    await waitFor(() => { expect(router.getSearchParams().panel).toBeUndefined(); });
+    expect(router.getPathname()).toBe('/locations/l1/agent');
+    // Closed and opened again by the person, the panel is back in its own order.
+    await fireEvent.press(row);
+    await fireEvent.press(within(screen.getByTestId('chat-landing')).getByRole('button', { name: 'Questions and activity (2)' }));
+    const again = within(within(screen.getByTestId('chat-panel-row')).getByTestId('agent-side')).getAllByRole('heading');
+    expect(again[0]?.props.children).not.toBe('What it’s been doing');
+  });
+
+  test('D65: ?panel=activity opens the column from 641px with What it’s been doing first', async () => {
+    at(1280);
+    await renderAgent(meOf(ACCESS.member), fakeChatApi(), orgOf('member'), '/locations/l1/agent?panel=activity');
+    const side = await screen.findByTestId('agent-side');
+    expect(screen.getByRole('button', { name: 'Questions and activity (2)' }).props.accessibilityState).toMatchObject({ expanded: true });
+    expect(within(side).getAllByRole('heading')[0]?.props.children).toBe('What it’s been doing');
+  });
+
   test('questions with what each answer does; an answer saves and says what it did', async () => {
     // While TownwiseAI is off the landing doesn't list the questions, so the panel's own heading, count and Planned
     // tag show here.

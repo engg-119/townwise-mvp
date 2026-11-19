@@ -5,15 +5,19 @@ import { theme } from '../../theme';
 import { shortDate } from '../analytics/words';
 import { INSIDE_RANGE } from '../calendar/model';
 import { formatDate } from '../format';
-import { useLoad } from '../hooks';
+import { useWhenDone } from '../hooks';
+import { useRefreshable } from '../console/useRefreshable';
 import { shownLocationName } from '../locations/naming';
 import { usePortal } from '../PortalProvider';
-import type { Calibration } from '../schemas';
+import { activityHref } from '../routing';
+import { updatingOf, type Calibration } from '../schemas';
 import { useShownOrg } from '../shell/LocationShell';
+import { LinkButton } from '../ui/Button';
 import { DefinitionList } from '../ui/DataTable';
 import { ErrorNotice, LoadingLine, StatusTag } from '../ui/feedback';
 import { Panel, Stack } from '../ui/layout';
 import { Heading, Small } from '../ui/text';
+import { updatingLine } from '../upload/copy';
 import { fetchEstimatesAbout, trainedOnWords, type EstimatesAbout, type ForecastRun, type LiveAccuracy } from './api';
 import { dayText } from './format';
 
@@ -23,8 +27,9 @@ import { dayText } from './format';
 // forecast staff published, which model made it, from which sales and when, its backtest and how it has done so far,
 // misses included; how far its town's calendar is researched; and whether any headcount input is (Planned until one
 // is). A baseline run (D42) is named as Townwise's baseline, built from the sales rather than trained, and says what it
-// is; inside a location's pages, a `stale` calibration says when Townwise refits it and with how many days. Mounted on
-// Analytics and opened from the Agent page's "How TownwiseAI works".
+// is; inside a location's pages, a `stale` calibration says when Townwise refits it and with how many days, and (D65) a
+// forecast being updated says so, linked to its runs in TownwiseAI's activity; when that run ends the card reads its
+// estimates again in place. Mounted on Analytics and opened from the Agent page's "How TownwiseAI works".
 
 export const MODEL_CARD_TITLE = 'How Townwise estimates';
 
@@ -111,6 +116,8 @@ function Card(props: { about: EstimatesAbout; locationId: string }): React.JSX.E
   // Inside a location's pages, its calibration state (D42) from the organization's read; rendered on its own, none.
   const calibration = org?.locations.find((location) => location.id === props.locationId)?.calibration;
   const stale = calibration === undefined ? null : staleLine(calibration);
+  const updating = calibration === undefined ? null : updatingLine(calibration);
+  const updatingLink = updating === null ? null : <LinkButton variant="link" href={activityHref(props.locationId)} label={updating} />;
   const { card, today } = about;
   const noHeadcount = about.people.headcountInputs.length === 0;
   const { run } = about.forecast;
@@ -120,6 +127,7 @@ function Card(props: { about: EstimatesAbout; locationId: string }): React.JSX.E
         <View style={styles.state}>
           <StatusTag kind="progress" label="In progress" />
           <Small white>{noForecastLine(about, name)}</Small>
+          {updatingLink}
         </View>
       ) : (
         // U13B: the published run, then how it has done.
@@ -127,6 +135,7 @@ function Card(props: { about: EstimatesAbout; locationId: string }): React.JSX.E
           {runLines(run).map((line, index) => (index === 0 ? <Small key={line} white>{line}</Small> : <Small key={line}>{line}</Small>))}
           <Small white>{liveLine(about.forecast.live)}</Small>
           {stale === null ? null : <Small white>{stale}</Small>}
+          {updatingLink}
         </Stack>
       )}
       <DefinitionList items={[
@@ -165,7 +174,11 @@ function Card(props: { about: EstimatesAbout; locationId: string }): React.JSX.E
 export function ModelCard(props: { locationId: string }): React.JSX.Element {
   const { api } = usePortal();
   const { locationId } = props;
-  const { state, reload } = useLoad(useCallback(() => fetchEstimatesAbout(api, locationId), [api, locationId]));
+  const { state, reload, refresh } = useRefreshable(useCallback(() => fetchEstimatesAbout(api, locationId), [api, locationId]));
+  // D65: when the location's forecast this card saw updating stops, its estimates are read again in place (the run may
+  // have published), with no loading line. Rendered on its own there is no calibration, so nothing to follow.
+  const calibration = useShownOrg()?.locations.find((location) => location.id === locationId)?.calibration;
+  useWhenDone(calibration !== undefined && updatingOf(calibration) !== null, () => { void refresh(); });
   return (
     <Panel label={MODEL_CARD_TITLE}>
       <Stack>

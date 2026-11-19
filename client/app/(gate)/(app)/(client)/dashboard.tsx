@@ -4,12 +4,12 @@ import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { AddLocationForm } from '../../../../src/portal/AddLocationForm';
 import { formatCount, formatDate, plural, townLabel } from '../../../../src/portal/format';
-import { useBreakpoint } from '../../../../src/portal/hooks';
+import { useBreakpoint, useWhileRunning } from '../../../../src/portal/hooks';
 import { useOrg, usePortal, useReadOnly } from '../../../../src/portal/PortalProvider';
 import { allUploadsOff } from '../../../../src/portal/locations/sales';
-import { calibrationHeading } from '../../../../src/portal/upload/copy';
-import { locationHref } from '../../../../src/portal/routing';
-import type { LocationSummary } from '../../../../src/portal/schemas';
+import { calibrationHeading, dashboardUpdatingLine } from '../../../../src/portal/upload/copy';
+import { activityHref, locationHref } from '../../../../src/portal/routing';
+import { updatingOf, type LocationSummary } from '../../../../src/portal/schemas';
 import { Page } from '../../../../src/portal/shell/Page';
 import { LocationsSkeleton } from '../../../../src/portal/skeleton';
 import { PatternLine } from '../../../../src/portal/town/TownProfile';
@@ -23,7 +23,9 @@ import { theme } from '../../../../src/theme';
 
 // P9. Locations (spec 16.3; the Dashboard board). One location: its Home, keeping any one-time notice.
 // Several: one row per location with its town, sales history, calibration in words, notes and the next step,
-// then the public profile of each of their towns. None: org admins get the Add location form inline; members
+// then the public profile of each of their towns. While a location's forecast updates (D65), its Calibration cell
+// adds a second line in plain words (15.6: a client's own data state is words, not a tag), linked to the runs in its
+// TownwiseAI activity, and the page re-reads the organization in place every 30 seconds until none is updating. None: org admins get the Add location form inline; members
 // get a line saying their admin hasn't added one. After a join, the notice names who added them (F1). When a press
 // of the inline form adds some places and leaves rows (P10), the form stays, through the organization's reload,
 // until a press adds the rest or one is added by hand.
@@ -57,6 +59,19 @@ function SalesHistory(props: { location: LocationSummary }): React.JSX.Element {
     <View>
       <Text style={styles.cell}>{plural(coverage.dayCount, 'day', 'days')}</Text>
       <Text style={styles.note}>{`${formatDate(coverage.firstDate)} to ${formatDate(coverage.lastDate)}`}</Text>
+    </View>
+  );
+}
+
+/** The calibration state's heading, and (D65) while its forecast updates, a second line linked to its runs. */
+function calibrationCell(location: LocationSummary): React.ReactNode {
+  const heading = calibrationHeading(location.calibration);
+  const updating = dashboardUpdatingLine(location.calibration);
+  if (updating === null) return heading;
+  return (
+    <View>
+      <Text style={styles.cell}>{heading}</Text>
+      <Link href={activityHref(location.id)} style={styles.updating}>{updating}</Link>
     </View>
   );
 }
@@ -96,8 +111,10 @@ function YourTowns(props: { locations: readonly LocationSummary[] }): React.JSX.
 }
 
 export default function LocationsPage(): React.JSX.Element {
-  const { me } = usePortal();
+  const { me, refreshOrg } = usePortal();
   const { state, reload } = useOrg();
+  // D65: in place, so the table never goes back to its skeleton.
+  useWhileRunning(state.status === 'ready' && state.data.locations.some((location) => updatingOf(location.calibration) !== null), refreshOrg);
   const { readOnly, line } = useReadOnly();
   const access = me.access.state === 'member' ? me.access : null;
   const orgName = access?.org.name ?? '';
@@ -161,7 +178,7 @@ export default function LocationsPage(): React.JSX.Element {
               location: <Link href={locationHref(location.id) as Href} style={styles.name}>{location.name}</Link>,
               town: townLabel(location.town),
               sales: <SalesHistory location={location} />,
-              calibration: calibrationHeading(location.calibration),
+              calibration: calibrationCell(location),
               notes: location.notesCount === 0 ? 'No notes yet' : plural(location.notesCount, 'note', 'notes'),
               next: <NextStep location={location} readOnly={readOnly} />,
             },
@@ -186,6 +203,11 @@ const styles = StyleSheet.create({
   },
   cell: { ...theme.type.mono, fontVariant: ['tabular-nums'], color: c.text2 },
   note: { ...theme.type.small, color: c.text2 },
+  // The cell's second line (D65): plain words in the note's type, underlined as a link, with a 44px tap target.
+  updating: {
+    ...theme.type.small, color: c.text2, textDecorationLine: 'underline', textDecorationColor: c.line,
+    minHeight: 44, paddingVertical: (44 - theme.type.small.lineHeight) / 2,
+  },
   towns: { gap: theme.space[5] },
   townsRow: { flexDirection: 'row', flexWrap: 'wrap' },
   town: { flexGrow: 1, flexBasis: 320 },

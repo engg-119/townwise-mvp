@@ -15,6 +15,8 @@ import type { LiveBoard, OrderLine } from '../../../src/portal/orders/api';
 import { lastWeekGlance } from '../../../src/portal/home/Glance';
 import { forecastLine, questionsLabel } from '../../../src/portal/home/Home';
 import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
+import { OWNER_REASONS } from '../../../src/portal/schemas';
+import { firstForecastLine, notPublishedLine } from '../../../src/portal/upload/copy';
 import { calendarBody, holiday, note, run, townEvent } from '../analytics/fakes';
 import { forecastDay } from '../calendar/fakes';
 
@@ -195,6 +197,32 @@ test('the fixed copy names what is not built yet and promises nothing', () => {
   expect(questionsLabel(5)).toBe('5 questions from TownwiseAI');
   expect(questionsLabel(1200)).toBe('1,200 questions from TownwiseAI');
   expect(questionsLabel(2)).not.toMatch(FORECAST_WORDING);
+});
+
+// D65: Home's first-forecast lines and its not-published notice promise a run, never a publish or a figure: no
+// forecast wording, no number (no minimum history, 14.1), and "next" never says Building or a time (14.2).
+test('the first-forecast lines and the not-published notice promise no publish and state no number', () => {
+  const history = { dayCount: 795, firstDate: '2024-09-01', lastDate: '2026-11-04' };
+  const since = '2026-11-05T15:30:00.000Z';
+  const waiting = firstForecastLine({ state: 'not_calibrated', ...history, updating: { stage: 'waiting', since }, lastRun: null }, 'Main Street Bar');
+  const building = firstForecastLine({ state: 'not_calibrated', ...history, updating: { stage: 'running', since }, lastRun: null }, 'Main Street Bar');
+  for (const line of [waiting, building]) {
+    expect(line).not.toBeNull();
+    expect(line).not.toMatch(FORECAST_WORDING);
+    expect(line).not.toMatch(/\d/);
+  }
+  expect(waiting).not.toMatch(/Building|publish/);
+  for (const reason of OWNER_REASONS) {
+    const notice = notPublishedLine(
+      { state: 'not_calibrated', ...history, updating: null, lastRun: { outcome: 'kept', reason, finishedAt: since } }, 'Main Street Bar',
+    );
+    if (reason === 'published' || reason === 'published_by_staff') {
+      expect(notice).toBeNull();
+      continue;
+    }
+    expect(notice?.text).not.toMatch(FORECAST_WORDING);
+    expect(`${notice?.text ?? ''} ${notice?.next ?? ''}`).not.toMatch(/\d/);
+  }
 });
 
 // #68 review S2: the reorder copy on Home's selected day and on Orders describes the method the board runs

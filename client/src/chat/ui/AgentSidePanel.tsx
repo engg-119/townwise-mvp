@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { trainedOnWords, type EstimatesAbout } from '../../portal/estimates/api';
 import { formatDate } from '../../portal/format';
@@ -152,8 +152,19 @@ function RuleSuggestionsSection(props: { panel: AgentPanelState; locationId: str
   );
 }
 
-function ActivitySection(props: { panel: AgentPanelState; locationId: string; readOnlyId: string | null }): React.JSX.Element {
+/** What it’s been doing, so `?panel=activity` can bring it into view on web. */
+export const ACTIVITY_ID = 'agent-activity';
+
+function ActivitySection(props: { panel: AgentPanelState; locationId: string; readOnlyId: string | null; inView?: boolean }): React.JSX.Element {
   const { state } = props.panel;
+  // D65's `?panel=activity`: on web the section scrolls into view once (at 640px and below the row sits under the
+  // landing's chips, out of view); on native it is first in the opened panel.
+  const { inView } = props;
+  useEffect(() => {
+    if (inView !== true || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const section = document.getElementById(ACTIVITY_ID);
+    if (section !== null && typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'start' });
+  }, [inView]);
   let body: React.ReactNode;
   if (state.status === 'loading') body = <LoadingLine text="Loading activity" minHeight={80} />;
   else if (state.status === 'failed') body = <ErrorNotice message="Couldn’t load what TownwiseAI has been doing." onRetry={props.panel.reload} />;
@@ -176,7 +187,7 @@ function ActivitySection(props: { panel: AgentPanelState; locationId: string; re
     );
   }
   return (
-    <View style={styles.section}>
+    <View nativeID={ACTIVITY_ID} testID="agent-activity" style={styles.section}>
       <View style={styles.head}>
         <Eyebrow>Newest first</Eyebrow>
         <Heading>What it’s been doing</Heading>
@@ -284,6 +295,8 @@ export function AgentSidePanel(props: {
   onRetryAbout: () => void;
   /** False while the chat lists the questions itself (its landing, at 640px and below), so they aren't drawn twice. */
   showQuestions?: boolean;
+  /** D65: opened from `?panel=activity`: What it’s been doing comes first, in view, until the person opens or closes the panel. */
+  activityFirst?: boolean;
 }): React.JSX.Element {
   const ready = props.panel.state.status === 'ready' ? props.panel.state.data : null;
   // D59: the organization's choice once switched here, until the panel loads it again.
@@ -291,8 +304,10 @@ export function AgentSidePanel(props: {
   // Working on its own only while the organization's switch is on and it can run here (TOWNWISE_AGENT_AUTO): off while
   // the panel loads, fails or comes from an API before it.
   const working = (switched ?? ready?.agentAuto?.on ?? false) && ready?.agentAuto?.available === true;
+  const activity = <ActivitySection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} inView={props.activityFirst === true} />;
   return (
     <View style={styles.panel}>
+      {props.activityFirst === true ? activity : null}
       <RuleSuggestionsSection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} />
       {props.showQuestions === false ? null : (
         <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} chat={props.chat} send={props.send} />
@@ -300,7 +315,7 @@ export function AgentSidePanel(props: {
       <SuggestionsSection panel={props.panel} town={props.ctx.town} readOnlyId={props.readOnlyId} />
       {ready === null ? null : <AgentAutoSwitch agentAuto={ready.agentAuto} readOnlyId={props.readOnlyId} on={switched} onSwitched={setSwitched} />}
       {ready === null ? null : <NoteSuggestionsSection suggestions={ready.noteSuggestions} locationId={props.locationId} readOnlyId={props.readOnlyId} />}
-      <ActivitySection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} />
+      {props.activityFirst === true ? null : activity}
       <BudgetSection budget={props.budget} />
       <HowItWorks
         ctx={props.ctx}
