@@ -27,6 +27,10 @@
 // null or not before today in the town. Members decide them (handlers/rule-suggestions.ts). The three owner-calendar
 // kinds carry no `source` either: they are neither a file's nor the sales history's, an org admin decides them in the
 // weekly panel (handlers/weekly-suggestions.ts), and they list and expire by first date with the weekly pass's rows.
+//
+// D59 slice 5 (openspec change auto-apply-agent-reads design decision 16): `answered` is a suggestion one of the
+// location's calendars answered (calendar/answers.ts), `decidedBy: 'calendar'`, set by compare-and-set from `open`: not
+// a person's dismissal and not an accept. It is never listed, counted or expired, and is final.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -38,7 +42,9 @@ import type { NoteContent, NoteDates } from './notes.ts';
 export const AGENT_SUGGESTIONS_COLLECTION = 'tw_agent_suggestions';
 export const SUGGESTION_PASSES_COLLECTION = 'tw_suggestion_passes';
 
-export type SuggestionStatus = 'open' | 'accepted' | 'dismissed' | 'expired';
+export type SuggestionStatus = 'open' | 'accepted' | 'dismissed' | 'expired' | 'answered';
+/** D59 slice 5: who `decidedBy` names on a suggestion a calendar answered. */
+export const ANSWERED_BY_CALENDAR = 'calendar';
 /** Who made a suggestion: the weekly pass (absent on its rows), a file read, or the sales history (D46). */
 export type SuggestionSource = 'weekly' | 'file' | 'sales';
 /** Rule suggestions a member decides (D46). */
@@ -256,7 +262,7 @@ function suggestionSchema(): Schema<SuggestionFields> {
     },
     closureKey: { type: String },
     calendarIds: { type: [String], default: [] },
-    status: { type: String, required: true, enum: ['open', 'accepted', 'dismissed', 'expired'] },
+    status: { type: String, required: true, enum: ['open', 'accepted', 'dismissed', 'expired', 'answered'] },
     decidedBy: { type: String, default: null },
     decidedAt: { type: Date, default: null },
     createdAt: { type: Date, required: true },
@@ -345,6 +351,8 @@ export interface NewRuleSuggestion {
   readonly now: Date;
   /** D59 slice 3: stored `accepted` by this decider (TownwiseAI, which added its rule on its own); absent, `open`. */
   readonly acceptedBy?: string;
+  /** D59 slice 5: stored `answered` by a calendar (calendar/answers.ts); absent, as acceptedBy says. */
+  readonly answered?: true;
 }
 
 export interface SuggestionPassRecord {
@@ -452,6 +460,8 @@ export interface AgentSuggestionStore {
   expire(scope: OrgScope, locationId: string, today: string, now: Date): Promise<number>;
   /** One open suggestion to expired (what it rests on is gone); false otherwise. */
   markExpired(scope: OrgScope, locationId: string, id: string, now: Date): Promise<boolean>;
+  /** D59 slice 5: one open suggestion to answered by a calendar (a compare-and-set); false otherwise. */
+  markAnswered(scope: OrgScope, locationId: string, id: string, now: Date): Promise<boolean>;
   /**
    * A follow-up for its note: 'dismissed' (and the note's open follow-up, if any, expired) when an org admin dismissed
    * this change before; else inserts one, `open`, with `week` the town's Monday of `today` ('made'), or updates the
@@ -662,8 +672,9 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
         const doc = await Suggestion.create({
           _id: id, ...of(scope, input.locationId), week: input.week, ...contentFields({ type: 'rule', text: input.text, schedule: input.schedule }),
           why: null, calendarIds: [], createdAt: input.now, updatedAt: input.now,
-          ...(input.acceptedBy === undefined ? { status: 'open', decidedBy: null, decidedAt: null }
-            : { status: 'accepted', decidedBy: input.acceptedBy, decidedAt: input.now }),
+          ...(input.answered === true ? { status: 'answered', decidedBy: ANSWERED_BY_CALENDAR, decidedAt: input.now }
+            : input.acceptedBy === undefined ? { status: 'open', decidedBy: null, decidedAt: null }
+              : { status: 'accepted', decidedBy: input.acceptedBy, decidedAt: input.now }),
           source: input.source, closureKey: input.closureKey,
           ...(input.fileId === undefined ? {} : { fileId: new Types.ObjectId(input.fileId) }),
           ...(input.evidence === undefined ? {} : { evidence: { ...input.evidence } }),
@@ -763,6 +774,13 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
     async markExpired(scope, locationId, id, now) {
       const result = await Suggestion.updateOne(
         { ...one(scope, locationId, id), status: 'open' }, { $set: { status: 'expired', updatedAt: now }, $unset: { openFollowFor: '' } },
+      );
+      return result.modifiedCount === 1;
+    },
+    async markAnswered(scope, locationId, id, now) {
+      const result = await Suggestion.updateOne(
+        { ...one(scope, locationId, id), status: 'open' },
+        { $set: { status: 'answered', decidedBy: ANSWERED_BY_CALENDAR, decidedAt: now, updatedAt: now }, $unset: { openFollowFor: '' } },
       );
       return result.modifiedCount === 1;
     },

@@ -255,9 +255,12 @@ describe('isolation (source)', () => {
     // list shows each calendar as a row through the calendar routes' own view (handlers/data.ts). Neither reads an event.
     // D59 slice 2: TownwiseAI's sort on import (calendar/auto-sort.ts) labels a file calendar's events and notes its
     // upcoming bookings as the booking routes do, and its Undo per calendar (handlers/agent-changes.ts) and the changes'
-    // views (agent/changes.ts) clear and count the labels that sort set, never reading a title.
+    // views (agent/changes.ts) clear and count the labels that sort set, never reading a title. D59 slice 5: the
+    // questions' input (agent/question-input.ts) and a calendar's answers (calendar/answers.ts) read the events whose
+    // titles plainly say closed, to explain question days and to answer suggestions with notes and rules through the one
+    // writer, never a figure; a stored event still changes no forecast figure by itself.
     expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
-      'agent/changes.ts', 'calendar/auto-sort.ts', 'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts',
+      'agent/changes.ts', 'agent/question-input.ts', 'calendar/answers.ts', 'calendar/auto-sort.ts', 'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts',
       'chat/tools/owner-calendar.ts', 'files/calendar-import.ts', 'handlers/agent-changes.ts', 'handlers/calendar-bookings.ts', 'handlers/data.ts',
       'handlers/deletion.ts', 'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts',
       'handlers/weekly-suggestions.ts', 'lab/input.ts', 'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts',

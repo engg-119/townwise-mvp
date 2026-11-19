@@ -27,6 +27,7 @@ import { recordAfter } from '../audit.ts';
 import type { CalendarFetchCode } from '../calendar/fetch.ts';
 import { queueAutoSort } from '../calendar/auto-sort.ts';
 import { bringPassForward } from '../calendar/early-pass.ts';
+import { answerFromCalendars } from '../calendar/answers.ts';
 import { followLinkedNotes } from '../calendar/follow-up.ts';
 import {
   endUnusedGoogleAccess, googleAccessDeps, googleAccessToken, logGoogleFailure, markCalendarForCheck,
@@ -451,8 +452,10 @@ export async function addFileCalendar(
     ? await calendars.add(scope, location.id, calendar, read, by)
     : await calendars.addFromFile(scope, location.id, input.fromFileId, calendar, read, by);
   if (added === 'calendar_limit' || added === 'file_imported') return added;
-  // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none.
+  // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none. D59 slice 5:
+  // the location's calendars answer its open closure questions (calendar/answers.ts); neither fails the add.
   await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
+  await answerFromCalendars(answerDeps(ctx), scope, location);
   await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
   // D59 slice 2: TownwiseAI sorts a file on its own, after the add is recorded; it never fails the add.
   await queueAutoSort(ctx, scope, added, { openAsAdmin: caller.openAsAdmin !== null });
@@ -513,10 +516,17 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
     await calendars.remove(scope, location.id, added.id);
     throw googleNotConnected();
   }
-  // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none.
+  // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none. D59 slice 5:
+  // the location's calendars answer its open closure questions (calendar/answers.ts); neither fails the add.
   await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
+  await answerFromCalendars(answerDeps(ctx), scope, location);
   await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
   res.status(201).json({ calendar: shownView(added, caller), skippedRows: 0 });
+}
+
+/** D59 slice 5: what a calendar's answers to TownwiseAI's open questions read and write through (calendar/answers.ts). */
+function answerDeps(ctx: TownwiseContext): Parameters<typeof answerFromCalendars>[0] {
+  return { stores: ctx.stores, logger: ctx.logger, now: ctx.now, agentAuto: ctx.config.agentAuto };
 }
 
 /** 429 rate_limited until 5 minutes after the calendar's last "Refresh now". */
@@ -585,6 +595,7 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
     // the next 91 days brings the weekly pass forward; neither fails the refresh.
     if (replaced.switched) {
       await followLinkedNotes(ctx, scope, location, found.id, replaced, now);
+      await answerFromCalendars(answerDeps(ctx), scope, location);
       await bringPassForward(ctx, scope, location, found.id, replaced.changed, now);
     }
   } else {

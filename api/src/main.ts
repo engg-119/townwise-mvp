@@ -139,7 +139,7 @@ const revokeGoogle = TOWNWISE_CALENDAR_KEY === undefined ? undefined : revokeGoo
 // and due Google connections are checked there; each due calendar or check is claimed by one replica at a time.
 const calendarRefresher = TOWNWISE_CALENDAR_KEY === undefined ? undefined : createCalendarRefresher({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), key: TOWNWISE_CALENDAR_KEY, logger, now,
-  googleCalendar, revokeGoogle,
+  googleCalendar, revokeGoogle, agentAuto: config.TOWNWISE_AGENT_AUTO,
 });
 // The forecast lab (calibrations) is off unless TOWNWISE_LAB_RUNNER is set: in Azure the API's identity starts the
 // Container Apps job, which calls back on /lab signed in as the lab identity (lab/caller.ts checks its Entra token);

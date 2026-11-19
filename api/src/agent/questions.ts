@@ -30,6 +30,9 @@
 //   likely-closed days together, newest first by their last day.
 // - A day a turned-off upload holds (D28) is explained, as a covering note makes it: turning data off never asks
 //   "Were you closed?" about it.
+// - D59 slice 5: a day an event on one of the location's calendars plainly says was closed is explained, as a covering
+//   closure note makes it, so a gap shrinks to the days left and a likely-closed day is not asked. Weekday evidence is
+//   read from sales alone.
 import { closureOf, isClosure, TYPICAL_WEEKS, typicalGuests } from '../closed-days.ts';
 import { daysBetween, isCalendarDate } from '../dates.ts';
 import type { SalesEvidence } from '../stores/agent-suggestions.ts';
@@ -110,6 +113,11 @@ export interface QuestionInput {
   readonly answered: readonly string[];
   /** D28: dates a turned-off upload holds, treated as explained, as a covering note is. */
   readonly turnedOff?: readonly string[];
+  /**
+   * D59 slice 5: dates an event on one of the location's calendars plainly says it was closed (calendar/closed-events.ts),
+   * explained as a covering closure note explains them: a calendar answers the question.
+   */
+  readonly calendarClosed?: readonly string[];
   /**
    * The town's today (D32): a day on or after it is never asked about as likely closed, since today's upload may be
    * partial. Absent, every day is before today.
@@ -350,6 +358,7 @@ export function questionsFor(input: QuestionInput): Question[] {
   const rules = input.rules ?? [];
   const ruleClosures = rules.filter(isClosure);
   const turnedOff = new Set(input.turnedOff);
+  const calendarClosed = new Set(input.calendarClosed);
   const { dates } = counted;
   const answeredAbout = (day: string): boolean => answered.some((asked) => asksAbout(asked, day));
 
@@ -362,7 +371,7 @@ export function questionsFor(input: QuestionInput): Question[] {
 
   // Any covering note explains a day; of the rule schedules, only a closure does (a likely-closed day's are read below).
   const explained = (day: string): boolean => input.notes.some((note) => noteCovers(note, day))
-    || ruleClosures.some((rule) => noteCovers(rule, day)) || answeredAbout(day) || turnedOff.has(day);
+    || ruleClosures.some((rule) => noteCovers(rule, day)) || answeredAbout(day) || turnedOff.has(day) || calendarClosed.has(day);
   const closedDay = (day: string): boolean => closedWeekdays.has(weekdayOf(day));
   // Usually busy, from the same stored days D32's typical guests read (the window and the 56 days before it).
   const rows = new Map(input.days.map((day) => [day.date, day]));

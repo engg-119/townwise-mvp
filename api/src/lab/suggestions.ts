@@ -81,6 +81,7 @@ import { salesSuggestions } from '../agent/rule-suggestion-views.ts';
 import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
 import { TOWNWISE_AI_ACTOR } from '../audit.ts';
+import { answerFromCalendars } from '../calendar/answers.ts';
 import type { ChatModel } from '../chat/model.ts';
 import { ceilingCostMicroUsd, costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from '../chat/pricing.ts';
 import { CHAT_MODEL } from '../chat/turn.ts';
@@ -1050,7 +1051,10 @@ export async function suggestFor(
     const stored = await stores.agentSuggestions.insert(scope, { locationId: location.id, week, suggestions, now: ctx.now() });
     // Those applied are stored accepted; only the ones left open count as suggested.
     const open = stored.filter((record) => record.status === 'open').length;
-    return await finish(open > 0 ? { status: 'suggested', suggested: open } : { status: 'none' });
+    const outcome = await finish(open > 0 ? { status: 'suggested', suggested: open } : { status: 'none' });
+    // D59 slice 5: the location's calendars answer what is open now, this pass's suggestions included (never throws).
+    await answerFromCalendars({ stores, logger: ctx.logger, now: ctx.now, agentAuto: ctx.config.agentAuto }, scope, location);
+    return outcome;
   } catch (err) {
     if (!row.finished) await finish({ status: 'failed' }).catch(() => undefined);
     throw err;
