@@ -299,13 +299,16 @@ describe('isolation (source)', () => {
 
     it('pins who imports the research stores', () => {
       // The registry builds them, and person deletion clears a deleted person's id from the edits (spec 10.7); the two
-      // stores share their sub-schemas and moves through research-shared.ts. The planner and the runner (tasks 3.2 to
-      // 3.4), the reader and the revisions (task 5 and 6) reach them through ctx.stores and join a list only by a value
-      // import.
-      expect(importersOf('stores/research-shared.ts')).toEqual(['stores/research-locations.ts', 'stores/research-revisions.ts', 'stores/research-towns.ts']);
+      // stores share their sub-schemas and moves through research-shared.ts. stores/cross-tenant.ts finds location
+      // research's work across organizations (the claim, the merge claim, the stale sweep; task 3.2). The planner and the
+      // runner (tasks 3.3 and 3.4), the reader and the revisions (task 5 and 6) reach them through ctx.stores and join a
+      // list only by a value import.
+      expect(importersOf('stores/research-shared.ts')).toEqual([
+        'stores/cross-tenant.ts', 'stores/research-locations.ts', 'stores/research-revisions.ts', 'stores/research-towns.ts',
+      ]);
       expect(importersOf('stores/research-towns.ts')).toEqual(['stores/index.ts']);
       expect(importersOf('stores/research-spend.ts')).toEqual(['stores/index.ts']);
-      expect(importersOf('stores/research-locations.ts')).toEqual(['stores/index.ts']);
+      expect(importersOf('stores/research-locations.ts')).toEqual(['stores/cross-tenant.ts', 'stores/index.ts']);
       expect(importersOf('stores/research-revisions.ts')).toEqual(['stores/cross-tenant.ts', 'stores/index.ts']);
     });
 

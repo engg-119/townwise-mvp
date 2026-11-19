@@ -8,13 +8,16 @@
 // countedWeekRows (D42), the weekly suggestions' suggestionCandidates and staleSuggestionPasses (openspec change
 // weekly-forecast-suggestions), the active days recorder's removeOldActivityDays, the staff Overview's
 // activityDaysSince, peopleActionsSince, openInvitesBefore and chatUsageForMonth (openspec change staff-overview), the
-// TownwiseAI turn sweep's staleChatTurns and removeEndedChatTurns (openspec change resumable-chat-turns), and the
-// boot-time title backfill's untitledAiNotes (D49).
+// TownwiseAI turn sweep's staleChatTurns and removeEndedChatTurns (openspec change resumable-chat-turns), the
+// boot-time title backfill's untitledAiNotes (D49), and (D66, town research) the planner's researchTownsInUse and
+// researchLocationCandidates and the runner's claimNextLocationResearchThread, claimLocationResearchMerge (also the
+// planner's merge sweep) and staleLocationResearchThreads.
 // Only access/resolve.ts, the active days recorder (access/activity.ts), the join and decline handlers, the staff
 // handlers (admin.ts, deletion.ts, overview.ts), the TownwiseAI turn sweep (chat/turn-sweeper.ts), the file reader (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
 // (calendar/google-access.ts), the weekly refresh (lab/schedule.ts, which also runs the weekly suggestions), the
-// TownwiseAI turn sweep (chat/turn-sweeper.ts) and the title backfill (files/note-titles.ts) import this file
+// TownwiseAI turn sweep (chat/turn-sweeper.ts), the title backfill (files/note-titles.ts) and research's planner and
+// runner (research/plan.ts, research/runner.ts) import this file
 // (test/isolation.test.ts enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
@@ -46,7 +49,9 @@ import { orderCardModel } from './orders.ts';
 import { orgModel } from './orgs.ts';
 import { calendarSourceModel } from './owner-calendars.ts';
 import { profileModel } from './profiles.ts';
+import { locationResearchRunModel, locationResearchThreadModel } from './research-locations.ts';
 import { researchRevisionModel } from './research-revisions.ts';
+import { TERMINAL_THREAD_STATUSES } from './research-shared.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { uploadDayModel } from './upload-days.ts';
 import { UPLOADS_COLLECTION } from './uploads.ts';
@@ -982,4 +987,153 @@ export async function staleChatTurns(connection: Connection, now: Date, limit: n
 /** The TownwiseAI turn sweep: deletes every record, in any organization, whose turn ended at or before `before`. */
 export async function removeEndedChatTurns(connection: Connection, before: Date): Promise<number> {
   return (await chatTurnModel(connection).deleteMany({ endedAt: trusted({ $lte: before }) })).deletedCount;
+}
+
+// ---- D66, town research (openspec change town-research-agent, design decisions 2, 6, 8 and 14) ------------------------
+// The planner (research/plan.ts) and the runner (research/runner.ts) find work across organizations here, ids only;
+// each turns what it found into an OrgScope through access/policy.ts's scopeForResearch and reads or writes the rest
+// through the tenant store (stores/research-locations.ts). Town rows are not tenant data and stay in
+// stores/research-towns.ts.
+
+/** The organizations research leaves alone: one not active, or one whose own switch is off (absent reads on). */
+async function researchOffOrgs(connection: Connection): Promise<Types.ObjectId[]> {
+  const docs = await orgModel(connection).find({ $or: [{ status: trusted({ $ne: 'active' }) }, { 'research.on': false }] }, { _id: 1 }).lean();
+  return docs.map((doc) => doc._id);
+}
+
+/** The organizations research may run for: active, with their own switch on (absent reads on). */
+async function researchOnOrgs(connection: Connection): Promise<Types.ObjectId[]> {
+  const docs = await orgModel(connection).find({ status: 'active', 'research.on': trusted({ $ne: false }) }, { _id: 1 }).lean();
+  return docs.map((doc) => doc._id);
+}
+
+/**
+ * The towns of the twelve that town research runs for (design decision 2): each that has a location in an active
+ * organization with research on. Distinct town ids only, sorted; a typed town outside the twelve (`townId` null) never
+ * becomes a shared key, and nothing names an organization or a location.
+ */
+export async function researchTownsInUse(connection: Connection): Promise<string[]> {
+  const orgs = await researchOnOrgs(connection);
+  if (orgs.length === 0) return [];
+  const towns = await locationModel(connection).distinct('town.townId', { orgId: trusted({ $in: orgs }), 'town.townId': trusted({ $type: 'string' }) });
+  return (towns as string[]).sort();
+}
+
+/** A location the planner considers, by id; the location itself is read through the tenant store. */
+export interface ResearchLocationCandidate {
+  readonly orgId: string;
+  readonly locationId: string;
+}
+
+/**
+ * Location research's candidates (design decision 2): every location of an active organization with research on, oldest
+ * location first. Ids only; scoped by access/policy.ts's scopeForResearch.
+ */
+export async function researchLocationCandidates(connection: Connection): Promise<ResearchLocationCandidate[]> {
+  const orgs = await researchOnOrgs(connection);
+  if (orgs.length === 0) return [];
+  const docs = await locationModel(connection).find({ orgId: trusted({ $in: orgs }) }, { _id: 1, orgId: 1 }).sort({ createdAt: 1, _id: 1 }).lean();
+  return docs.map((doc) => ({ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString() }));
+}
+
+/**
+ * A location research thread the runner claimed, by id. Only access/policy.ts's scopeForResearch turns it into an
+ * OrgScope. `attempt` is the attempt count the claim set.
+ */
+export interface ClaimedLocationResearchThread {
+  readonly id: string;
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly runId: string;
+  readonly attempt: number;
+}
+
+/**
+ * The runner's claim of a location thread (design decision 6), across organizations: the queued thread due first (oldest
+ * `notBefore`), leaving out an organization that is not active or has research off, and one that already has
+ * `perOrgLive` threads running under a live lease, so its reservations never stack. Like the TownwiseAI reader's claim,
+ * two replicas claiming at the same moment can each take one thread of the same organization; the spend reservation is
+ * its own compare-and-set, so that can never pass a cap. The claim sets `running`, the owner and the lease, and counts
+ * the attempt.
+ */
+export async function claimNextLocationResearchThread(
+  connection: Connection, input: { readonly owner: string; readonly now: Date; readonly leaseMs: number; readonly perOrgLive: number },
+): Promise<ClaimedLocationResearchThread | null> {
+  const Thread = locationResearchThreadModel(connection);
+  const [off, live] = await Promise.all([
+    researchOffOrgs(connection),
+    Thread.aggregate<{ _id: Types.ObjectId; n: number }>([
+      { $match: { status: 'running', leaseUntil: trusted({ $gte: input.now }) } },
+      { $group: { _id: '$orgId', n: { $sum: 1 } } },
+    ]),
+  ]);
+  const skipped = [...off, ...live.filter((row) => row.n >= input.perOrgLive).map((row) => row._id)];
+  const doc = await Thread.findOneAndUpdate(
+    {
+      status: 'queued', notBefore: trusted({ $lte: input.now }),
+      ...(skipped.length === 0 ? {} : { orgId: trusted({ $nin: skipped }) }),
+    },
+    { $set: { status: 'running', owner: input.owner, leaseUntil: new Date(input.now.getTime() + input.leaseMs) }, $inc: { attempts: 1 } },
+    { sort: { notBefore: 1, _id: 1 }, returnDocument: 'after' },
+  ).lean();
+  if (doc === null) return null;
+  return {
+    id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), runId: doc.runId.toHexString(),
+    attempt: doc.attempts,
+  };
+}
+
+/** A location run whose merge this owner claimed. */
+export interface ClaimedLocationResearchMerge {
+  readonly runId: string;
+  readonly orgId: string;
+  readonly locationId: string;
+}
+
+/**
+ * A location run's merge claim (design decision 8): `running → merging` for `owner` once every thread of the run is
+ * terminal, or a `merging` run whose merge lease passed taken over. With `runId`, the lane that settled the run's last
+ * thread asks for that run (the fast path); without it, the planner's sweep takes the oldest such run in any
+ * organization, so a run never stays `running` because that lane died. One caller wins each claim.
+ */
+export async function claimLocationResearchMerge(
+  connection: Connection, input: { readonly runId?: string; readonly owner: string; readonly now: Date; readonly leaseMs: number },
+): Promise<ClaimedLocationResearchMerge | null> {
+  const Run = locationResearchRunModel(connection);
+  const Thread = locationResearchThreadModel(connection);
+  const due = { $or: [{ status: 'running' as const }, { status: 'merging' as const, mergeUntil: trusted({ $lte: input.now }) }] };
+  const candidates = await Run.find(
+    input.runId === undefined ? due : { _id: new Types.ObjectId(input.runId), ...due },
+    { _id: 1, status: 1, mergeUntil: 1 },
+  ).sort({ createdAt: 1, _id: 1 }).limit(input.runId === undefined ? 50 : 1).lean();
+  const set = { $set: { status: 'merging', mergeOwner: input.owner, mergeUntil: new Date(input.now.getTime() + input.leaseMs) } };
+  for (const run of candidates) {
+    const open = await Thread.countDocuments({ runId: run._id, status: trusted({ $nin: [...TERMINAL_THREAD_STATUSES] }) });
+    if (open > 0) continue;
+    // The claim compares the status (and, for a stale merge, the lease) it read.
+    const filter = run.status === 'running'
+      ? { _id: run._id, status: 'running' as const }
+      : { _id: run._id, status: 'merging' as const, mergeUntil: trusted({ $lte: input.now }) };
+    const doc = await Run.findOneAndUpdate(filter, set, { returnDocument: 'after', projection: { orgId: 1, locationId: 1 } }).lean();
+    if (doc !== null) return { runId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
+  }
+  return null;
+}
+
+/** A running location thread whose lease passed (a dead replica's), by id. */
+export interface StaleLocationResearchThread {
+  readonly id: string;
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly runId: string;
+}
+
+/** The runner's stale sweep (design decision 6): running location threads whose lease passed by `now`, in any organization, ids only. */
+export async function staleLocationResearchThreads(connection: Connection, now: Date): Promise<StaleLocationResearchThread[]> {
+  const docs = await locationResearchThreadModel(connection)
+    .find({ status: 'running', leaseUntil: trusted({ $lte: now }) }, { _id: 1, orgId: 1, locationId: 1, runId: 1 })
+    .sort({ leaseUntil: 1, _id: 1 }).lean();
+  return docs.map((doc) => ({
+    id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), runId: doc.runId.toHexString(),
+  }));
 }
