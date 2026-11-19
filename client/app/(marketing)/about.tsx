@@ -35,9 +35,9 @@ export default function About(): React.JSX.Element {
             <Li><P><Strong>A research agent</Strong> that will find every event and driver of demand in a town, with the date and the public source behind each one.</P></Li>
             <Li><P><Strong>Uploading your sales history</Strong> from your point-of-sale system, to calibrate your forecasts.</P></Li>
             <Li><P><Strong>A model calibrated to your business:</Strong> the town model, tuned with your own history to forecast your daily guests, each day with a range and a reason.</P></Li>
-            <Li><P><Strong>A tuning agent you talk to:</Strong> tell it what it can’t see, and it will retrain your model and explain its forecasts.</P></Li>
-            <Li><P><Strong>An app</Strong> that will put it in front of the people who place the orders.</P></Li>
-            <Li className="nx"><P><Strong>Next:</Strong> reorder suggestions, starting with bar inventory.</P></Li>
+            <Li><P><Strong>TownwiseAI, an assistant you talk to:</Strong> tell it what it can’t see, and it proposes notes, retrains your model and explains its forecasts.</P></Li>
+            <Li><P><Strong>An app</Strong> that puts it in front of the people who place the orders.</P></Li>
+            <Li><P><Strong>Order suggestions</Strong> for bar inventory, from the forecast and your item sales.</P></Li>
           </Ol>
         </Part>
 
@@ -62,7 +62,7 @@ export default function About(): React.JSX.Element {
                   <Tr>
                     <Th scope="row">3. Calibration and forecasts</Th>
                     <Td data-l="What it covers">Calibrating with point-of-sale history; forecasts with ranges and reasons; testing how much history is needed</Td>
-                    <Td data-l="Status"><Div className="st-c"><Span className="tag tag-prog">In progress</Span><P>Restaurants with early access can upload their sales history and add notes about unusual days in the app. Once a location’s history spans 230 days, Townwise refits its daily guest forecast every week and publishes it, with a range and reasons, when it passes our accuracy checks. We are still testing how much history it takes to make a difference.</P></Div></Td>
+                    <Td data-l="Status"><Div className="st-c"><Span className="tag tag-live">Live</Span><P>Restaurants with early access can upload their sales history and add notes about unusual days in the app. Once a location’s history spans 230 days, Townwise refits its daily guest forecast every week and publishes it, with a range and reasons, when it passes our accuracy checks. We are still testing how much history it takes to make a difference.</P></Div></Td>
                   </Tr>
                   <Tr>
                     <Th scope="row">4. Evaluation</Th>

@@ -134,7 +134,7 @@ function Visual(props: { index: number }): React.JSX.Element {
           </li>
         ))}
       </ul>
-      <p className="hv-cap">Planned. Illustration.</p>
+      <p className="hv-cap">Illustration, not real output</p>
     </>
   );
 }
@@ -176,13 +176,13 @@ function Stage(props: { active: number }): React.JSX.Element {
   );
 }
 
-function Step(props: { index: number; active: boolean; inline: boolean; planned?: boolean; title: string; children: React.ReactNode }): React.JSX.Element {
+function Step(props: { index: number; active: boolean; inline: boolean; live?: boolean; title: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <li className={props.active ? 'hw-s is-act' : 'hw-s'}>
       <div className="step">
         <div className="step-bar">
           <span className="step-no">{stepNo(props.index)}</span>
-          {props.planned === true ? <span className="tag tag-plan">Planned</span> : <span className="tag tag-prog">In progress</span>}
+          {props.live === true ? <span className="tag tag-live">Live</span> : <span className="tag tag-prog">In progress</span>}
         </div>
         <div className="step-body">
           <h3 className="h3">{props.title}</h3>
@@ -234,13 +234,14 @@ export function HowItWorks(): React.JSX.Element {
           {/* [CONFIRM: wording, awaiting the owner] Forecasts publish by default and refit weekly (autonomous-forecasts, D42). */}
           <p><span className="lbl">Today:</span> candidate models run in our research notebooks, including quantile regression, an event model and gradient-boosted trees, tested with a rolling backtest. In the app, Townwise’s trained demand model and a simpler baseline are both tested on each restaurant’s own past weeks, and its forecast switches between them only when the other does clearly better. The agent that will build and refine models on its own is not built yet.</p>
         </Step>
-        <Step index={2} active={isActive(2)} inline={!pinned} title="Calibrate with your sales">
+        <Step index={2} active={isActive(2)} inline={!pinned} live title="Calibrate with your sales">
           <p>Your point-of-sale history will tune the town model to your restaurant, and the forecast is designed to get sharper as more history comes in. We are testing how much history it takes to make a difference.</p>
           {/* [CONFIRM: wording, awaiting the owner] Forecasts publish by default and refit weekly (autonomous-forecasts, D42). */}
           <p><span className="lbl">Today:</span> restaurants with early access upload their daily guests and net sales in the web app, and add notes about closures and other unusual days. Once a location’s history spans 230 days, Townwise refits its daily guest forecast every week from those days, its notes and the town calendar, and publishes it when it passes our accuracy checks. Each forecast says whether Townwise’s trained model or a simpler baseline made it.</p>
         </Step>
-        <Step index={3} active={isActive(3)} inline={!pinned} planned title="Turn the forecast into orders">
+        <Step index={3} active={isActive(3)} inline={!pinned} live title="Turn the forecast into orders">
           <p>Plain-language recommendations for when to reorder and how much, starting with bar and drink inventory.</p>
+          <p><span className="lbl">Today:</span> a location that sets up ordering gets suggested orders for its bar items before each delivery, from the forecast and its item sales, each line with the reason behind it. TownwiseAI can read a supplier list or order guide to fill in the setup.</p>
         </Step>
       </ol>
       {pinned ? <Stage active={active} /> : null}
