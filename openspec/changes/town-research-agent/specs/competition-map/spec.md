@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Competitors come from Places Nearby Search
-`PlacesClient` SHALL gain `nearby` (`places:searchNearby`, ranked by distance, at most 20, types restaurant, bar, cafe, coffee_shop, pub, bakery and fast_food_restaurant, field mask id, display name, primary type and location, plus website only for a research run) and `profile` (id, display name, formatted address), with the existing 5-second timeout and `PlacesUnavailableError`. A run's competitors SHALL be the 8 nearest within 1,500 m other than the location's own place, places of the location's type family first. Google's names, types, websites and coordinates SHALL NOT be stored in Mongo; coordinates SHALL use the existing 29-day Valkey point cache; a competitor SHALL be stored only as a place id on an event. With Places off, the competitors thread SHALL end `empty` with `places_off`. [CONFIRM: competitors are the 8 nearest restaurants, bars and cafes within 1,500 m, the location's own type first]
+`PlacesClient` SHALL gain `nearby` (`places:searchNearby`, ranked by distance, at most 20, types restaurant, bar, cafe, coffee_shop, pub, bakery and fast_food_restaurant, field mask id, display name, primary type and location, plus website only for a research run) and `profile` (id, display name, formatted address), with the existing 5-second timeout and `PlacesUnavailableError`. A location's competitors SHALL be the 8 nearest within 1,500 m other than the location's own place, places of the location's type family first. Google's names, types, websites and coordinates SHALL NOT be stored in Mongo; coordinates SHALL use the existing 29-day Valkey point cache. [CONFIRM: competitors are the 8 nearest restaurants, bars and cafes within 1,500 m, the location's own type first]
 
 #### Scenario: Own place left out
 - **WHEN** Nearby Search answers the location's own place first
@@ -9,22 +9,26 @@
 
 #### Scenario: Nothing Google answers is stored
 - **WHEN** a competitors thread records events
-- **THEN** no stored document holds a competitor's name, type, website or coordinates, and each competitor event holds its place id
+- **THEN** no stored document holds a name, type, website or coordinates that Google answered
 
-### Requirement: What Google answers reaches Anthropic only once allowed
-While `TOWNWISE_RESEARCH_PLACES_TO_AI` is true (default true; false in `api/production.env` until the owner answers the Google terms question), the location threads' prompts SHALL hold the restaurant's Google name and address and the competitors' Google names, types and websites. While it is false, the restaurant line SHALL hold the town only and the competitors thread SHALL find nearby competition by web search, with Places used only for map pins. [DECISION NEEDED: whether Google Maps Platform's terms allow sending Places names, types and websites to Anthropic] [CONFIRM: the restaurant's Google name and address, and its competitors' Google names, types and websites, sent to Anthropic for research once the terms question is answered]
+### Requirement: Competing events are found with or without Google names
+While `TOWNWISE_RESEARCH_PLACES_TO_AI` is true, the location threads' prompts SHALL hold the restaurant's Google name and address and the competitors' Google names, types and websites, and an event naming a competitor index SHALL store its place id. While it is false (the value in `api/production.env` until the owner answers the Google terms question), no research request SHALL hold anything Google answered, `neighborhood` SHALL end `places_to_ai_off`, and the `competitors` thread SHALL find the town's restaurants, bars and cafes and their public events by web search, storing each competing business as a web-found `business` entity linked from its events. [DECISION NEEDED: whether Google Maps Platform's terms allow sending Places names, types and websites to Anthropic] [CONFIRM: the restaurant's Google name and address, and its competitors' Google names, types and websites, sent to Anthropic for research once the terms question is answered]
 
 #### Scenario: Switch off
 - **WHEN** `TOWNWISE_RESEARCH_PLACES_TO_AI=false`
-- **THEN** no research request holds a name Google answered
+- **THEN** no research request holds a name Google answered, and the competitors thread still records a competitor's trivia night linked to that business's entity
 
 ### Requirement: The Competition card
-`GET /api/org/locations/:locationId/competition?theme=` (member, `places` limiter, open as admin allowed) SHALL answer the live nearby competitors (place id, name, type, letter), a lettered static map signed for the theme, and each competitor's upcoming researched events for 60 days after the location's revisions. It SHALL log counts only. The Town tab SHALL show it as the Competition card, with "Pick your place in Settings" when the location has no place, and nothing when Places is off.
+`GET /api/org/locations/:locationId/competition?theme=` (member, `places` limiter, open as admin allowed) SHALL answer the live nearby competitors (place id, name, type, letter), a lettered static map signed for the theme, each competitor's upcoming researched events for 60 days after the location's revisions, and the competitor events it could not place on the map. An event SHALL be shown under a letter when its stored place id is that competitor's, or when its business entity's name key equals the name key of that competitor's live display name, compared on the server with nothing stored or sent; other competitor events SHALL be listed under "Competing events found on the web", grouped by business. It SHALL log counts only. The Town tab SHALL show it as the Competition card, with "Pick your place in Settings" when the location has no place, and the web list with no map when Places is off.
 
 #### Scenario: Competitor's trivia night
-- **WHEN** research found a competitor's weekly trivia night
+- **WHEN** research, with Google names not allowed, found "Trivia night" hosted by a business whose name matches a nearby place's display name
 - **THEN** the card lists it under that competitor's letter, with its sources
+
+#### Scenario: No match on the map
+- **WHEN** a competitor event's business matches no nearby place
+- **THEN** the card lists it under "Competing events found on the web"
 
 #### Scenario: No place
 - **WHEN** the location has no place
-- **THEN** the route answers `{ competitors: [], map: null, gap: 'no_place' }`
+- **THEN** the route answers `{ competitors: [], map: null, web: [], gap: 'no_place' }`
