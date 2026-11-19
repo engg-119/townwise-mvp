@@ -257,6 +257,8 @@ A revision: `{ orgId, locationId, eventId: 't-<hex>' | 'l-<hex>', op: 'edit' | '
 
 `research/read.ts` `researchedEventsFor(ctx, scope, location, range)` reads the town's rows (when `townId` is set; suppressed rows left out), the location's rows stamped with its current place and town, and this location's revisions, folds them, and answers views with ids `t-<hex>` / `l-<hex>` and each view's `head`, or `null` on a read failure. It answers `[]` while the organization's switch or `config.research` is off. Revisions are read only under the caller's own scope and location.
 
+As built (task 5.1): `research/revisions.ts` holds the pure fold (`chainOf`, `foldRevisions`); a view is `edited` while its shown values differ from research's own, so a revert or Reset back to them clears it, and an edit of a hidden event keeps it hidden. `research/read.ts` also exports `readResearchedViews` (hidden views included with `hidden: true`, the range optional, throwing on a failure) for the research routes and edits, `researchReadable` (TOWNWISE_RESEARCH and the organization's switch) and `parseResearchedId`. `where` is the venue entity's name or the edited value, `who` the host entity's name. A failed read logs one warning, `townwise.research_read_failed`, with the location id and the error's name only.
+
 Alternatives: an upserted override with a `prior` field (bends apply.ts's insert-under-a-planned-id rule, and makes Undo of a second edit lose the first); editing the shared row (changes other organizations' calendars); Undo deleting the revision (a member's edit based on it at the same moment would be left pointing at nothing).
 
 ### 12. TownwiseAI corrections with Undo
