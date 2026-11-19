@@ -49,7 +49,8 @@ Spec decision D59 (check develop's spec section 2, the D58 branch and the reserv
 
 ## 7. Privacy and wording (decision 14)
 
-- [ ] 7.1 `client/app/(marketing)/privacy.tsx`: the reworded "Files you let TownwiseAI read", the new "Changes TownwiseAI makes" item, and the Anthropic item's sentence, marked [CONFIRM] in code. `client/src/portal/data/AddFile.tsx` and `aiCopy.ts`: the box checked by default while `agentAuto` is on. Tests: `client/test/marketing/privacy-agent-auto.test.web.tsx` and `client/test/portal/data/ai-opt-in.test.web.tsx`. `npm test -w @ckeith26/expo-shell -- test/marketing/privacy-agent-auto.test.web.tsx test/portal/data --selectProjects web`
+- [x] 7.1 `client/app/(marketing)/privacy.tsx`: the reworded "Files you let TownwiseAI read", the new "Changes TownwiseAI makes" item, and the Anthropic item's sentence, marked [CONFIRM] in code. `client/src/portal/data/AddFile.tsx` and `aiCopy.ts`: the box checked by default while `agentAuto` is on. Tests: `client/test/marketing/privacy-agent-auto.test.web.tsx` and `client/test/portal/data/ai-opt-in.test.web.tsx`. `npm test -w @ckeith26/expo-shell -- test/marketing/privacy-agent-auto.test.web.tsx test/portal/data --selectProjects web`
+  Done: as designed, with the code comment's [CONFIRM] at the top of privacy.tsx and the date moved to November 19, 2026. The box needs to know the switch: GET /org/data answers `agentAuto` (TOWNWISE_AGENT_AUTO, TownwiseAI reading files and the organization's switch), and Add a file starts checked from it, presses nothing while checked, and sends `aiAuto: false` on each upload's create while unchecked. The help line under the box changes with it (`AI.optInHelpAuto`). Onboarding's drop keeps D34's box (off by default, and it presses): its files are history uploads, and the server's automatic read still queues one the sales reader did not read into days unless the box sent `aiAuto: false`, which only Add a file sends.
 
 ## 8. Docs and verification (slice 1)
 

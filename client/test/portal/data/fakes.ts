@@ -65,6 +65,8 @@ export interface DataFake extends ApiClient {
   calendars: unknown[];
   /** The list's `bookingSort` (D58); left out of the answer while undefined, as an older API does. */
   bookingSort?: { available: boolean };
+  /** The list's `agentAuto` (D59); left out of the answer while undefined, as an older API does. */
+  agentAuto?: boolean;
   /** GET .../owner-calendars/events: the stored events, each answered when it overlaps the range asked for. */
   calendarEvents: { startDate: string; endDate: string }[];
   /** Every json path asked for, in order. */
@@ -117,7 +119,7 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
         const start = after === null ? 0 : Number(after);
         const page = all.slice(start, start + fake.pageSize);
         const next = start + fake.pageSize < all.length ? String(start + fake.pageSize) : null;
-        return settle({ items: page, next }, schema);
+        return settle({ items: page, next, ...(fake.agentAuto === undefined ? {} : { agentAuto: fake.agentAuto }) }, schema);
       }
       const one = /^\/api\/org\/locations\/([^/]+)\/data\/([^/]+)$/.exec(path);
       if (one?.[1] !== undefined && one[2] !== undefined && one[2] !== 'text') {

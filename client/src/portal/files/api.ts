@@ -231,7 +231,7 @@ export type ChunkReceipt = z.infer<typeof chunkSchema>;
 export type FilePurpose = 'history' | 'reference';
 
 export function createUpload(
-  api: ApiClient, locationId: string, input: { name: string; sizeBytes: number; purpose: FilePurpose },
+  api: ApiClient, locationId: string, input: { name: string; sizeBytes: number; purpose: FilePurpose; aiAuto?: false },
 ): Promise<Created> {
   return api.json(`${locationPath(locationId)}/files`, createdSchema, { method: 'POST', body: input });
 }

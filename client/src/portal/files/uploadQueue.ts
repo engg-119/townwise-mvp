@@ -169,6 +169,11 @@ export function createUploadQueue(deps: {
   api: ApiClient;
   locationId: string;
   purpose?: FilePurpose;
+  /**
+   * D59: read when each file's upload opens; false sends `aiAuto: false`, so TownwiseAI never reads that file on its
+   * own (Add a file's box unchecked while it works on its own). Left out, nothing is sent.
+   */
+  aiAuto?: () => boolean;
   onChange: (snapshot: QueueSnapshot) => void;
   now?: () => number;
   random?: () => number;
@@ -330,8 +335,9 @@ export function createUploadQueue(deps: {
 
   async function sendFile(entry: Entry): Promise<void> {
     const { source } = entry;
+    const keptFromAi = deps.aiAuto?.() === false;
     const created = await attempt(entry, 'creating', false, () => createUpload(deps.api, deps.locationId, {
-      name: source.name, sizeBytes: source.size, purpose,
+      name: source.name, sizeBytes: source.size, purpose, ...(keptFromAi ? { aiAuto: false as const } : {}),
     }));
     entry.fileId = created.file.id;
     importId ??= created.import?.id ?? null;
@@ -482,23 +488,27 @@ export function createUploadQueue(deps: {
  * The queue for a screen (`onboarding/HistoryStep`, onboarding step 3 on Home): one per location, stopped when the
  * screen closes. Under view-as no queue is created and `add` does nothing.
  */
-export function useUploadQueue(locationId: string, opts: { purpose?: FilePurpose } = {}): UploadQueue {
+export function useUploadQueue(locationId: string, opts: { purpose?: FilePurpose; aiAuto?: () => boolean } = {}): UploadQueue {
   const { api } = usePortal();
   const { readOnly } = useReadOnly();
   const purpose = opts.purpose ?? 'history';
+  const { aiAuto } = opts;
   const engine = useRef<QueueEngine | null>(null);
   const owner = `${locationId}:${purpose}`;
   const [state, setState] = useState<{ owner: string; snapshot: QueueSnapshot }>({ owner: '', snapshot: EMPTY_SNAPSHOT });
 
   useEffect(() => {
     if (readOnly) return undefined;
-    const queue = createUploadQueue({ api, locationId, purpose, onChange: (snapshot) => { setState({ owner, snapshot }); } });
+    const queue = createUploadQueue({
+      api, locationId, purpose, onChange: (snapshot) => { setState({ owner, snapshot }); },
+      ...(aiAuto === undefined ? {} : { aiAuto }),
+    });
     engine.current = queue;
     return () => {
       queue.dispose();
       if (engine.current === queue) engine.current = null;
     };
-  }, [api, locationId, purpose, readOnly, owner]);
+  }, [api, locationId, purpose, readOnly, owner, aiAuto]);
 
   const add = useCallback((files: readonly UploadSource[]) => engine.current?.add(files) ?? [], []);
   const cancel = useCallback((key: string) => { engine.current?.cancel(key); }, []);

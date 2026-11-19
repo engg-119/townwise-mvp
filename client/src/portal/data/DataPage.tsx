@@ -212,6 +212,7 @@ function Data(): React.JSX.Element {
               {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
               onStored={fresh}
               onAsked={fresh}
+              auto={state.status === 'ready' && state.data.page.agentAuto === true}
             />
             <Small>{DATA.addFileHelp}</Small>
             <Actions>

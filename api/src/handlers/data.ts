@@ -403,7 +403,9 @@ function parseCursor(raw: string): DataCursor {
 
 /**
  * GET /org/data?locationId=&after=: the location's items (every location's without one), newest first, 100 a page;
- * `next` is the cursor for the page after, or null on the last. A read: it logs nothing and records nothing.
+ * `next` is the cursor for the page after, or null on the last. D59: `agentAuto`, whether TownwiseAI reads a file added
+ * here on its own (TOWNWISE_AGENT_AUTO, TownwiseAI reading files and the organization's switch), so Add a file's box
+ * starts checked. A read: it logs nothing and records nothing.
  */
 export async function listData(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
@@ -412,9 +414,11 @@ export async function listData(ctx: TownwiseContext, req: Request, res: Response
   const after = query.after === undefined ? null : parseCursor(query.after);
   const location = query.locationId === undefined ? null : await loadLocation(ctx, scope, query.locationId);
   const page = await listDataItems(ctx, scope, { locationId: location?.id ?? null, viewerId: member.userId, after, limit: DATA_PAGE });
+  const agentAuto = ctx.config.agentAuto && ctx.aiReads !== null && (await ctx.stores.orgs.findById(scope.orgId))?.agentAuto.on === true;
   res.status(200).json({
     items: await itemViews(ctx, member, page.items),
     next: page.next === null ? null : `${page.next.at.toISOString()}_${page.next.id}`,
+    agentAuto,
   });
 }
 

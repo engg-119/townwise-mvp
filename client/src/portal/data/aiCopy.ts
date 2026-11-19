@@ -40,6 +40,8 @@ export const AI = {
   forecastKept: 'The forecast update it started keeps running.',
   optIn: 'Let TownwiseAI read these files and use what it finds',
   optInHelp: 'Each file you add is sent whole to Anthropic’s Claude to read. You can undo what TownwiseAI adds from a file on its page.',
+  // D59: while TownwiseAI works on its own the box starts checked. [CONFIRM: privacy wording for TownwiseAI working on its own]
+  optInHelpAuto: 'TownwiseAI reads each file you add on its own: the whole file is sent to Anthropic’s Claude, and TownwiseAI saves what it’s sure of, each change with Undo in TownwiseAI’s activity. Uncheck this to keep these files from it. A sales export Townwise reads into days is never sent.',
 } as const;
 
 /** What TownwiseAI found a file to be, in a sentence. */
@@ -262,6 +264,7 @@ export function cantReadLine(item: Pick<DataItem, 'kind' | 'name'>): string | nu
 
 /** What happened to one finished file the person let TownwiseAI read. */
 export type OptInState =
+  | { state: 'auto' }
   | { state: 'asking' }
   | { state: 'asked' }
   | { state: 'not_read'; why: string }
@@ -269,6 +272,9 @@ export type OptInState =
 
 export function optInLine(asked: OptInState): string {
   switch (asked.state) {
+    // D59: TownwiseAI reads it on its own; nothing was asked.
+    case 'auto':
+      return 'Added. TownwiseAI reads it on its own; open it on Your data to see what it finds.';
     case 'asking':
       return 'Added. Asking TownwiseAI to read it…';
     case 'asked':

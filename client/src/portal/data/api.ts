@@ -105,7 +105,8 @@ export const dataItemSchema = z.object({
 });
 export type DataItem = z.infer<typeof dataItemSchema>;
 
-const listSchema = z.object({ items: z.array(dataItemSchema), next: z.string().nullable() });
+/** D59: `agentAuto`, whether TownwiseAI reads a file added here on its own; absent from an API before it, read as no. */
+const listSchema = z.object({ items: z.array(dataItemSchema), next: z.string().nullable(), agentAuto: z.boolean().optional() });
 const itemSchema = z.object({ item: dataItemSchema });
 const removedSchema = z.object({ deletedDays: z.number(), deletedFiles: z.number() });
 const undoneSchema = z.object({ item: dataItemSchema, calibrationKept: z.string().nullable() });
@@ -116,7 +117,9 @@ function itemPath(locationId: string, ref: string): `/${string}` {
 }
 
 /** Newest first, 100 a page; one location's items, or every location's without `locationId`. `after` is the last page's `next`. */
-export function listData(api: ApiClient, opts: { locationId?: string; after?: string }): Promise<{ items: DataItem[]; next: string | null }> {
+export function listData(
+  api: ApiClient, opts: { locationId?: string; after?: string },
+): Promise<{ items: DataItem[]; next: string | null; agentAuto?: boolean | undefined }> {
   const query = new URLSearchParams();
   if (opts.locationId !== undefined) query.set('locationId', opts.locationId);
   if (opts.after !== undefined) query.set('after', opts.after);

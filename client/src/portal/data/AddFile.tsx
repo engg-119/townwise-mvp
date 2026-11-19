@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
@@ -23,6 +23,10 @@ import { DATA } from './copy';
 // finished while it was unchecked is never sent. How each one went shows beside it; a refusal never undoes the upload. There is
 // no cheap way to know beforehand whether reading with TownwiseAI is on, so the box shows with stored files on and
 // hides once a request answers 503 ai_unavailable, for as long as the page is open.
+//
+// D59 (openspec change auto-apply-agent-reads): while TownwiseAI works on its own here (`auto`, from the list), the box
+// starts checked and nothing is pressed: the server reads each file once it is stored. Unchecked, each upload opens with
+// `aiAuto: false`, which keeps that file from TownwiseAI. [CONFIRM: privacy wording for TownwiseAI working on its own]
 
 /** A finished file the person let TownwiseAI read: its stored file's id and how asking went. */
 interface Asked { fileId: string; ai: OptInState }
@@ -35,9 +39,22 @@ export function AddFile(props: {
   onStored: () => void;
   /** TownwiseAI took a finished file to read (or was already reading it): the list reloads, so its row says so. */
   onAsked?: () => void;
+  /** D59: TownwiseAI reads each file added here on its own, so the box starts checked and nothing is pressed. */
+  auto?: boolean;
 }): React.JSX.Element {
   const { api } = usePortal();
-  const queue = useUploadQueue(props.locationId, { purpose: 'reference' });
+  const auto = props.auto === true;
+  // While it works on its own: whether the box is checked, read as each upload opens.
+  const [optIn, setOptIn] = useState(auto);
+  const [seenAuto, setSeenAuto] = useState(auto);
+  if (seenAuto !== auto) {
+    setSeenAuto(auto);
+    setOptIn(auto);
+  }
+  const optInRef = useRef(optIn);
+  useEffect(() => { optInRef.current = optIn; }, [optIn]);
+  const aiAuto = useCallback(() => optInRef.current, []);
+  const queue = useUploadQueue(props.locationId, { purpose: 'reference', ...(auto ? { aiAuto } : {}) });
   const { onStored, onAsked, locationId } = props;
   const finished = queue.items.filter((item) => item.state === 'done').length;
   // Told once per finished file, whatever `onStored` is by then.
@@ -47,7 +64,6 @@ export function AddFile(props: {
     told.current = finished;
   }, [finished, onStored]);
 
-  const [optIn, setOptIn] = useState(false);
   const [aiOff, setAiOff] = useState(false);
   // Each finished file, by its queue key, once looked at: null when it finished with the box unchecked (never sent).
   const [asked, setAsked] = useState<Readonly<Record<string, Asked | null>>>({});
@@ -61,7 +77,8 @@ export function AddFile(props: {
           continue;
         }
         const why = item.file === null ? null : cantReadLine({ kind: item.file.kind, name: item.file.name ?? item.name });
-        next[item.key] = { fileId: item.fileId, ai: why === null ? { state: 'asking' } : { state: 'not_read', why } };
+        // D59: the server reads it on its own; nothing is pressed.
+        next[item.key] = { fileId: item.fileId, ai: why !== null ? { state: 'not_read', why } : auto ? { state: 'auto' } : { state: 'asking' } };
       }
       return next;
     });
@@ -117,7 +134,7 @@ export function AddFile(props: {
             describedBy={[helpId, props.describedBy].filter((id) => id !== undefined).join(' ')}
             onChange={setOptIn}
           />
-          <Small nativeID={helpId}>{AI.optInHelp}</Small>
+          <Small nativeID={helpId}>{auto ? AI.optInHelpAuto : AI.optInHelp}</Small>
           <LinkButton href={AI.privacyHref} label={AI.privacy} />
         </View>
       )}
