@@ -325,7 +325,7 @@ jobs:
             read -r state latest ready < <(az containerapp show --name "$AZURE_CONTAINER_APP" \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --query '[properties.provisioningState, properties.latestRevisionName, properties.latestReadyRevisionName]' \
-              --output tsv | tr '\t' ' ')
+              --output tsv | tr '\t\n' '  ')
             echo "provisioning $state; latest $latest; ready $ready"
             if [ "$state" = Failed ]; then echo "::error::Container App update failed"; exit 1; fi
             if [ "$state" = Succeeded ] && [ "$latest" = "$ready" ]; then exit 0; fi
@@ -352,7 +352,7 @@ jobs:
           for _ in $(seq 1 30); do
             sleep 10
             read -r state image < <(az containerapp job show --name caj-townwise-lab --resource-group "$AZURE_RESOURCE_GROUP" \
-              --query '[properties.provisioningState, properties.template.containers[0].image]' --output tsv | tr '\t' ' ')
+              --query '[properties.provisioningState, properties.template.containers[0].image]' --output tsv | tr '\t\n' '  ')
             echo "lab job provisioning $state"
             if [ "$state" = Failed ] || [ "$state" = Canceled ]; then echo "::error::lab job update failed"; exit 1; fi
             if [ "$state" = Succeeded ] && [ "$image" = "$IMAGE" ]; then exit 0; fi
@@ -377,7 +377,7 @@ jobs:
           for _ in $(seq 1 30); do
             sleep 10
             read -r state image < <(az containerapp job show --name caj-townwise-forecasts --resource-group "$AZURE_RESOURCE_GROUP" \
-              --query '[properties.provisioningState, properties.template.containers[0].image]' --output tsv | tr '\t' ' ')
+              --query '[properties.provisioningState, properties.template.containers[0].image]' --output tsv | tr '\t\n' '  ')
             echo "worker job provisioning $state"
             if [ "$state" = Failed ] || [ "$state" = Canceled ]; then echo "::error::worker job update failed"; exit 1; fi
             if [ "$state" = Succeeded ] && [ "$image" = "$IMAGE" ]; then exit 0; fi

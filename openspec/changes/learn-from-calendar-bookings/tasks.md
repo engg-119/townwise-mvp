@@ -1,0 +1,66 @@
+Spec decision D58 (check develop's spec section 2 and the reservation list again before writing it). CONFIRM index items numbered after develop's last (129 on 2026-11-18), renumbered in 11.4. Tests first in every task. Run only the targeted suites listed (the laptop's CI runner is shared; ask before a full suite). Never print, log or commit a title, description, location or email from the owner's CSV; fixtures use made-up events. Tick a box only when its tests pass, and add a "Done:" line saying what differs from `design.md`. Groups 1 to 4 (the import half) may be built once 0.2 is done. Groups 5 to 9 (the labels half) wait for 0.1's answers.
+
+## 0. Owner answers and coordination
+
+- [ ] 0.1 Ask the owner design.md's Open Questions 1 to 12. Record the answers here. Write the label definitions for 6.2's prompt from answers 3, 4, 8 and 9. If answer 1 names a surface other than Your calendars, or answer 3 says every event is a booking, stop and revise design decisions 1 or 6 before building groups 5 to 9.
+- [ ] 0.2 Claim D58 (or the next free number) in the reservation memory and on develop's spec, after grepping both. Rebase onto develop and check whether `calendar-event-suggestions` (D53) has changed `sentTitle`, `eventNote` or `ownerEvents` since 1256afd6.
+
+## 1. The CSV parser (design decisions 2 and 3)
+
+- [ ] 1.1 New `api/src/calendar/csv-events.ts` `parseCalendarCsv(text, town)`, answering `IcsResult` plus `skippedRows`, built on `files/parse/csv.ts` `parseCsv` and `ics.ts` `townClock`, `spanOf`, `titleOf`. Tests (`api/test/calendar-csv.test.ts`, made-up rows): header matched in any order and case with extra columns ignored; a quoted description with line breaks and commas; an offset time becoming the town's wall time across a DST change (-04:00 and -05:00); a `Z` time; an offset-less midnight-to-midnight row becoming a 1-day and a 14-day all-day event; an evening event ending at 01:00 kept on its start day with its hours; `cancelled` rows left out; a blank and a repeated `event_id` (suffix, not keyed); a 1,025-character id not keyed; a title over 200 characters cut; an unreadable start counted in `skippedRows`; and a sentinel description, location, organizer email and Google URL that appear nowhere in the result. `npm test -w @townwise/api -- test/calendar-csv.test.ts`
+- [ ] 1.2 `parseCalendarFile(text, town)` in `api/src/calendar/ics.ts` picks `.ics` by `BEGIN:VCALENDAR`, else the CSV profile, else `not_calendar` (a sales CSV, an empty file, a CSV missing `end_at`). Tests in the same file and `test/calendar-ics.test.ts` (unchanged `.ics` results). `npm test -w @townwise/api -- test/calendar-csv.test.ts test/calendar-ics.test.ts`
+
+## 2. File calendars keep 3 years back (decision 4)
+
+- [ ] 2.1 `keepWindow` takes the history length. `FILE_HISTORY_DAYS = 1_096` applies to file calendars (both formats) with upcoming events first; links and Google keep `WINDOW_DAYS`. Tests: a file event 1,000 days back kept and 1,100 days back dropped; 2,500 events with 600 upcoming keep all 600 upcoming; a link still drops 401 days back; Google's results unchanged. `npm test -w @townwise/api -- test/calendar-ics.test.ts test/calendar-csv.test.ts test/calendar-google-events.test.ts`
+
+## 3. Adding a CSV calendar (decisions 1 and 2)
+
+- [ ] 3.1 `createOwnerCalendar` reads a file's text with `parseCalendarFile`. The body field stays `ics` (it carries any calendar file's text; renaming it would break shipped native builds). Store `format: 'ics' | 'csv'` on the source (absent reads `ics`), answer it in the view, and answer `skippedRows` in the add's response. Tests (`api/test/owner-calendars.int.test.ts`): a CSV add stores its events and format; the events read returns a range 700 days back; 1 MB still refused `too_large`; a sales CSV refused `not_calendar`; view-as refused; the audit event carries the kind and count only. `npm test -w @townwise/api -- test/owner-calendars.int.test.ts test/owner-calendars-store.int.test.ts`
+- [ ] 3.2 Client: `IcsImport.web.tsx` and `IcsImport.tsx` accept `.csv` and `text/csv`; `labelOfFile` drops `.csv` as it drops `.ics`; the popover's help and `notCalendar` words name CSV; the add toast says how many rows were skipped. Tests: `client/test/portal/calendar/` (label, accept list, words). `npm test -w @ckeith26/expo-shell -- test/portal/calendar --selectProjects web`
+- [ ] 3.3 Chat: a test that `get_owner_calendar` lists a CSV calendar's events in a range 2 years back with no change to its name, description or input schema (frozen prefix). `npm test -w @townwise/api -- test/chat-owner-calendar.test.ts`
+
+## 4. Your data keeps a calendar export (decision 5)
+
+- [ ] 4.1 The file reader's header step keeps a text file (and a ZIP entry) matching the CSV profile as `calendar_export`: no sales read, no question. Read with TownwiseAI skips it `calendar_export` before reserving budget or calling the model, and writes no notes. Tests (made-up export; a sales CSV with a `title` column still read as sales): `test/files/header.test.ts`, `test/files/zip.test.ts`, `test/files/ai-reader-request.test.ts`, and an AI read case in `test/files-budget.int.test.ts`. `npm test -w @townwise/api -- test/files/header.test.ts test/files/zip.test.ts test/files/ai-reader-request.test.ts test/files-budget.int.test.ts`
+- [ ] 4.2 Client: the Your data row's words for `calendar_export` with a link to Your calendars. Test in `client/test/portal/data/`. `npm test -w @ckeith26/expo-shell -- test/portal/data --selectProjects web`
+
+## 5. Label fields and reads (decisions 6, 7 and 9)
+
+- [ ] 5.1 `api/src/stores/owner-calendars.ts`: event rows gain optional `booking` (`buyout | party | own_event | other`), `bookingBy` (`ai | person`) and `bookingAt`; sources gain optional `bookings: { state: 'sorted' | 'confirmed', sortedAt, confirmedAt, confirmedBy }`. Add `setLabels` (AI labels only where `booking` is absent), `setLabel` (a person's), `confirmBookings` (compare-and-set on `bookings.state`), `labelCounts`, and `bookingsBetween` (confirmed file calendars' current `buyout` and `party` rows, dates and label only). A deleted person's `confirmedBy` is nulled in `stores/cross-tenant.ts`. Tests (`test/owner-calendars-store.int.test.ts`): AI never overwrites a person's label; another organization's calendar reads nothing; an unconfirmed calendar's labels are not in `bookingsBetween`; a link calendar refuses labels. `npm run test:int -w @townwise/api -- test/owner-calendars-store.int.test.ts test/isolation.int.test.ts`
+
+## 6. Sort with TownwiseAI (decision 8)
+
+- [ ] 6.1 New `api/src/calendar/booking-sort.ts`: batches of 250, `sentTitle` from `lab/suggestions.ts`, request-local refs, the answer schema and its checks (unknown ref, a ref twice, `unsure` and missing refs dropped), the budget reservation and 150-second bound. Tests (`api/test/calendar-booking-sort.test.ts`, a stub model): a sentinel email and phone in a title never reach the request; no calendar label, id or uid in the request; a failed batch leaves its events unlabeled; the reservation's ceiling for 1,067 events. `npm test -w @townwise/api -- test/calendar-booking-sort.test.ts`
+- [ ] 6.2 The system prompt with 0.1's label definitions, marked as data, never instructions. Test that it holds each definition and the data rule.
+- [ ] 6.3 Route `org.owner_calendars.bookings_sort` (`POST .../owner-calendars/:calendarId/bookings/sort`, `org_admin`, body `none`, the `writes` limiter plus 3 a calendar an hour, not open as admin). 409 `chat_budget_exhausted`, 503 without `ANTHROPIC_API_KEY`, 409 `not_a_file_calendar`. Log line and audit event per design decision 14. Tests in `api/test/owner-calendars.int.test.ts`; seed the route in `api/test/isolation.int.test.ts`. `npm run test:int -w @townwise/api -- test/owner-calendars.int.test.ts test/isolation.int.test.ts`
+
+## 7. Labeling, confirming and upcoming notes (decisions 7, 10 and 11)
+
+- [ ] 7.1 Routes `org.owner_calendars.bookings_label` (`PATCH .../bookings`, body `{ uid, booking }` strict, 2 KB, uid 1 to 1,024) and `org.owner_calendars.bookings_confirm` (`POST .../bookings/confirm`), `org_admin`, open as admin allowed with D25's tab check. Tests: a member gets 403; view-as refused; another location's calendar 404; a uid in the query is ignored. `npm run test:int -w @townwise/api -- test/owner-calendars.int.test.ts test/isolation.int.test.ts`
+- [ ] 7.2 Confirm writes upcoming notes as `eventNote` does (`private_event`, closed or more guests, null count, title and detail, `fromEvent` set), skipping linked or covered events, at most 100, within `MAX_NOTES`; a retry makes no second note; a later label set to buyout or party on a confirmed calendar makes its note; a label set away answers `noteKept: true`. Tests in `api/test/owner-calendars.int.test.ts`. Same command.
+- [ ] 7.3 Confirm starts a calibration through `lab/service.ts` `checkStart` and `launch` as the admin, and answers why not when refused (lab off, starts used up). Test with the lab stub. Same command.
+
+## 8. Training and the weekly call (decisions 9, 11 and 13)
+
+- [ ] 8.1 `labInputOf` takes `bookings` (default empty) and `buildLabInput` reads `bookingsBetween`. Tests (`api/test/lab-input.test.ts`, new cases; the golden unchanged): a buyout sets `booked` on a history day; a party sets `privateEvent`; a covering private-event or closure note decides; a counted party note on the day is not counted twice; a party on a likely-closed Monday leaves it closed with null guests; a label after `dataThrough` sets nothing; an unconfirmed calendar changes nothing; the fingerprint changes with a confirmed label and not with an unconfirmed one. `npm test -w @townwise/api -- test/lab-input.test.ts test/lab-contract.test.ts`
+- [ ] 8.2 `lab/suggestions.ts` leaves labeled events of confirmed calendars out of `ownerEvents`. Tests in its suites. `npm test -w @townwise/api -- test/weekly-suggestions.test.ts test/weekly-suggestions.int.test.ts`
+- [ ] 8.3 Lab side: confirm no Python change is needed (`private_event` and `booked` keep their meaning). `cd modeling/lab && uv run pytest tests/test_contract.py tests/test_parity.py`
+
+## 9. Client Bookings section and the offline check (decisions 7, 12 and 15)
+
+- [ ] 9.1 `client/src/portal/data/item/CalendarItem.tsx`: for a file calendar, counts per label, the month list with a label filter and a select per event (org admin), Sort with TownwiseAI with its words before the press, Use for forecasts, and the results (labeled, notes made, refit started or when it will run). Read-only for members and under view-as; no Sort for staff open as admin. Its path needs no new `isAllowed` entry (the page exists). Tests in `client/test/portal/data/`. `npm test -w @ckeith26/expo-shell -- test/portal/data`
+- [ ] 9.2 Independent UI review on a DB copy with a made-up calendar (memory: UI review without owner sign-in), web and phone width.
+- [ ] 9.3 Offline comparison, never committed: on a local copy of the partner's data, import the CSV, label it as the owner's answers say, and run the lab with and without the confirmed labels. Report both engines' backtest WAPE and weekday bias to the owner as counts and metrics only, before release.
+
+## 10. Docs and privacy (owner approval before push)
+
+- [ ] 10.1 `docs/portal/spec.md`: D58 row, 10.18 (CSV, history window, Bookings section), 11A.4 and 11A.9 (`calendar_export`), 14.5 (labels on history days), 6.x fields, 17 (privacy), the CONFIRM index items from design.md, the DECISION NEEDED items in 22.3, and the changelog. `api/README.md`: three routes, the new fields, audit actions and log lines. `docs/portal/tuning-chat.md` section 9: labeled events are not sent weekly.
+- [ ] 10.2 `client/app/(marketing)/privacy.tsx`: design decision 14's words. Owner approves the wording before push. Test: a new `client/test/marketing/privacy-calendar-csv.test.web.tsx` beside `privacy-calendar-titles.test.web.tsx`. `npm test -w @ckeith26/expo-shell -- test/marketing/privacy-calendar-csv.test.web.tsx test/marketing/privacy-calendar-titles.test.web.tsx --selectProjects web`
+
+## 11. Verification and landing
+
+- [ ] 11.1 `npm run lint` and `npm run typecheck`.
+- [ ] 11.2 The targeted suites above, then `test/isolation.test.ts`, `test/isolation.int.test.ts` and the view-as and open-as-admin route tests.
+- [ ] 11.3 The owner imports the CSV locally, checks owner question 12 (three events' hours), and asks TownwiseAI chat about a booking two years back.
+- [ ] 11.4 Renumber this change's CONFIRM items against develop's spec 22.2 just before push. Ask before a full `npm run verify` on the shared runner.
