@@ -1,6 +1,7 @@
 // Who pays for a calibration and how much history it needs (D27, D42): a person's start (an org admin's or staff's) is
-// one of the organization's 4 a day, is charged $0.10 to its TownwiseAI month and is refused on a spent month; the weekly
-// refresh's start (the system requester) is none of those. Both may start from a 230-day span (a person's since
+// charged $0.10 to its TownwiseAI month and is refused on a spent month, and an org admin's is one of the organization's
+// 4 a day (staff are not limited, owner decision 2026-11-19); the weekly refresh's start (the system requester) is none
+// of those. Both may start from a 230-day span (a person's since
 // 2026-11-19), and the lab is handed the same input whoever started it, so it picks the same engine: the baseline alone
 // under 595 days. The services are called directly, as the weekly refresh does, with a fake runner. Every number is
 // synthetic.
@@ -35,6 +36,8 @@ beforeEach(async () => { await server.redis.flushdb(); });
 const TODAY = '2026-06-01';
 const LAST = '2026-05-31';
 const PERSON = { userId: 'staff-0000', role: 'superadmin', via: 'console' } as const;
+/** An org admin's start through TownwiseAI: the one the organization's 4 a day count. */
+const ADMIN = { userId: 'admin-0000', role: 'org_admin', via: 'chat' } as const;
 
 interface Place { scope: OrgScope; orgId: string; locationId: string }
 
@@ -74,9 +77,9 @@ describe('the weekly refresh’s start (system requester, D42)', () => {
     const doc = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(system.calibration.id) });
     expect(doc).toMatchObject({ requestedBy: { userId: null, role: 'system', via: 'scheduled' }, chargedMicroUsd: 0 });
     expect(await usage(p.orgId)).toBe(0);
-    // The organization's 4 a day are all still there for people
-    for (let i = 0; i < CALIBRATIONS_PER_ORG_PER_DAY; i += 1) expect((await startAndFree(p, PERSON)).ok).toBe(true);
-    expect(await launch(server.ctx, await request(p, PERSON))).toEqual({ ok: false, code: 'rate_limited' });
+    // The organization's 4 a day are all still there for org admins
+    for (let i = 0; i < CALIBRATIONS_PER_ORG_PER_DAY; i += 1) expect((await startAndFree(p, ADMIN)).ok).toBe(true);
+    expect(await launch(server.ctx, await request(p, ADMIN))).toEqual({ ok: false, code: 'rate_limited' });
     // and a fifth start of the day by the system still starts
     expect((await startAndFree(p, SYSTEM_REQUESTER)).ok).toBe(true);
     const month = await server.connection.collection('tw_chat_usage').findOne({ orgId: new Types.ObjectId(p.orgId) });
@@ -132,13 +135,29 @@ describe('a person’s start keeps D27’s charge and limits', () => {
 
   it('under 595 days is still charged $0.10, one of the 4 a day, and refused on a spent month', async () => {
     const p = await place(300);
-    for (let i = 0; i < CALIBRATIONS_PER_ORG_PER_DAY; i += 1) expect((await startAndFree(p, PERSON)).ok).toBe(true);
-    expect(await launch(server.ctx, await request(p, PERSON))).toEqual({ ok: false, code: 'rate_limited' });
+    for (let i = 0; i < CALIBRATIONS_PER_ORG_PER_DAY; i += 1) expect((await startAndFree(p, ADMIN)).ok).toBe(true);
+    expect(await launch(server.ctx, await request(p, ADMIN))).toEqual({ ok: false, code: 'rate_limited' });
     const month = await server.connection.collection('tw_chat_usage').findOne({ orgId: new Types.ObjectId(p.orgId) });
     expect(month?.costMicroUsd).toBe(CALIBRATIONS_PER_ORG_PER_DAY * CALIBRATION_CHARGE_MICRO_USD);
     const spent = await place(300);
     await addChatUsage(server, { orgId: spent.orgId, month: '2026-06', costMicroUsd: 20_000_000 });
     expect(await checkStart(server.ctx, await request(spent, PERSON))).toBe('budget_exhausted');
+  });
+
+  it('by staff is not one of the 4 a day (owner, 2026-11-19), but is still charged $0.10', async () => {
+    const p = await place(600);
+    // Staff start more than the organization's 4 in a day, from the console and as open as admin
+    for (let i = 0; i < CALIBRATIONS_PER_ORG_PER_DAY + 2; i += 1) {
+      expect((await startAndFree(p, i % 2 === 0 ? PERSON : PEOPLE[3])).ok).toBe(true);
+    }
+    const month = await server.connection.collection('tw_chat_usage').findOne({ orgId: new Types.ObjectId(p.orgId) });
+    expect(month?.costMicroUsd).toBe((CALIBRATIONS_PER_ORG_PER_DAY + 2) * CALIBRATION_CHARGE_MICRO_USD);
+    // and took none of the org admins' 4
+    for (let i = 0; i < CALIBRATIONS_PER_ORG_PER_DAY; i += 1) expect((await startAndFree(p, ADMIN)).ok).toBe(true);
+    expect(await launch(server.ctx, await request(p, ADMIN))).toEqual({ ok: false, code: 'rate_limited' });
+    // A staff start needs no limiter store, so one from a job (no Valkey) starts too
+    const noValkey = await launch({ ...server.ctx, redis: null }, await request(p, PERSON));
+    expect(noValkey.ok).toBe(true);
   });
 
   it('hands the lab the same input as the weekly refresh’s start, so the lab picks the same engine', async () => {
