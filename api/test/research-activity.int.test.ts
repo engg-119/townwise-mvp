@@ -84,13 +84,13 @@ async function townRun(at: Date): Promise<void> {
   await towns.finishRun(run.id, { status: 'done', code: null, counts: { found: 12, added: 5, updated: 2, dropped: 3 }, costMicroUsd: 9_000, now: at });
 }
 
-async function competitorEvent(t: Tenant, runId: string): Promise<void> {
+async function competitorEvent(t: Tenant, runId: string, origin: 'competitor' | 'neighborhood' = 'competitor', title = SENTINEL): Promise<void> {
   const at = server.clock.now();
   await server.ctx.stores.researchLocations.insertEvent(t.scope, t.locationId, {
-    title: SENTINEL, titleKey: SENTINEL.toLowerCase(), kind: 'event', category: 'dining', start: '2026-06-10', end: '2026-06-10',
+    title, titleKey: title.toLowerCase(), kind: 'event', category: 'dining', start: '2026-06-10', end: '2026-06-10',
     weekdays: null, startTime: null, status: 'scheduled', venueId: null, hostId: null, confidence: 'medium',
     sources: [{ label: 'example.test', url: 'https://example.test/rival' }], firstRunId: runId, lastRunId: runId, firstSeenAt: at, lastSeenAt: at,
-    seenCount: 1, placeId: null, town: 'hanover-nh', origin: 'competitor', competitorEntityId: null, competitorPlaceId: null,
+    seenCount: 1, placeId: null, town: 'hanover-nh', origin, competitorEntityId: null, competitorPlaceId: null,
   });
 }
 
@@ -100,6 +100,8 @@ describe('research_done in TownwiseAI’s activity', () => {
     await locationRun(t, { key: 'p1', at: minutes(1), ends: { competitors: { status: 'failed', code: 'provider_error' } }, finish: 'partial', counts: { found: 4, added: 2 } });
     const done = await locationRun(t, { key: 'p2', at: minutes(3), ends: {}, finish: 'done', counts: { found: 9, added: 3 } });
     await competitorEvent(t, done);
+    // Not a competitor's: not counted.
+    await competitorEvent(t, done, 'neighborhood', `${SENTINEL} Fair`);
     await townRun(minutes(2));
     // Stopped (`off`) and still running: neither shows.
     await locationRun(t, { key: 'p3', at: minutes(4), ends: {}, finish: 'off' });

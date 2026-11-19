@@ -167,10 +167,7 @@ export const researchSource: ActivitySource = async ({ ctx, scope, locationId })
     own.reportedRuns(scope, locationId, RESEARCH_RUNS_READ),
     townId === null ? Promise.resolve([]) : towns.reportedRuns(townId, RESEARCH_RUNS_READ),
   ]);
-  const competitorsAdded = new Map<string, number>();
-  for (const row of ownRuns.length === 0 ? [] : await own.events(scope, locationId)) {
-    if (row.origin === 'competitor') competitorsAdded.set(row.firstRunId, (competitorsAdded.get(row.firstRunId) ?? 0) + 1);
-  }
+  const competitorsAdded = await own.competitorsAdded(scope, locationId, ownRuns.map((run) => run.id));
   // A `done` run had no thread fail and a `failed` or `budget` one had all (research/runner.ts runStatus), so only a
   // `partial` run's threads are read.
   const item = async (

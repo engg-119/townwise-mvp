@@ -175,6 +175,8 @@ export interface LocationResearchStore {
   reclaimThread(scope: OrgScope, id: string, input: { now: Date; next: { status: 'queued'; notBefore: Date } | { status: 'failed'; code: string } }): Promise<LocationThreadRecord | null>;
   /** The location's stored events, every stamp included (the reader skips rows of another place or town). */
   events(scope: OrgScope, locationId: string): Promise<LocationEventRecord[]>;
+  /** How many of the location's stored competitor rows each of `runIds` first found (TownwiseAI's activity), by run id. */
+  competitorsAdded(scope: OrgScope, locationId: string, runIds: readonly string[]): Promise<Map<string, number>>;
   insertEvent(scope: OrgScope, locationId: string, input: LocationEventInsert): Promise<LocationEventRecord>;
   /** A merge's update of a stored row: never its title or dates. */
   updateEvent(scope: OrgScope, locationId: string, id: string, update: EventUpdate): Promise<boolean>;
@@ -289,6 +291,18 @@ export function createLocationResearchStore(connection: Connection): LocationRes
     },
     async events(scope, locationId) {
       return (await Event.find(at(scope, locationId)).sort({ start: 1, _id: 1 }).lean()).map(toLocationEvent);
+    },
+    async competitorsAdded(scope, locationId, runIds) {
+      const counts = new Map<string, number>();
+      if (runIds.length === 0) return counts;
+      const docs = await Event.find(
+        { ...at(scope, locationId), origin: 'competitor', firstRunId: trusted({ $in: runIds.map(oid) }) }, { firstRunId: 1 },
+      ).lean();
+      for (const doc of docs) {
+        const runId = doc.firstRunId.toHexString();
+        counts.set(runId, (counts.get(runId) ?? 0) + 1);
+      }
+      return counts;
     },
     async insertEvent(scope, locationId, input) {
       const doc = await Event.create({

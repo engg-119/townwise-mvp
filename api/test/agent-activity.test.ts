@@ -219,7 +219,14 @@ describe('research runs in TownwiseAI’s activity (D66)', () => {
         locations: { find: () => Promise.resolve({ id: LOCATION, town: { townId: fakes.townId === undefined ? 'hanover-nh' : fakes.townId } }) },
         researchLocations: {
           reportedRuns: () => { reads.push('own'); return Promise.resolve(fakes.own ?? []); },
-          events: () => { reads.push('events'); return Promise.resolve(fakes.events ?? []); },
+          competitorsAdded: (_scope: OrgScope, _locationId: string, runIds: readonly string[]) => {
+            reads.push('competitors');
+            const counts = new Map<string, number>();
+            for (const row of fakes.events ?? []) {
+              if (row.origin === 'competitor' && runIds.includes(row.firstRunId)) counts.set(row.firstRunId, (counts.get(row.firstRunId) ?? 0) + 1);
+            }
+            return Promise.resolve(counts);
+          },
           threadsOf: (_scope: OrgScope, id: string) => threadsOf(id),
         },
         researchTowns: {
@@ -281,11 +288,11 @@ describe('research runs in TownwiseAI’s activity (D66)', () => {
     }
   });
 
-  it('reads no town run for a town outside the twelve, and no events when the location has no run', async () => {
+  it('reads no town run for a town outside the twelve', async () => {
     const reads: string[] = [];
     const ctx = researchContext({ townId: null, own: [] }, reads);
     expect(await activityFor(input(ctx, MEMBER), [researchSource])).toEqual([]);
-    expect(reads).toEqual(['own']);
+    expect(reads.filter((read) => read.startsWith('town:'))).toEqual([]);
   });
 
   it('a failed run counts every topic as not finished', async () => {
