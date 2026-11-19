@@ -49,7 +49,7 @@ Words are client functions in `client/src/portal/upload/copy.ts` beside `calibra
 
 | Where | `running`, published run | `running`, first forecast | `waiting` |
 |---|---|---|---|
-| Model card (P24), beside the stale line, or in the In progress block | "Updating your forecast with {n} new days, started {time}." ({n} is `newerDays`; with none, "Updating your forecast, started {time}.") | "Building your first forecast from {dayCount} days, started {time}." | "Your first forecast is next. Townwise starts building it soon." |
+| Model card (P24), beside the stale line, or in the In progress block | "Updating your forecast with {n} new days, started {time}." ({n} is `newerDays`; with none, "Updating your forecast, started {time}.") | "Building your first forecast, started {time}." | "Your first forecast is next. Townwise starts building it soon." |
 | Home (P11), the In progress Tagline | unchanged (the forecast shows) | "Building the first forecast for {name}. Home shows it here once it’s published." | "The first forecast for {name} is next. Townwise starts building it soon." |
 | Dashboard Calibration cell (P9), second line, plain words (15.6) | "Updating now" | "Building the first forecast" | "First forecast next" |
 | Upload result (11.2 step 4) | "Townwise is updating the forecast with these days." | the first-forecast line | "Townwise starts on the first forecast soon." |

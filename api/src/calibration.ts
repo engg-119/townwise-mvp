@@ -149,14 +149,16 @@ const count = (n: number): string => n.toLocaleString('en-US');
 
 /**
  * D65: the model card's updating sentence (design decision 3), null while nothing updates. "Building" only while a
- * first forecast runs; `waiting` states no time and promises no publish (14.1).
+ * first forecast runs, with no day count: the coverage's days include likely-closed ones, so the count would disagree
+ * with the card's days with a guest count and the run's own in the history. `waiting` states no time and promises no
+ * publish (14.1).
  */
 function updatingWords(calibration: Calibration, timeZone: string, now: Date): string | null {
   const { updating } = calibration;
   if (updating === null) return null;
   if (updating.stage === 'waiting') return 'Your first forecast is next. Townwise starts building it soon.';
   const started = startedTime(updating.since, timeZone, now);
-  if (calibration.state === 'not_calibrated') return `Building your first forecast from ${count(calibration.dayCount)} days, started ${started}.`;
+  if (calibration.state === 'not_calibrated') return `Building your first forecast, started ${started}.`;
   if (calibration.newerDays === 0) return `Updating your forecast, started ${started}.`;
   const days = calibration.newerDays === 1 ? '1 new day' : `${count(calibration.newerDays)} new days`;
   return `Updating your forecast with ${days}, started ${started}.`;

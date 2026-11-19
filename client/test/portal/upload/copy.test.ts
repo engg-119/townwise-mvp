@@ -183,7 +183,7 @@ describe('D65: the forecast updating, in each page’s words (design decisions 3
   });
 
   test('the model card: a first forecast building, and next', () => {
-    expect(updatingLine(first(running), now)).toBe('Building your first forecast from 1,035 days, started 2:14 PM.');
+    expect(updatingLine(first(running), now)).toBe('Building your first forecast, started 2:14 PM.');
     expect(updatingLine(first(waiting), now)).toBe('Your first forecast is next. Townwise starts building it soon.');
   });
 
@@ -205,7 +205,7 @@ describe('D65: the forecast updating, in each page’s words (design decisions 3
 
   test('the upload’s result', () => {
     expect(uploadUpdatingLine(stale(6, running), now)).toBe('Townwise is updating the forecast with these days.');
-    expect(uploadUpdatingLine(first(running), now)).toBe('Building your first forecast from 1,035 days, started 2:14 PM.');
+    expect(uploadUpdatingLine(first(running), now)).toBe('Building your first forecast, started 2:14 PM.');
     expect(uploadUpdatingLine(first(waiting), now)).toBe('Townwise starts on the first forecast soon.');
   });
 

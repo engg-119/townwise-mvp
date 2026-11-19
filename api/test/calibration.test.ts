@@ -92,11 +92,11 @@ describe('calibrationWords', () => {
     expect(calibrationWords(stale, ZONE, NOW)).toBe('Forecast made from your sales through Sun, Nov 15. The 6 days since aren’t in it yet. Updating your forecast with 6 new days, started 2:14 PM.');
   });
 
-  it('words a running first forecast with its days, and adds the date when it started on another day (D65)', () => {
+  it('words a running first forecast with no day count, and adds the date when it started on another day (D65)', () => {
     const first = calibrationOf({ ...COVERAGE, dayCount: 1041 }, null, null, RUNNING);
-    expect(calibrationWords(first, ZONE, NOW)).toBe('Building your first forecast from 1,041 days, started 2:14 PM.');
+    expect(calibrationWords(first, ZONE, NOW)).toBe('Building your first forecast, started 2:14 PM.');
     const lastNight = calibrationOf(COVERAGE, null, null, { stage: 'running', since: '2026-11-16T04:58:00.000Z' });
-    expect(calibrationWords(lastNight, ZONE, new Date('2026-11-16T05:10:00.000Z'))).toBe('Building your first forecast from 300 days, started Sun, Nov 15, 11:58 PM.');
+    expect(calibrationWords(lastNight, ZONE, new Date('2026-11-16T05:10:00.000Z'))).toBe('Building your first forecast, started Sun, Nov 15, 11:58 PM.');
   });
 
   it('words a waiting first forecast with no time, no “Building” and no promise of a publish (D65)', () => {

@@ -373,7 +373,7 @@ describe('tools', () => {
     const overview = JSON.parse(result?.content as string) as { calibration: string; calibrationWords: string };
     expect(overview.calibration).toBe('not_calibrated');
     // In the town's time (Eastern): the test clock's 12:00 UTC less 6 minutes, on the town's today.
-    expect(overview.calibrationWords).toBe('Building your first forecast from 2 days, started 7:54 AM.');
+    expect(overview.calibrationWords).toBe('Building your first forecast, started 7:54 AM.');
     expect(JSON.stringify(model.calls[1]?.params.system)).not.toContain('Building');
   });
 

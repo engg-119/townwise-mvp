@@ -197,14 +197,16 @@ export function startedAt(since: string, now: Date = new Date()): string {
 
 /**
  * D65, the model card's updating sentence (P24), null while nothing updates. "Building" only while a first forecast
- * runs; `waiting` states no time and promises no publish (14.1). The API's overview tool says the same (calibrationWords).
+ * runs, with no day count: the coverage's days include likely-closed ones, so the count would disagree with the card's
+ * "Based on N days with a guest count" and the run's own days in the history. `waiting` states no time and promises no
+ * publish (14.1). The API's overview tool says the same (calibrationWords).
  */
 export function updatingLine(calibration: Calibration, now: Date = new Date()): string | null {
   const updating = updatingOf(calibration);
   if (updating === null) return null;
   if (updating.stage === 'waiting') return 'Your first forecast is next. Townwise starts building it soon.';
   const started = startedAt(updating.since, now);
-  if (calibration.state === 'not_calibrated') return `Building your first forecast from ${plural(calibration.dayCount, 'day', 'days')}, started ${started}.`;
+  if (calibration.state === 'not_calibrated') return `Building your first forecast, started ${started}.`;
   if (calibration.state === 'no_sales_data' || calibration.newerDays === 0) return `Updating your forecast, started ${started}.`;
   return `Updating your forecast with ${plural(calibration.newerDays, 'new day', 'new days')}, started ${started}.`;
 }

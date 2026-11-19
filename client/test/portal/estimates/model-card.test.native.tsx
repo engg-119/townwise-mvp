@@ -233,7 +233,7 @@ describe('D65: a forecast being updated, on a location page', () => {
   test('a first forecast building and next, in the In progress block', async () => {
     const noRun = ABOUT;
     await withState({ state: 'not_calibrated', ...SALES, updating: { stage: 'running', since }, lastRun: null }, noRun);
-    expect(await appScreen.findByRole('link', { name: 'Building your first forecast from 400 days, started 2:14 PM.' })).toBeTruthy();
+    expect(await appScreen.findByRole('link', { name: 'Building your first forecast, started 2:14 PM.' })).toBeTruthy();
     expect(appScreen.getByText('In progress')).toBeTruthy();
     await cleanupApp();
     await withState({ state: 'not_calibrated', ...SALES, updating: { stage: 'waiting', since }, lastRun: null }, noRun);
@@ -253,7 +253,7 @@ describe('D65: a forecast being updated, on a location page', () => {
     const { api, fake, first, rest } = await withState(
       { state: 'not_calibrated', ...SALES, updating: { stage: 'running', since }, lastRun: null }, ABOUT,
     );
-    await appScreen.findByRole('link', { name: 'Building your first forecast from 400 days, started 2:14 PM.' });
+    await appScreen.findByRole('link', { name: 'Building your first forecast, started 2:14 PM.' });
     const reads = (): number => fake.paths.filter((path) => path === `${PATH}/estimates/about`).length;
     expect(reads()).toBe(1);
     // The run publishes: the next re-read of the organization finds it, and the card reads the published run.
