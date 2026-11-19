@@ -41,6 +41,11 @@ const FILE_TURN = 'A calibration can’t start in a turn that read a file from Y
  * context on every later request of the conversation, so the owner asks for it in a new conversation.
  */
 const WEB_TURN = 'A calibration can’t start in a conversation that read web pages. Ask the owner to ask for it in a new conversation.';
+/**
+ * D66 (design decision 12): nor in a turn that read researched events (turn.readResearchedDays), whose titles, places
+ * and sources came from web pages nobody typed into Townwise.
+ */
+const FOUND_TURN = 'A calibration can’t start in a reply that read events research found on the web. Ask the owner to confirm in a new message.';
 
 const startInput = z.strictObject({ regimeStart: isoDate.optional() });
 const namedInput = z.strictObject({ calibrationId: objectId.optional() });
@@ -115,6 +120,7 @@ export const startCalibrationTool: ChatTool<StartInput> = {
     if (tc.role !== 'org_admin') return json({ started: false, code: 'org_admin_only', message: NOT_ADMIN });
     if (tc.turn.readWeb) return json({ started: false, code: 'web_turn', message: WEB_TURN });
     if (tc.turn.readUntrusted) return json({ started: false, code: 'file_turn', message: FILE_TURN });
+    if ((tc.turn.readResearchedDays?.size ?? 0) > 0) return json({ started: false, code: 'found_turn', message: FOUND_TURN });
     const { ctx, scope, location } = tc;
     const request: StartRequest = {
       id: new Types.ObjectId().toHexString(), scope, location,

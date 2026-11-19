@@ -3456,7 +3456,7 @@ Each is marked inline with “lead default”:
 280. Any member may edit, hide or restore a researched event, and staff open as admin may too (D66, 10.19).
 281. Curated town rows and holidays cannot be edited or hidden (D66, 10.19, 13.3).
 282. At most 1,000 edits a location (D66, 6.41, 10.19).
-283. TownwiseAI corrects a researched event when a person asks, whether or not it works on its own; in a turn that read the web or a file it proposes the change for one tap instead; at most 5 a turn (D66, 10.12, P25).
+283. TownwiseAI corrects a researched event when a person asks, whether or not it works on its own; in a turn that read the web or a file it proposes the change for one tap instead; at most 5 a turn, at most 1 applied itself in a turn that read researched events (D66, 10.12, P25).
 284. Weekly suggestions read at most 60 researched events of medium or high confidence, and a suggestion resting on a researched event always waits for a person (D66, 10.12).
 285. Research now for org admins, the location's threads only, 3 a day per person, not within 6 hours of the last run (D66, 10.8, 10.19).
 286. An organization's research switch, on by default, that staff open as admin may only turn off (D66, 6.1, 10.19, P15).

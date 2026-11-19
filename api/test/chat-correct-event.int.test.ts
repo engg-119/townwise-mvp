@@ -11,7 +11,7 @@ import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
-import { correctCalendarEventTool, MAX_CORRECTIONS_PER_TURN } from '../src/chat/tools/correct-calendar-event.ts';
+import { correctCalendarEventTool, MAX_CORRECTIONS_PER_TURN, MAX_DIRECT_AFTER_FOUND } from '../src/chat/tools/correct-calendar-event.ts';
 import type { ToolContext } from '../src/chat/tools/registry.ts';
 import { createMemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { readResearchedViews } from '../src/research/read.ts';
@@ -241,6 +241,28 @@ describe('correct_calendar_event in a clean turn', () => {
     const run = await correctCalendarEventTool.run(tc, input, 'toolu_not_typed');
     expect(JSON.parse(run.content)).toMatchObject({ applied: true, code: null, eventId });
     expect(await shown(t, eventId)).toMatchObject({ hidden: true });
+  });
+
+  it('after reading researched events applies one correction itself and proposes the rest for a tap (decision 12)', async () => {
+    const t = await team();
+    const ids = await Promise.all([0, 1, 2].map((i) => ownEvent(t, { title: `${SENTINEL} Night ${String(i)}`, titleKey: `night ${String(i)}` })));
+    const location = await server.ctx.stores.locations.find(t.scope, t.locationId);
+    if (location === null) throw new Error('fixture location missing');
+    const tc = {
+      ctx: server.ctx, conversationId: new Types.ObjectId().toHexString(), scope: t.scope, location, today: '2026-06-01', timeZone: 'America/New_York',
+      role: 'member', actor: { actorUserId: t.member.userId, actorEmail: null, actorRole: 'member', viewAsGrantId: null },
+      turn: { readUntrusted: false, readWeb: false, readNotTyped: false, pictureBytes: 0, readResearchedDays: new Set(['2026-06-17']) },
+      files: {} as ToolContext['files'],
+    } as unknown as ToolContext;
+    expect(MAX_DIRECT_AFTER_FOUND).toBe(1);
+    const codes: unknown[] = [];
+    for (const [i, eventId] of ids.entries()) {
+      const input = correctCalendarEventTool.parse({ eventId, change: 'hide', why }, '2026-06-01');
+      if (input === null) throw new Error('fixture input refused');
+      codes.push((JSON.parse((await correctCalendarEventTool.run(tc, input, `toolu_found_${String(i)}`)).content) as { code: unknown }).code);
+    }
+    expect(codes).toEqual([null, 'needs_tap', 'needs_tap']);
+    expect(await revisions(t)).toHaveLength(1);
   });
 });
 

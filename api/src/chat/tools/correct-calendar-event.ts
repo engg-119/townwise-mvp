@@ -9,9 +9,12 @@
 // turn that read the web or a file (turn.readUntrusted, which every turn of a conversation that ever searched sets)
 // nothing is written: the result proposes the change (`needs_tap`) and
 // the card's Apply sends the person's own edit. It is not gated on TownwiseAI working on its own (a person asked, and
-// it has Undo), and reading the calendar (turn.readNotTyped) does not block it. [CONFIRM: TownwiseAI corrects a
-// researched event when a person asks, whether or not it works on its own; in a turn that read the web or a file it
-// proposes the change for one tap instead; at most 5 a turn]
+// it has Undo), and reading the calendar (turn.readNotTyped) does not block it. A turn that read researched events
+// (turn.readResearchedDays, whose titles came from web pages) applies at most one correction itself and proposes the
+// rest for a tap, so a planted title asking to hide other events changes one at most, with Undo. [CONFIRM: TownwiseAI
+// corrects a researched event when a person asks, whether or not it works on its own; in a turn that read the web or a
+// file it proposes the change for one tap instead; at most 5 a turn, at most 1 applied itself after reading researched
+// events]
 //
 // The view keeps the call as the existing `tool` part (no new part type, no stream event): its result view is
 // `{ applied, code, eventId, changeId, proposed }`, from which the client draws the card. Logs carry ids and the
@@ -36,6 +39,8 @@ const MAX_WHY_CHARS = 200;
 
 /** At most this many calls a turn; the sixth and later answer `too_many`. */
 export const MAX_CORRECTIONS_PER_TURN = 5;
+/** How many of them apply themselves in a turn that read researched events; the rest answer needs_tap. */
+export const MAX_DIRECT_AFTER_FOUND = 1;
 
 /** The longest `where`, as the edit route's (handlers/research.ts). */
 const MAX_WHERE_CHARS = MAX_TITLE_CHARS;
@@ -151,12 +156,15 @@ async function correct(tc: ToolContext, request: CorrectionInput, callId: string
   // Decision 11's cap, as the edit route checks it (agent/changes.ts targetStates reads every revision of the location
   // on that bound). Checked before needs_tap too: the card's Apply would only meet the route's 409.
   if (await ctx.stores.researchRevisions.count(scope, location.id) >= MAX_LOCATION_REVISIONS) return refused(eventId, 'too_many_edits');
-  if (tc.turn.readUntrusted || callId === undefined) {
+  const direct = tc.turn.directCorrections ?? 0;
+  const capped = (tc.turn.readResearchedDays?.size ?? 0) > 0 && direct >= MAX_DIRECT_AFTER_FOUND;
+  if (tc.turn.readUntrusted || capped || callId === undefined) {
     ctx.logger.info({ orgId: scope.orgId, locationId: location.id, conversationId: tc.conversationId, eventId, outcome: 'needs_tap' }, 'townwise.chat_event_corrected');
     return json({
       applied: false, code: 'needs_tap', eventId, changeId: null, proposed: { change: request.change, fields: fieldsJson(fields) }, message: NEEDS_TAP,
     });
   }
+  tc.turn.directCorrections = direct + 1;
   const { outcome, change } = await applyChange(ctx, scope, eventCorrectionCandidate(ctx, scope, {
     locationId: location.id, conversationId: tc.conversationId, callId, eventId, op: request.change, fields, basedOn: view.head,
     why: request.why, onBehalfOf: actor.actorUserId, actor,

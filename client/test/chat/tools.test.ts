@@ -429,6 +429,7 @@ test('start_calibration’s web_turn (D37) reads as words beside file_turn, neve
   expect(toolLine(step('start_calibration', 'done', null, refused), CTX))
     .toMatchObject({ sentence: 'Didn’t start a forecast calibration', detail: 'It can’t start in a conversation that read web pages' });
   expect(toolLine(step('start_calibration', 'done', null, { ...refused, code: 'file_turn' }), CTX).detail).toBe('It can’t start in a reply that read a file from Your data');
+  expect(toolLine(step('start_calibration', 'done', null, { ...refused, code: 'found_turn' }), CTX).detail).toBe('It can’t start in a reply that read events found on the web');
   expect(viewRows(null, refused, 'start_calibration')).toEqual([
     { term: 'Started', value: 'No' }, { term: 'Reason', value: 'It can’t start in a conversation that read web pages' },
   ]);

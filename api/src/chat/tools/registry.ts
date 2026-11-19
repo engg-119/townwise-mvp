@@ -62,12 +62,15 @@ export interface ToolContext {
    * `readUntrusted` is set, propose_note saves nothing itself and only shows its card. start_calibration does not read it.
    * D66 (design decision 12): `readResearchedDays` holds the days of the researched events get_town_calendar and get_day
    * handed the model in this turn (absent: none); propose_note saves nothing itself on one of those days, and still saves
-   * a plainly stated note on any other day.
+   * a plainly stated note on any other day; start_calibration starts nothing after one (`found_turn`); and
+   * correct_calendar_event applies at most one correction itself (`directCorrections`) and proposes the rest for a tap.
    */
   readonly turn: {
     readUntrusted: boolean; readWeb: boolean; readNotTyped: boolean; pictureBytes: number; readResearchedDays?: Set<string>;
     /** D66: how many correct_calendar_event calls this turn has made (absent: none); at most 5 run. */
     corrections?: number;
+    /** D66: how many of them applied a correction itself (absent: none). */
+    directCorrections?: number;
   };
   readonly files: TurnFiles;
 }

@@ -129,6 +129,8 @@ const START_REFUSAL: Readonly<Record<string, string>> = {
   file_turn: 'It can’t start in a reply that read a file from Your data',
   // D37 (calibration.ts WEB_TURN): a web page's words can't start one, in any later turn of that conversation either.
   web_turn: 'It can’t start in a conversation that read web pages',
+  // D66 (calibration.ts FOUND_TURN): nor in a reply that read events research found on the web.
+  found_turn: 'It can’t start in a reply that read events found on the web',
 };
 
 function wordsFor(words: Readonly<Record<string, string>>, code: string | null): string | null {
