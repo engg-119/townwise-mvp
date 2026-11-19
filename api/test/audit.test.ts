@@ -69,3 +69,12 @@ describe('suggested closure rules’ audit events (D46)', () => {
     expect(summaryOf('agent.suggestion_dismissed', { type: 'rule', source: 'file' })).toBe('Dismissed a business rule TownwiseAI suggested from a file');
   });
 });
+
+describe('a correction of a researched event (D66)', () => {
+  it('reads in plain words in the console, applied and undone', () => {
+    expect(summaryOf('agent.change_applied', { locationId: 'l1', action: 'event.correct', sourceKind: 'chat' }))
+      .toBe('TownwiseAI added a correction to a researched event');
+    expect(summaryOf('agent.change_undone', { locationId: 'l1', action: 'event.correct', sourceKind: 'chat' }))
+      .toBe('Undid a correction to a researched event TownwiseAI added');
+  });
+});
