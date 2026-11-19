@@ -526,4 +526,17 @@ describe('researched events (D66, task 5.6)', () => {
     // The same note citing only the holiday is still sure.
     expect(unsent === undefined ? undefined : sureChangeOf(unsent, TODAY)).toMatchObject({ type: 'note' });
   });
+
+  it('keeps a cited researched id past the 5-id cap, so the suggestion still waits for a person', () => {
+    const town = ['a', 'b', 'c', 'd', 'e'].map((n) => `us:town-${n}:2026`);
+    const over = { calendarIds: new Set([...town, OWN_ID]) };
+    const [kept] = keptSuggestions(answer({ ...CLOSURE, calendarIds: [...town, OWN_ID], confidence: 'high' }), checks(over));
+    expect(kept?.calendarIds).toEqual([...town.slice(0, 4), OWN_ID]);
+    expect(kept === undefined ? undefined : sureChangeOf(kept, TODAY)).toBeNull();
+    // Without a researched id the cap is as before: the first 5.
+    const [plain] = keptSuggestions(answer({ ...CLOSURE, calendarIds: [...town, 'us:thanksgiving:2026'], confidence: 'high' }), checks({
+      calendarIds: new Set([...town, 'us:thanksgiving:2026']),
+    }));
+    expect(plain?.calendarIds).toEqual(town);
+  });
 });

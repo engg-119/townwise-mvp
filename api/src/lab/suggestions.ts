@@ -610,7 +610,8 @@ function spottedOf(raw: unknown, checks: SuggestionChecks, used: Set<string>): K
 /**
  * The suggestions to keep from a model's answer: at most 5 notes and rules read, each passing the note or schedule
  * rules, starting from tomorrow to `to`, deciding days no note, rule, earlier suggestion or kept one already decides the
- * same way, and (a rule) with words no rule already has. Its calendar ids are those the request sent, at most 5. Apart
+ * same way, and (a rule) with words no rule already has. Its calendar ids are those the request sent, at most 5 (a
+ * researched one cited always among them, D66). Apart
  * from them, at most 5 spotted events read (spottedOf). When the request sent owner events, a note or rule of kind
  * private_event, one citing no calendar id the request sent, or one whose why, detail or words repeat a sent title's
  * word or hold 7 digits in a row (repeatsTitle), is dropped.
@@ -648,7 +649,11 @@ export function keptSuggestions(output: unknown, checks: SuggestionChecks): Kept
     if (taken.some((other) => sameDays(other, days))) continue;
     if (content.type === 'rule' && words.has(content.text.toLowerCase())) continue;
     if (content.type === 'rule' && checks.closureKeys?.has(closureKeyOf(content.schedule)) === true) continue;
-    const calendarIds = [...new Set(item.data.calendarIds.filter((id) => checks.calendarIds.has(id)))].slice(0, MAX_CALENDAR_IDS);
+    const cited = [...new Set(item.data.calendarIds.filter((id) => checks.calendarIds.has(id)))];
+    const capped = cited.slice(0, MAX_CALENDAR_IDS);
+    const researched = cited.find(isResearchedId);
+    // D66: the cap never drops every researched id cited, so one resting on a finding still waits for a person (sureOf).
+    const calendarIds = researched === undefined || capped.some(isResearchedId) ? capped : [...capped.slice(0, -1), researched];
     // A private event on the owner's calendar comes only as an event item; a note or rule rests on the town calendar,
     // and no title's distinctive word is kept.
     if (sentEvents && (days.kind === 'private_event' || calendarIds.length === 0
