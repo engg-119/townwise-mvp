@@ -229,9 +229,12 @@ describe('isolation (source)', () => {
     // a figure (calendar-event-suggestions). D58 (learn-from-calendar-bookings): the booking routes
     // (handlers/calendar-bookings.ts) label a file calendar's events and write notes from them, and the lab input
     // (lab/input.ts) reads only the confirmed buyouts and parties, as dates and label, through bookingsBetween (below).
+    // D63: a calendar file attached to a TownwiseAI message is told to the model with what its import did
+    // (files/calendar-import.ts attachedCalendars: the calendar's id, label, event count and date added). D61: Your data's
+    // list shows each calendar as a row through the calendar routes' own view (handlers/data.ts). Neither reads an event.
     expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
-      'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'handlers/calendar-bookings.ts',
-      'handlers/deletion.ts', 'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts',
+      'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'files/calendar-import.ts',
+      'handlers/calendar-bookings.ts', 'handlers/data.ts', 'handlers/deletion.ts', 'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts',
       'handlers/weekly-suggestions.ts', 'lab/input.ts', 'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
     ]);
     const input = sourceFiles().find((each) => each.path === 'lab/input.ts')?.text ?? '';

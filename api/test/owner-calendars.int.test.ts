@@ -93,6 +93,8 @@ const JUNE = '?from=2026-06-01&to=2026-06-30';
 const GOOGLE_OFF = { available: false, connected: false, clientId: null, canConnect: false };
 /** The list's `bookingSort` with no model here (learn-from-calendar-bookings, D58). */
 const SORT_OFF = { available: false };
+/** A calendar as the list shows it (D61): with `fromFile`, null here since none was imported from a Your data file. */
+const asListed = <T extends object>(calendar: T): T & { fromFile: null } => ({ ...calendar, fromFile: null });
 /** A new file calendar's bookings (D58): unsorted, every event unlabeled. */
 function unsorted(events: number): OwnerCalendarView['bookings'] {
   return { state: 'unsorted', sortedAt: null, confirmedAt: null, counts: { buyout: 0, party: 0, own_event: 0, other: 0, unlabeled: events } };
@@ -246,7 +248,7 @@ describe('with the calendar key', () => {
     });
     expect(added.body.skippedRows).toBe(0);
     expect(sent).toEqual([]);
-    expect((await send(base(t), t.admin)).body).toEqual({ calendars: [calendar], google: GOOGLE_OFF, bookingSort: SORT_OFF });
+    expect((await send(base(t), t.admin)).body).toEqual({ calendars: [asListed(calendar)], google: GOOGLE_OFF, bookingSort: SORT_OFF });
 
     // An event keeps its UID, title, dates and hours: never its description, location, attendees or organizer.
     const rows = await eventRows(calendar.id);
@@ -379,7 +381,7 @@ describe('with the calendar key', () => {
     expect(open(KEY, String(raw?.sealedAddress))).toEqual({ ok: true, text: ADDRESS });
 
     const listed = await send(base(t), t.member);
-    expect(listed.body).toEqual({ calendars: [calendar], google: GOOGLE_OFF, bookingSort: SORT_OFF });
+    expect(listed.body).toEqual({ calendars: [asListed(calendar)], google: GOOGLE_OFF, bookingSort: SORT_OFF });
     expect(await titles(t)).toEqual(['Rehearsal dinner', 'Office party']);
     const [event] = await auditOf(calendar.id);
     expect(event?.action).toBe('owner_calendar.added');
@@ -530,7 +532,7 @@ describe('with the calendar key', () => {
     expect((await send(`${base(t)}/${gone.id}`, t.member, { method: 'DELETE' })).status).toBe(204);
     expect(await eventRows(gone.id)).toEqual([]);
     expect(await titles(t)).toEqual(['Kept event']);
-    expect((await send(base(t), t.member)).body).toEqual({ calendars: [kept], google: GOOGLE_OFF, bookingSort: SORT_OFF });
+    expect((await send(base(t), t.member)).body).toEqual({ calendars: [asListed(kept)], google: GOOGLE_OFF, bookingSort: SORT_OFF });
     const removed = (await auditOf(gone.id)).at(-1);
     expect(removed).toMatchObject({ action: 'owner_calendar.removed', target: { type: 'owner_calendar', id: gone.id } });
     expect(removed?.details).toEqual({ locationId: t.locationId, calendarId: gone.id, kind: 'link', eventCount: 2 });
@@ -585,7 +587,7 @@ describe('with the calendar key', () => {
     await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: t.member.userId, orgId: t.orgId });
     const before = (await auditEvents(server)).length;
     sent.length = 0;
-    expect((await send(base(t), staff)).body).toEqual({ calendars: [calendar], google: GOOGLE_OFF, bookingSort: SORT_OFF });
+    expect((await send(base(t), staff)).body).toEqual({ calendars: [asListed(calendar)], google: GOOGLE_OFF, bookingSort: SORT_OFF });
     expect((await send(`${base(t)}/events${JUNE}`, staff)).status).toBe(200);
     for (const [path, init] of [
       [base(t), { json: { kind: 'file', label: LABEL, ics: FIRST } }], [`${base(t)}/${calendar.id}/refresh`, { method: 'POST' }],
@@ -687,10 +689,10 @@ describe('with Google calendars on', () => {
     expect(calendar).toMatchObject({ kind: 'google', host: null, eventCount: 1, skippedRepeating: 0, status: 'ok', mine: true });
     // Connected and mine are the caller's own: the admin, who never connected and added no Google calendar, reads false.
     expect((await send(base(t), t.member)).body).toEqual({
-      calendars: [file, calendar], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID, canConnect: true }, bookingSort: SORT_OFF,
+      calendars: [asListed(file), asListed(calendar)], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID, canConnect: true }, bookingSort: SORT_OFF,
     });
     expect((await send(base(t), t.admin)).body).toEqual({
-      calendars: [file, { ...calendar, mine: false }], google: { available: true, connected: false, clientId: GOOGLE_CLIENT_ID, canConnect: true },
+      calendars: [asListed(file), asListed({ ...calendar, mine: false })], google: { available: true, connected: false, clientId: GOOGLE_CLIENT_ID, canConnect: true },
       bookingSort: SORT_OFF,
     });
 
