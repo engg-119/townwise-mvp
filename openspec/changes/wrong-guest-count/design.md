@@ -102,3 +102,15 @@ No data migration. Release order: API and web together; then the owner adds one 
 
 1. Should the Calendar's day panel offer "Mark guest count wrong" on a past day with a stored row, prefilling the form? Left out (the form serves); a later change if the owner wants it.
 2. Should TownwiseAI's "Questions for you" ask about a day whose spend per guest is far above usual (the Halloween signal)? Left out; it would be a new question kind.
+
+## Implementation notes (2026-11-19)
+
+Where the build differs from the decisions above, each the smallest change that kept them true:
+
+- **Decision 2.** `createNote` now loads the location before it reads the body (the design asks for its town date first), so a bad body on an unknown location answers 404 where it answered 400. `readNoteContent` takes `{ keepTitle, townToday }` (`NoteReadOptions`).
+- **Decision 3.** `trustedGuestDays` answers `readonly D[]`, the same array when nothing is marked. `RuleSchedule`'s effect type still inherits the widened `NoteEffect` (narrowing it cascaded through `validDays`, the suggestions and the stores), so `forecasts/reasons.ts` `EFFECT_WORDS` has an entry for the effect that no rule can reach; the rules routes refuse it.
+- **Decision 5.** The reader's one notes read also spans the stored days it loads. `lab/suggestions.ts` reads its history notes from `readFrom`, not `from`, so a mark in the typical-guests lookback counts; `orders/live.ts` reads the notes over its 8 weeks. Neither changes what `covering` answers for any date it is asked about.
+- **Readers.** "Your history by term state" masks inside `yourHistory` (it already takes the notes) rather than in `people-in-town/reader.ts`. `agent/questions.ts` masks only the rows its typical guests and likely-closed test read: `withSales` keeps the stored rows, so a marked row with guests and no net sales still counts as a day with sales. `rule-suggestion-views.ts` (weekday evidence reads only whether a day had sales), `calibration.ts` and `lab/service.ts` (`guestSpan`, which reads stored days as `labInputOf` does) and `handlers/sales.ts` (record views) stay unmasked.
+- **Decision 9.** The client masks in `decodeHistory(body, notes)` (Home, Analytics and the month chart pass the notes; Your data's upload days and onboarding decode without them, as record views), and a marked record keeps `storedGuests` for the day panel. The Calendar page masks its sales days too, so a marked past day shows no actual there, as the API's forecast read gives none. `checkNote` takes the viewer's local date as a third argument for the past-only check. NoteForm and NoteFields take `marks`, off for a chat proposal's Edit first, whose save route refuses the effect; Details reads optional for a mark.
+- **CONFIRM items** are 220 to 224 in spec 22.2: decisions 2, 3, 6 and 7 and the closing-holiday risk.
+- **Docs.** `client/MODULE.md` gains a Local changes entry, as CLAUDE.md asks of every client change.

@@ -55,7 +55,8 @@ Spec decision D67 (reserved for this change). CONFIRM index items from 220 (219 
 
 ## 6. Docs
 
-- [ ] 6.1 `docs/portal/spec.md`: a D67 row in section 2 (same columns as D64's); F12 (the mark is a note); 6.7 (`tw_notes` effect value); 10.5 (the body rules and 400s); 12 (the `NoteEffect` type, the rules of decision 2, the words); 13.2 and D32's text (marked days read as no guest count); 14.4 (live accuracy and effects leave them out); 14.5 (the mark is listed `past_day` and changes no number); 22.2 items from 220 (design.md's [CONFIRM] markers: decisions 2, 3, 6, 7 and the closing-holiday risk); 23 changelog. `api/README.md`: the notes routes' body rules and 400s, `tw_notes`, and the narrative on notes and the forecast. `docs/portal/tuning-chat.md`: the two tool descriptions' new clause and `guestCountMarkedWrong`, and that `propose_note` never proposes the mark.
+- [x] 6.1 `docs/portal/spec.md`: a D67 row in section 2 (same columns as D64's); F12 (the mark is a note); 6.7 (`tw_notes` effect value); 10.5 (the body rules and 400s); 12 (the `NoteEffect` type, the rules of decision 2, the words); 13.2 and D32's text (marked days read as no guest count); 14.4 (live accuracy and effects leave them out); 14.5 (the mark is listed `past_day` and changes no number); 22.2 items from 220 (design.md's [CONFIRM] markers: decisions 2, 3, 6, 7 and the closing-holiday risk); 23 changelog. `api/README.md`: the notes routes' body rules and 400s, `tw_notes`, and the narrative on notes and the forecast. `docs/portal/tuning-chat.md`: the two tool descriptions' new clause and `guestCountMarkedWrong`, and that `propose_note` never proposes the mark.
+  Done: as listed; CONFIRM items 220 to 224 follow item 218. Also `client/MODULE.md` (Local changes, as CLAUDE.md asks), `tuning-chat.md`'s `show_visual` row, and design.md's dated implementation notes.
 
 ## 7. After release
 
