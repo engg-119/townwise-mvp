@@ -1,5 +1,7 @@
 # Forecast interface
 
+Status (2026-11-19): this note describes the notebook as of 2026-11-05. The guest model is now packaged in `modeling/lab` and run by the forecast lab, and the app's order board (`api/src/orders/live.ts`) reads the location's published guest forecast; `reorder/` still reads the frozen CSVs.
+
 Phase 1 note for the reorder module. The forecast model was not changed. This describes what it actually emits today, and what Section 2 of `docs/REORDER_SPEC.md` asks for that it does not provide.
 
 Studied from the notebook source and the committed forecast files. `data/sawtooth/` is gitignored and is not in this checkout, so the notebook was not re-run.

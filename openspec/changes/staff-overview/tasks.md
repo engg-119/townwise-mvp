@@ -48,3 +48,4 @@ Tests first in every group. Run single suites only (`npm test -w @townwise/api -
 
 - [ ] 6.1 `/review` of the whole branch, then `/verify` (`npm run verify`), after checking with the release session that the laptop is free.
 - [ ] 6.2 Owner browser check on the local dev servers: sign in as staff, land on Overview, switch 7, 28 and 90 days, open an organization from the table and from Needs attention. Push only after the owner's go.
+  Merged to develop as PR #95 (c991db1d, 2026-11-18) and released in #104 (v2026.11.18). The owner browser check (6.2), /review and /verify (6.1) and the UI review (3.8) are not recorded.
