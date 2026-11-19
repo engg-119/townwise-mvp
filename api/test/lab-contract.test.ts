@@ -21,14 +21,14 @@ describe('lab contract', () => {
     const source = readFileSync(new URL('../../modeling/lab/townwise_lab/version.py', import.meta.url), 'utf8');
     const versions = [...source.matchAll(/^MODEL_VERSION = "([^"]+)"$/gm)].map((match) => match[1]);
     expect(versions).toEqual([LAB_MODEL_VERSION]);
-    expect(LAB_MODEL_VERSION).toBe('v9');
+    expect(LAB_MODEL_VERSION).toBe('v10');
   });
 
-  it('the forecast tier’s days and cap are the lab’s REACH_DAYS and HORIZON_DAYS (forecast.py), D42’s run end', () => {
+  it('the forecast tier’s days and cap are the lab’s FORECAST_DAYS and FORECAST_CAP_DAYS (forecast.py), D42’s run end', () => {
     const source = readFileSync(new URL('../../modeling/lab/townwise_lab/forecast.py', import.meta.url), 'utf8');
     const constant = (name: string) => [...source.matchAll(new RegExp(`^${name} = (\\d+)\\b`, 'gm'))].map((match) => Number(match[1]));
-    expect(constant('REACH_DAYS')).toEqual([FORECAST_TIER_DAYS]);
-    expect(constant('HORIZON_DAYS')).toEqual([FORECAST_TIER_CAP_DAYS]);
+    expect(constant('FORECAST_DAYS')).toEqual([FORECAST_TIER_DAYS]);
+    expect(constant('FORECAST_CAP_DAYS')).toEqual([FORECAST_TIER_CAP_DAYS]);
   });
 
   it('golden input and result parse with labInputSchema, labResultSchema, scorecardSchema and checkLabRunFile', () => {

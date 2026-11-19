@@ -615,4 +615,29 @@ describe('the input the API builds, against the lab', () => {
     if (process.env.TOWNWISE_UPDATE_LAB_GOLDEN === '1') writeFileSync(GOLDEN, text);
     expect(readFileSync(GOLDEN, 'utf8')).toBe(text);
   });
+
+  /**
+   * Hanover's days and calendar as labInputOf builds them from 2024-06-12 to 2028-07-15 (four years of history and the
+   * 400 days after a cut three years in), for the lab's outlook coverage check (modeling/lab/tests/test_outlook_coverage.py,
+   * D52 decision 6): each day's term, week of term and event groups, and the calendar entries starting by the last day.
+   * The guests are left out: the check makes its own.
+   */
+  it('writes the Hanover days the lab’s outlook coverage check reads (D52)', () => {
+    const HANOVER_GOLDEN = new URL('../../modeling/lab/tests/golden/hanover-calendar.json', import.meta.url);
+    const [first, last] = ['2024-06-12', '2028-07-15'];
+    const input = labInputOf({
+      calibration: { id: 'ab'.repeat(12), regimeStart: null }, location: HANOVER,
+      days: eachDay(first, last).map((date) => day(date, 50)), notes: [], rules: [], today: last, champion: null,
+    });
+    if (input === null) throw new Error('no input');
+    const days = input.days.filter((each) => each.date <= last)
+      .map(({ date, term, weekOfTerm, events }) => ({ date, term, weekOfTerm, events }));
+    const calendar = input.calendar.filter((entry) => entry.start <= last);
+    expect(days.map((each) => each.date)).toEqual(eachDay(first, last));
+    expect(new Set(days.map((each) => each.term))).toEqual(new Set(['interim', 'fall', 'winter', 'spring', 'summer']));
+    const lines = (rows: readonly unknown[]): string => rows.map((row) => JSON.stringify(row)).join(',\n');
+    const text = `{"calendar": [\n${lines(calendar)}\n],\n"days": [\n${lines(days)}\n]}\n`;
+    if (process.env.TOWNWISE_UPDATE_LAB_GOLDEN === '1') writeFileSync(HANOVER_GOLDEN, text);
+    expect(readFileSync(HANOVER_GOLDEN, 'utf8')).toBe(text);
+  });
 });

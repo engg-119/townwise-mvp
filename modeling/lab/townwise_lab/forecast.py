@@ -1,7 +1,11 @@
 """The forecast window as a townwise.forecast-run/1 run file (api/src/forecasts/file.ts): the days after the data cutoff
 through the run's end (run_end), with each day's status, 80% range and reasons, and the Monday-to-Sunday weeks wholly
-inside them. Ranges past 28 days of lead widen by the backtest's longer-horizon bands (lead_ratios). Both engines'
-runs are assembled here: the model's by run_file, the baseline's by baseline.run_file."""
+inside them. Ranges past 28 days of lead widen by the backtest's longer-horizon bands (lead_ratios), and past the
+forecast tier by the outlook's ratios (D52, outlook_ratio). Both engines' runs are assembled here: the model's by
+run_file, the baseline's by baseline.run_file."""
+
+import math
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -12,9 +16,12 @@ from townwise_lab.holidays import holiday_multiplier
 from townwise_lab.version import MODEL_VERSION
 
 RUN_SCHEMA = "townwise.forecast-run/1"
-HORIZON_DAYS = 182  # the input's future days; a run's own end is run_end's
+HORIZON_DAYS = 400  # the input's future days, and the furthest a run reaches after data_through (D52)
 GATE_HORIZON = 28  # the gate's horizon: leads up to it take the range as backtested
-REACH_DAYS = 91  # a run reaches the calibration's today plus this many days
+FORECAST_DAYS = 91  # the forecast tier reaches the calibration's today plus this many days (D42's whole run)
+FORECAST_CAP_DAYS = 182  # and at most this many days after data_through
+OUTLOOK_DAYS = 365  # a run whose forecast tier is backed reaches today plus this many days (D52)
+OUTLOOK_HORIZONS = (182, 365)  # the outlook's backtested leads
 MIN_HORIZON_WEEKS = 8  # backtest weeks a longer horizon needs before the run reaches it
 MAX_DAY_GUESTS = 20_000  # the run file's limits: a day's guests, and at most 6 reasons a day
 MAX_REASONS = 6
@@ -105,32 +112,65 @@ def reasons(status: str, term: str, holiday: bool, groups: list[str]) -> list[di
     return [{"kind": kind, "ref": ref, "effectPct": None} for kind, ref in kinds[:MAX_REASONS]]
 
 
-def run_end(today: pd.Timestamp, data_through: pd.Timestamp, weeks91: int, weeks_reach: int | None) -> pd.Timestamp:
-    """The run's last day: today + 91, at most data_through + 182 (the input's reach). Where a horizon has fewer than 8
-    backtest weeks, the run stops at the last day the shorter one covers: 28 days of lead without 91-day evidence, 91
-    without the reach's (only asked for when the end is more than 91 days after data_through)."""
-    end = min(today + pd.Timedelta(days=REACH_DAYS), data_through + pd.Timedelta(days=HORIZON_DAYS))
+def forecast_end(today: pd.Timestamp, data_through: pd.Timestamp) -> pd.Timestamp:
+    """The forecast tier's last day (D52): today + 91, at most data_through + 182, where a D42 run made today would have
+    ended (api/src/forecasts/tiers.ts tierEnd, with madeAt the calibration's today). Later days are the outlook."""
+    return min(today + pd.Timedelta(days=FORECAST_DAYS), data_through + pd.Timedelta(days=FORECAST_CAP_DAYS))
+
+
+def run_end(today: pd.Timestamp, data_through: pd.Timestamp, weeks91: int, weeks_reach: int | None,
+            terms_through: pd.Timestamp | None = None) -> pd.Timestamp:
+    """The run's last day. Where a horizon of the forecast tier has fewer than 8 backtest weeks, D42's stops: 28 days of
+    lead without 91-day evidence, 91 without the reach's (only asked for when the tier ends more than 91 days after
+    data_through), and no outlook. Otherwise today + 365, at most data_through + 400 (D52), and for a model run
+    (`terms_through`, the town's last researched term day, when it has one) no later than the later of the forecast
+    tier's end and terms_through, so the tier is never cut."""
+    end = forecast_end(today, data_through)
     if weeks91 < MIN_HORIZON_WEEKS:
         return min(end, data_through + pd.Timedelta(days=GATE_HORIZON))
-    if (end - data_through).days > REACH_DAYS and (weeks_reach or 0) < MIN_HORIZON_WEEKS:
-        return data_through + pd.Timedelta(days=REACH_DAYS)
-    return end
+    if (end - data_through).days > FORECAST_DAYS and (weeks_reach or 0) < MIN_HORIZON_WEEKS:
+        return data_through + pd.Timedelta(days=FORECAST_DAYS)
+    outlook_end = min(today + pd.Timedelta(days=OUTLOOK_DAYS), data_through + pd.Timedelta(days=HORIZON_DAYS))
+    if terms_through is not None:
+        outlook_end = min(outlook_end, max(end, terms_through))
+    return outlook_end
 
 
 def reach_horizon(today: pd.Timestamp, data_through: pd.Timestamp) -> int | None:
-    """The run's longest lead in whole weeks when it is beyond 91 days (sales lag), else None."""
-    longest = (min(today + pd.Timedelta(days=REACH_DAYS), data_through + pd.Timedelta(days=HORIZON_DAYS))
-               - data_through).days
-    return 7 * -(-longest // 7) if longest > REACH_DAYS else None
+    """The forecast tier's longest lead in whole weeks when it is beyond 91 days (sales lag), else None."""
+    longest = (forecast_end(today, data_through) - data_through).days
+    return 7 * -(-longest // 7) if longest > FORECAST_DAYS else None
 
 
-def lead_ratios(dates: pd.Series, data_through: pd.Timestamp, widening: list[tuple[int, float]]) -> pd.Series:
+class Outlook(NamedTuple):
+    """The outlook's ranges (D52 decision 5): the forecast tier's last day, and the ratios at 182 and 365 days of lead."""
+    tier_end: pd.Timestamp
+    r182: float
+    r365: float
+
+
+def outlook_ratio(lead: int, r182: float, r365: float) -> float:
+    """An outlook day's ratio by its lead: r182 up to 182 days, then interpolated on the square root of lead to r365 at
+    365 (r182 * sqrt(lead / 182) when r365 is that growth), then r365 * sqrt(lead / 365)."""
+    if lead <= OUTLOOK_HORIZONS[0]:
+        return r182
+    if lead <= OUTLOOK_HORIZONS[1]:
+        low, high = math.sqrt(OUTLOOK_HORIZONS[0]), math.sqrt(OUTLOOK_HORIZONS[1])
+        return r182 + (r365 - r182) * (math.sqrt(lead) - low) / (high - low)
+    return r365 * math.sqrt(lead / OUTLOOK_HORIZONS[1])
+
+
+def lead_ratios(dates: pd.Series, data_through: pd.Timestamp, widening: list[tuple[int, float]],
+                outlook: Outlook | None = None) -> pd.Series:
     """How much each date's range widens for its lead (days after data_through): 1 up to 28 days, then from each
-    (first lead, ratio) of `widening` on, in order."""
+    (first lead, ratio) of `widening` on, in order; a date after the forecast tier (`outlook`) by outlook_ratio."""
     leads = (dates - data_through).dt.days
     ratio = pd.Series(1.0, index=dates.index)
     for first, value in widening:
         ratio[leads >= first] = value
+    if outlook is not None:
+        past = dates > outlook.tier_end
+        ratio[past] = [outlook_ratio(int(lead), outlook.r182, outlook.r365) for lead in leads[past]]
     return ratio
 
 
@@ -142,10 +182,11 @@ def window(frame: pd.DataFrame, data_through: pd.Timestamp, end: pd.Timestamp) -
 
 
 def assemble(rows: pd.DataFrame, status: pd.Series, numbers: pd.DataFrame, weekly_log_range: dict[str, float],
-             ratio: pd.Series, effect_pct=None) -> tuple[list[dict], list[dict]]:
+             ratio: pd.Series, effect_pct=None, tier_end: pd.Timestamp | None = None) -> tuple[list[dict], list[dict]]:
     """A run's days and weeks. `numbers` has low, mid, high and baseline for the open rows; `effect_pct(index, reason)`,
     when given, sets an open day's reason's effectPct. Each week is a Monday-to-Sunday span wholly inside the rows: the
-    sum of its open days' forecasts, and the weekly log range around it, widened by its first day's ratio."""
+    sum of its open days' forecasts, and the weekly log range around it, widened by its first day's ratio, or for a
+    week with a day after the forecast tier's last day (`tier_end`, an outlook week) by the largest of its days'."""
     table = rows[["date"]].assign(status=status).join(numbers)
     groups = [c for c in rows.columns if c.startswith(EVENT_PREFIX)]
     holiday = rows[list(HOLIDAY_FLAGS)].eq(1).any(axis=1)
@@ -166,7 +207,8 @@ def assemble(rows: pd.DataFrame, status: pd.Series, numbers: pd.DataFrame, weekl
     for monday, week in table.groupby(_monday(table.date)):
         if len(week) < 7:  # a week only partly inside the run has no week row
             continue
-        widened = float(ratio[week.index[0]])
+        in_outlook = tier_end is not None and week.date.max() > tier_end
+        widened = float(ratio[week.index].max() if in_outlook else ratio[week.index[0]])
         lo_factor = np.exp(weekly_log_range["lo"] * widened)
         hi_factor = np.exp(weekly_log_range["hi"] * widened)
         total = float(week.mid.sum())  # open days only: the others have no number
@@ -197,24 +239,25 @@ def run_document(family: str, *, trained_from: pd.Timestamp, data_through: pd.Ti
 def run_file(frame: pd.DataFrame, fit: model.HybridFit, effects: dict[str, float], widen_k: float,
              weekly_log_range: dict[str, float], *, trained_from: pd.Timestamp, data_through: pd.Timestamp,
              end: pd.Timestamp, widening: list[tuple[int, float]], made_at: str, code_version: str,
-             backtest_block: dict | None) -> dict:
+             backtest_block: dict | None, outlook: Outlook | None = None) -> dict:
     """The model's run file for the days of `frame` (the frame `fit` was made on) after `data_through` through `end`.
 
     Open days: the hybrid's quantiles times the holiday multipliers, bounded, the range widened by widen_k (section
-    9e) times the day's lead ratio; baseline is the linear median baseline alone. Closed and booked days carry no
+    9e) times the day's lead ratio (`outlook` past the forecast tier); baseline is the linear median baseline alone. Closed and booked days carry no
     number. Weeks as assemble makes them."""
     rows, status = window(frame, data_through, end)
     open_rows = rows[status == "open"]
     quantiles = model.hybrid_predict(fit, open_rows)
     multiplier = holiday_multiplier(open_rows, effects)
     lo, mid, hi = bounded(quantiles[0.1] * multiplier, quantiles[0.5] * multiplier, quantiles[0.9] * multiplier)
-    ratio = lead_ratios(rows.date, data_through, widening)
+    ratio = lead_ratios(rows.date, data_through, widening, outlook)
     lo, hi = metrics.widen(mid, lo, hi, widen_k * ratio[open_rows.index])
     linear, X = fit.base[0.5]
     baseline = pd.Series(linear.predict(X.loc[open_rows.index]), index=open_rows.index)
     numbers = pd.DataFrame({"low": lo, "mid": mid, "high": hi, "baseline": baseline}).clip(lower=0,
                                                                                          upper=MAX_DAY_GUESTS)
-    days, weeks = assemble(rows, status, numbers, weekly_log_range, ratio)
+    days, weeks = assemble(rows, status, numbers, weekly_log_range, ratio,
+                           tier_end=None if outlook is None else outlook.tier_end)
     return run_document("hybrid_linear_xgboost", trained_from=trained_from, data_through=data_through,
                         made_at=made_at, code_version=code_version, backtest_block=backtest_block, days=days,
                         weeks=weeks)

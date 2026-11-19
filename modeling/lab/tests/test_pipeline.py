@@ -31,7 +31,8 @@ PARAMS_KEYS = {"target", "baseCols", "eventCols", "regimeStart", "xgb", "holiday
                "weeklyLogRange", "widening", "refitEveryMonths", "horizonDays", "minPastWeeks", "floor"}
 BASELINE_PARAMS_KEYS = {"target", "engine", "regimeStart", "levelDays", "levelMinDays", "shapeClamp", "calendarEffects",
                         "dailyLogRange", "widenK", "weeklyLogRange", "widening", "horizonDays", "minPastWeeks", "floor"}
-SCORECARD_KEYS = ["horizonDays", "engine", "history", "backtest", "comparison", "engines", "horizon91", "horizonReach"]
+SCORECARD_KEYS = ["horizonDays", "engine", "history", "backtest", "comparison", "engines", "horizon91", "horizonReach",
+                  "horizonOutlook"]
 ENGINES = ("model", "baseline")
 RUN_KEYS = {"schema", "metric", "model", "trainingSource", "trainedFrom", "dataThrough", "madeAt", "frozen", "interval",
             "backtest", "days", "weeks"}
@@ -296,9 +297,24 @@ def messy_baseline(messy) -> dict:
 
 
 def check_widening(widening) -> None:
-    assert [w["fromLead"] for w in widening] in ([], [29], [29, 92])
+    """The forecast tier's entries (D42), then the outlook's two anchors (D52), never narrower with lead."""
+    tier, anchors = widening[:-2], widening[-2:]
+    assert [w["fromLead"] for w in tier] in ([], [29], [29, 92]) and all(set(w) == {"fromLead", "ratio"} for w in tier)
+    assert [w.get("horizon") for w in anchors] == [182, 365] and anchors[1]["fromLead"] == 365
+    leads = [w["fromLead"] for w in widening]
+    assert leads == sorted(set(leads))
     ratios = [w["ratio"] for w in widening]
     assert all(is_num(r) and r >= 1 for r in ratios) and ratios == sorted(ratios)  # never narrower with lead
+
+
+def check_outlook(reports, widening) -> None:
+    assert [r["horizon"] for r in reports] == [182, 365]
+    for r in reports:
+        assert set(r) == {"horizon", "weeks", "weeklyWape", "coverage80", "ratio", "basis"}
+        assert is_int(r["weeks"]) and (r["weeklyWape"] is None) == (r["weeks"] == 0)
+        assert set(r["coverage80"]) == {"inside", "weeks"} and is_num(r["ratio"]) and r["ratio"] >= 1
+        assert r["basis"] == ("growth" if r["weeks"] < 8 else "growth_or_backtest" if r["weeks"] < 26 else "backtest")
+    assert [r["ratio"] for r in reports] == [w["ratio"] for w in widening[-2:]]  # the anchors are the reports' ratios
 
 
 def check_horizon(report) -> None:
@@ -369,7 +385,7 @@ def check_comparison(cmp: dict, lab_input: dict) -> None:
 def check_envelope(result: dict, lab_input: dict) -> None:
     assert list(result) == ["schema", "calibrationId", "ok", "codeVersion", "params", "scorecard", "run"]
     assert result["schema"] == schema.RESULT_SCHEMA == "townwise.lab-result/1"
-    assert schema.INPUT_SCHEMA == "townwise.lab-input/2"
+    assert schema.INPUT_SCHEMA == "townwise.lab-input/3"
     assert result["calibrationId"] == lab_input["calibrationId"]
     assert result["ok"] is True and result["codeVersion"] == CODE
     json.dumps(result, allow_nan=False)
@@ -382,6 +398,7 @@ def check_envelope(result: dict, lab_input: dict) -> None:
     assert run["dataThrough"] == lab_input["dataThrough"] and run["madeAt"] == lab_input["today"]
     assert set(run["backtest"]) == {"from", "to", "weeks", "weeklyTypicalErrorPct", "weeksOver20Pct", "weeklyRangePct"}
     check_widening(result["params"]["widening"])
+    check_outlook(result["scorecard"]["horizonOutlook"], result["params"]["widening"])
 
 
 def test_baseline_result_matches_contract(result, lab_input):
@@ -432,7 +449,7 @@ def test_result_matches_contract(model_result, lab_input):
 
     assert result["run"]["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION,
                                       "notebookCommit": CODE}
-    assert version.MODEL_VERSION == "v9"
+    assert version.MODEL_VERSION == "v10"
 
 
 def test_a_model_run_carries_how_its_trees_learned(model_result, result, lab_input):
@@ -457,6 +474,17 @@ def ratio_at(widening: list[dict], lead: int) -> float:
     return next((w["ratio"] for w in reversed(widening) if lead >= w["fromLead"]), 1.0)
 
 
+def ratio_by_lead(result: dict, inp: dict, lead: int) -> float:
+    """A day's range ratio by its lead, from the result's widening: the forecast tier's entries up to the tier's last
+    day, then the outlook's (forecast.outlook_ratio with the anchors' ratios, pinned by the outlook tests below)."""
+    widening = result["params"]["widening"]
+    through, today = pd.Timestamp(inp["dataThrough"]), pd.Timestamp(inp["today"])
+    if lead > (forecast.forecast_end(today, through) - through).days:
+        r182, r365 = (w["ratio"] for w in widening if "horizon" in w)
+        return forecast.outlook_ratio(lead, r182, r365)
+    return ratio_at([w for w in widening if "horizon" not in w], lead)
+
+
 @pytest.mark.parametrize("engine", ENGINES)
 @pytest.mark.parametrize("sales", ["current", "three_weeks_behind"])
 def test_run_file_obeys_api_rules(engine, sales, results, lagging, lab_input):
@@ -465,11 +493,11 @@ def test_run_file_obeys_api_rules(engine, sales, results, lagging, lab_input):
     assert result["scorecard"]["engine"] == engine
     assert run_file_issues(run, inp["today"]) == []
     through, today = day(inp["dataThrough"]), day(inp["today"])
-    # From the day after the last day of sales through today + 91 (both under the input's 182 days)
-    last = today + timedelta(days=forecast.REACH_DAYS)
+    # From the day after the last day of sales through today + 365, inside the cap of 400 days after them (D52)
+    last = today + timedelta(days=forecast.OUTLOOK_DAYS)
     assert [d["date"] for d in run["days"]] == [(through + timedelta(days=k)).isoformat()
                                                for k in range(1, (last - through).days + 1)]
-    assert (last - through).days == (93 if sales == "current" else 112) <= forecast.HORIZON_DAYS == 182
+    assert (last - through).days == (367 if sales == "current" else 386) <= forecast.HORIZON_DAYS == 400
     assert {d["status"] for d in run["days"]} == {"open", "closed", "booked"}
     # Weeks: exactly the Monday-to-Sunday weeks wholly inside the run
     first_monday = through + timedelta(days=1 + (7 - (through + timedelta(days=1)).weekday()) % 7)
@@ -478,28 +506,28 @@ def test_run_file_obeys_api_rules(engine, sales, results, lagging, lab_input):
     assert [(w["from"], w["to"]) for w in run["weeks"]] == [(m.isoformat(), (m + timedelta(days=6)).isoformat())
                                                             for m in whole]
     lo, hi = result["params"]["weeklyLogRange"]["lo"], result["params"]["weeklyLogRange"]["hi"]
-    widening = result["params"]["widening"]
+    tier_end = forecast.forecast_end(pd.Timestamp(today), pd.Timestamp(through)).date()
     for w in run["weeks"]:
         mids = [d["mid"] for d in run["days"] if w["from"] <= d["date"] <= w["to"] and d["status"] == "open"]
         assert w["mid"] == pytest.approx(sum(mids), rel=1e-12)
-        r = ratio_at(widening, (day(w["from"]) - through).days)  # each week widened by its first day's lead
+        ratios = [ratio_by_lead(result, inp, lead) for lead in range((day(w["from"]) - through).days,
+                                                                     (day(w["to"]) - through).days + 1)]
+        # A forecast-tier week widened by its first day's lead, an outlook week by its widest day's
+        r = max(ratios) if day(w["to"]) > tier_end else ratios[0]
         assert w["low"] == pytest.approx(w["mid"] * math.exp(lo * r))
         assert w["high"] == pytest.approx(w["mid"] * math.exp(hi * r))
-    # Sales that lag reach further than 91 days after them: the reach is reported and widens the last days
+    # Sales that lag reach further than 91 days after them: the reach is reported and widens the forecast tier's end
     card = result["scorecard"]
     assert card["horizon91"]["weeks"] >= forecast.MIN_HORIZON_WEEKS
-    if sales == "current":
-        assert [w["fromLead"] for w in widening] == [29, 92] and card["horizonReach"]["weeks"] >= 8  # 93 > 91
-    else:
-        assert [w["fromLead"] for w in widening] == [29, 92] and card["horizonReach"]["weeks"] >= 8
+    assert [w["fromLead"] for w in result["params"]["widening"]][:2] == [29, 92]
+    assert card["horizonReach"]["weeks"] >= 8
 
 
 @pytest.mark.parametrize("engine", ENGINES)
 def test_ranges_never_narrow_with_lead(engine, lagging):
     inp, result = lagging[engine]
     through = day(inp["dataThrough"])
-    widening = result["params"]["widening"]
-    ratios = [ratio_at(widening, lead) for lead in range(1, 113)]
+    ratios = [ratio_by_lead(result, inp, lead) for lead in range(1, 387)]
     assert ratios == sorted(ratios) and ratios[0] == 1.0
     weeks = result["run"]["weeks"]
     spans = [math.log(w["high"] / w["mid"]) - math.log(w["low"] / w["mid"]) for w in weeks if w["mid"] > 0]
@@ -508,26 +536,208 @@ def test_ranges_never_narrow_with_lead(engine, lagging):
         open_days = [d for d in result["run"]["days"] if d["status"] == "open"]
         high = [math.log(d["high"] / d["mid"]) for d in open_days]
         assert all(b >= a - 1e-12 for a, b in zip(high, high[1:]))
-        assert (day(open_days[-1]["date"]) - through).days > 91
+        assert (day(open_days[-1]["date"]) - through).days > 365
 
 
 def test_the_run_end_rules():
     through, today = pd.Timestamp("2026-11-15"), pd.Timestamp("2026-11-16")
-    # Current sales: today + 91 (Mon, Nov 16, 2026 to Feb 15, 2027), a longest lead of 92 days, so 98 in whole weeks
+    # The forecast tier as D42's run: today + 91 (to Feb 15, 2027), a longest lead of 92 days, so 98 in whole weeks
+    assert forecast.forecast_end(today, through) == pd.Timestamp("2027-02-15")
     assert forecast.reach_horizon(today, through) == 98
-    assert forecast.run_end(today, through, 20, 8) == pd.Timestamp("2027-02-15")
     assert forecast.reach_horizon(through, through) is None  # today the last day of sales: 91 days exactly
-    assert forecast.run_end(through, through, 20, None) == through + pd.Timedelta(days=91)
-    # Sales three weeks behind (data through Sun, Oct 25): Oct 26, 2026 to Feb 15, 2027, a longest lead of 113 days
+    # Sales three weeks behind (data through Sun, Oct 25): a forecast tier to Feb 15, 2027, a longest lead of 113 days
     lag = pd.Timestamp("2026-10-25")
-    assert forecast.run_end(today, lag, 20, 8) == pd.Timestamp("2027-02-15")
+    assert forecast.forecast_end(today, lag) == pd.Timestamp("2027-02-15")
     assert forecast.reach_horizon(today, lag) == 119  # 113 days, in whole weeks
-    # Not enough 91-day evidence: 28 days after the last day of sales; not enough at the reach: 91
-    assert forecast.run_end(today, through, 5, None) == through + pd.Timedelta(days=28)
-    assert forecast.run_end(today, lag, 20, 7) == lag + pd.Timedelta(days=91)
-    # Capped at 182 days after the last day of sales
+    assert forecast.run_end(today, lag, 20, 8) == today + pd.Timedelta(days=365)
+    # The forecast tier capped at 182 days after the last day of sales, the run at 400
     old = pd.Timestamp("2026-06-01")
-    assert forecast.run_end(today, old, 20, 8) == old + pd.Timedelta(days=182)
+    assert forecast.forecast_end(today, old) == old + pd.Timedelta(days=182)
+    assert forecast.run_end(today, old, 20, 8) == old + pd.Timedelta(days=400)
+
+
+def test_run_reaches_a_year_with_current_sales(results, lab_input):
+    # Spec scenario: a Monday 2026-11-23 calibration with sales through Sunday 2026-11-22 covers through 2027-11-23
+    assert forecast.run_end(pd.Timestamp("2026-11-23"), pd.Timestamp("2026-11-22"), 20, 8) == pd.Timestamp("2027-11-23")
+    assert forecast.run_end(pd.Timestamp("2026-11-22"), pd.Timestamp("2026-11-22"), 20, None) == pd.Timestamp(
+        "2027-11-22")
+    for result in results.values():
+        assert result["run"]["days"][-1]["date"] == (day(lab_input["today"]) + timedelta(days=365)).isoformat()
+
+
+def test_run_seven_weeks_behind_ends_400_after_data(lab_input):
+    today = pd.Timestamp("2026-11-23")
+    through = today - pd.Timedelta(days=49)
+    assert forecast.run_end(today, through, 20, 8) == through + pd.Timedelta(days=400) == today + pd.Timedelta(days=351)
+    inp = later(lab_input, 49)
+    run = calibrate_as(inp, "baseline")["run"]
+    assert run["days"][-1]["date"] == (day(inp["dataThrough"]) + timedelta(days=400)).isoformat()
+    assert run_file_issues(run, inp["today"]) == []
+
+
+def test_no_outlook_when_91_is_not_backed():
+    through, today = pd.Timestamp("2026-11-15"), pd.Timestamp("2026-11-16")
+    assert forecast.run_end(today, through, 7, 8) == through + pd.Timedelta(days=28)
+    assert forecast.run_end(today, through, 7, 8, pd.Timestamp("2027-11-24")) == through + pd.Timedelta(days=28)
+
+
+def test_no_outlook_when_the_reach_is_not_backed():
+    today, lag = pd.Timestamp("2026-11-16"), pd.Timestamp("2026-10-25")
+    assert forecast.run_end(today, lag, 20, 7) == lag + pd.Timedelta(days=91)
+    assert forecast.run_end(today, lag, 20, None) == lag + pd.Timedelta(days=91)
+    # Today the last day of sales: the tier ends at 91 days, so no reach is asked for and the outlook follows
+    assert forecast.run_end(lag, lag, 20, None) == lag + pd.Timedelta(days=365)
+
+
+def with_terms_through(inp: dict, days: int) -> dict:
+    out = copy.deepcopy(inp)
+    out["termsThrough"] = (day(inp["dataThrough"]) + timedelta(days=days)).isoformat()
+    return out
+
+
+def test_model_outlook_stops_at_terms_through(lab_input):
+    # Spec scenario: a model run made 2027-01-04 would reach 2028-01-04; the last researched term ends 2027-11-24
+    today = pd.Timestamp("2027-01-04")
+    assert forecast.run_end(today, today - pd.Timedelta(days=1), 20, 8, pd.Timestamp("2027-11-24")) == pd.Timestamp(
+        "2027-11-24")
+    inp = with_terms_through(lab_input, 300)
+    result = calibrate_as(inp, "model")
+    assert result["run"]["days"][-1]["date"] == inp["termsThrough"]
+    assert run_file_issues(result["run"], inp["today"]) == []
+
+
+def test_model_forecast_tier_never_cut_by_terms_through(lab_input, model_result):
+    today, through = pd.Timestamp("2027-01-04"), pd.Timestamp("2027-01-03")
+    tier_end = forecast.forecast_end(today, through)
+    assert forecast.run_end(today, through, 20, 8, pd.Timestamp("2027-01-20")) == tier_end
+    inp = with_terms_through(lab_input, 10)
+    run = calibrate_as(inp, "model")["run"]
+    tier = forecast.forecast_end(pd.Timestamp(inp["today"]), pd.Timestamp(inp["dataThrough"]))
+    assert run["days"][-1]["date"] == forecast.iso(tier)
+    assert run["days"] == [d for d in model_result["run"]["days"] if d["date"] <= forecast.iso(tier)]
+
+
+def test_baseline_outlook_ignores_terms_through(lab_input, result):
+    inp = with_terms_through(lab_input, 100)
+    run = calibrate_as(inp, "baseline")["run"]
+    assert run["days"][-1]["date"] == (day(inp["today"]) + timedelta(days=365)).isoformat()
+    assert run == result["run"]
+
+
+def test_outlook_week_takes_its_widest_day(lab_input):
+    frame = pipeline.frame_of(lab_input)
+    through, today = pd.Timestamp(lab_input["dataThrough"]), pd.Timestamp(lab_input["today"])
+    tier_end = forecast.forecast_end(today, through)
+    rows, status = forecast.window(frame, through, through + pd.Timedelta(days=200))
+    open_index = rows.index[status == "open"]
+    numbers = pd.DataFrame({"low": 8.0, "mid": 10.0, "high": 12.0, "baseline": 10.0}, index=open_index)
+    ratio = forecast.lead_ratios(rows.date, through, [(29, 1.2), (92, 1.3)], forecast.Outlook(tier_end, 2.0, 3.0))
+    _, weeks = forecast.assemble(rows, status, numbers, {"lo": -0.1, "hi": 0.1}, ratio, tier_end=tier_end)
+    by_date = dict(zip(rows.date, ratio))
+    straddling = 0
+    for w in weeks:
+        ratios = [by_date[d] for d in pd.date_range(w["from"], w["to"])]
+        outlook = pd.Timestamp(w["to"]) > tier_end
+        expected = max(ratios) if outlook else ratios[0]
+        assert w["high"] == pytest.approx(w["mid"] * math.exp(0.1 * expected))
+        if outlook and pd.Timestamp(w["from"]) <= tier_end:
+            straddling += 1
+            assert max(ratios) == 2.0 > ratios[0]  # its outlook days, not its first (forecast) day
+    assert straddling == 1
+
+
+# The outlook's range rule (D52 decision 5), on pipeline.outlook_ratios and forecast.outlook_ratio
+
+RANGE28 = {"lo": -0.1, "hi": 0.1}
+
+
+def backtested(weeks: int, lo: float, hi: float) -> tuple[dict, dict]:
+    return ({"weeks": weeks, "weeklyWape": 0.1, "coverage80": {"inside": weeks, "weeks": weeks}}, {"lo": lo, "hi": hi})
+
+
+def test_outlook_growth_with_no_year_ahead_backtest():
+    # Spec scenario: 15 weeks at 182 with a backtest ratio of 1.5, none at 365, a 91-day ratio of 1.3
+    reports = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(15, -0.15, 0.15)), (365, None, None)], RANGE28)
+    r182 = max(1.3 * math.sqrt(2), 1.5)
+    assert [r["ratio"] for r in reports] == pytest.approx([r182, r182 * math.sqrt(365 / 182)])
+    assert [r["basis"] for r in reports] == ["growth_or_backtest", "growth"]
+    assert reports[1] == {"horizon": 365, "weeks": 0, "weeklyWape": None, "coverage80": {"inside": 0, "weeks": 0},
+                          "ratio": reports[1]["ratio"], "basis": "growth"}
+    # Under 8 weeks the backtest is not read at all, however wide; the reach (98 days) is the previous horizon
+    wide = pipeline.outlook_ratios((98, 1.3), [(182, *backtested(7, -0.9, 0.9)), (365, *backtested(7, -0.9, 0.9))],
+                                   RANGE28)
+    assert [r["ratio"] for r in wide] == pytest.approx([1.3 * math.sqrt(182 / 98), 1.3 * math.sqrt(365 / 98)])
+
+
+def test_outlook_takes_a_wider_backtest_under_26_weeks():
+    growth = 1.3 * math.sqrt(2)
+    wider = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(25, -0.25, 0.2)), (365, None, None)], RANGE28)
+    assert wider[0]["ratio"] == pytest.approx(2.5) and wider[0]["basis"] == "growth_or_backtest"
+    narrower = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(8, -0.12, 0.12)), (365, None, None)], RANGE28)
+    assert narrower[0]["ratio"] == pytest.approx(growth)  # under 26 weeks a narrower backtest cannot narrow the growth
+
+
+def test_outlook_backtest_decides_from_26_weeks():
+    reports = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(26, -0.14, 0.12)),
+                                                  (365, *backtested(40, -0.1, 0.1))], RANGE28)
+    assert [r["ratio"] for r in reports] == pytest.approx([1.4, 1.4])  # under the growth, never under the one before
+    assert [r["basis"] for r in reports] == ["backtest", "backtest"]
+    assert pipeline.outlook_ratios((91, 1.3), [(182, *backtested(30, -0.1, 0.1)), (365, None, None)],
+                                   RANGE28)[0]["ratio"] == pytest.approx(1.3)
+
+
+def test_outlook_ratio_takes_the_wider_side():
+    # Spec scenario: the low side 3 times the 28-day band's, the high side 1.5 times
+    assert pipeline._backtest_ratio({"lo": -0.3, "hi": 0.3}, {"lo": -0.1, "hi": 0.2}) == pytest.approx(3.0)
+    assert pipeline._backtest_ratio({"lo": -0.15, "hi": 0.6}, {"lo": -0.1, "hi": 0.2}) == pytest.approx(3.0)
+    # A 28-day side of 0 (the range holds zero) takes the width ratio: 0.4 over 0.2
+    assert pipeline._backtest_ratio({"lo": -0.1, "hi": 0.3}, {"lo": 0.0, "hi": 0.2}) == pytest.approx(2.0)
+    assert pipeline._backtest_ratio({"lo": 0.0, "hi": 0.0}, {"lo": 0.0, "hi": 0.0}) == 1.0
+
+
+def test_outlook_interpolates_between_182_and_365():
+    assert forecast.outlook_ratio(93, 1.8, 3.0) == forecast.outlook_ratio(182, 1.8, 3.0) == 1.8
+    assert forecast.outlook_ratio(365, 1.8, 3.0) == pytest.approx(3.0)
+    middle = ((math.sqrt(182) + math.sqrt(365)) / 2) ** 2  # halfway on the square root of lead
+    assert forecast.outlook_ratio(middle, 1.8, 3.0) == pytest.approx(2.4)
+    growth = 1.8 * math.sqrt(365 / 182)  # with r_365 the pure growth, the interpolation is r_182 * sqrt(L / 182)
+    for lead in (183, 240, 300, 364):
+        assert forecast.outlook_ratio(lead, 1.8, growth) == pytest.approx(1.8 * math.sqrt(lead / 182))
+
+
+def test_outlook_grows_past_365():
+    assert forecast.outlook_ratio(400, 1.8, 3.0) == pytest.approx(3.0 * math.sqrt(400 / 365))
+    assert forecast.outlook_ratio(366, 1.8, 3.0) > 3.0
+
+
+def test_outlook_ratios_never_narrow_with_lead(results, lagging, lab_input):
+    pairs = [(lab_input, r) for r in results.values()] + list(lagging.values())
+    for inp, result in pairs:
+        ratios = [ratio_by_lead(result, inp, lead) for lead in range(1, 401)]
+        assert ratios == sorted(ratios)
+        reports = result["scorecard"]["horizonOutlook"]
+        tier = [w["ratio"] for w in result["params"]["widening"] if "horizon" not in w]
+        assert tier[-1] <= reports[0]["ratio"] <= reports[1]["ratio"]
+    rng = np.random.default_rng(5)
+    for _ in range(200):  # any backtest, any count of weeks: each ratio at least the one before
+        previous = (91, float(rng.uniform(1, 2)))
+        weeks = rng.integers(0, 60, 2)
+        reports = pipeline.outlook_ratios(previous, [
+            (h, *backtested(int(n), -float(rng.uniform(0, 0.5)), float(rng.uniform(0, 0.5))))
+            for h, n in zip((182, 365), weeks)], {"lo": -float(rng.uniform(0, 0.2)), "hi": float(rng.uniform(0, 0.2))})
+        assert previous[1] <= reports[0]["ratio"] <= reports[1]["ratio"]
+
+
+def test_outlook_reported_not_gated(lab_input, result):
+    # The outlook's ratios change nothing the engine choice or the gate reads
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pipeline, "outlook_ratios", lambda previous, backtests, log_range28: [
+            {"horizon": h, "weeks": 0, "weeklyWape": None, "coverage80": {"inside": 0, "weeks": 0}, "ratio": 50.0,
+             "basis": "growth"} for h in (182, 365)])
+        wide = pipeline.calibrate(copy.deepcopy(lab_input), CODE)
+    same = ("engine", "history", "backtest", "comparison", "engines", "horizon91", "horizonReach")
+    assert {k: wide["scorecard"][k] for k in same} == {k: result["scorecard"][k] for k in same}
+    assert wide["scorecard"]["horizonOutlook"] != result["scorecard"]["horizonOutlook"]
 
 
 def test_a_run_without_enough_91_day_weeks_stops_at_28_days_of_lead(lab_input):
@@ -854,11 +1064,13 @@ def _set(path, value):
 
 @pytest.mark.parametrize("break_it", [
     _set(["schema"], "townwise.lab-input/1"),
+    _set(["schema"], "townwise.lab-input/2"),
+    _set(["termsThrough"], "2028-02-30"),
     _gap,
     _unsorted,
     _set(["metric"], "net_sales"),
     _set(["calibrationId"], "not-an-id"),
-    _set(["horizonDays"], 181),
+    _set(["horizonDays"], 182),
     _set(["today"], "2025-10-20"),
     _set(["regimeStart"], "2025-02-30"),
     _set(["unknown"], 1),
@@ -876,7 +1088,7 @@ def _set(path, value):
     _set(["champion", "recordedWeekdayBiasMeanAbs"], -0.01),
     _set(["champion", "recordedWeekdayBiasMeanAbs"], "0.03"),
     _set(["calendar", 0, "title"], "Test Town Festival"),
-], ids=["schema", "gap", "unsorted", "metric", "calibration_id", "horizon", "today", "regime_start", "unknown_key",
+], ids=["schema", "schema_2", "terms_through", "gap", "unsorted", "metric", "calibration_id", "horizon", "today", "regime_start", "unknown_key",
         "negative_guests", "nan_guests", "guests_after_cutoff", "closed_not_bool", "term", "week_of_term",
         "event_group", "champion_day", "champion_week", "champion_run_id", "champion_engine",
         "champion_recorded_bias_negative", "champion_recorded_bias_not_a_number", "calendar_title"])
@@ -1108,6 +1320,31 @@ def test_backtest_scores_the_horizon_28_weeks(model_result, lab_input):
     folds = backtest.six_month_folds(hist.date.min(), pd.Timestamp(lab_input["dataThrough"]))
     assert [(f["trainThrough"], f["from"], f["to"]) for f in card["backtest"]["folds"]] == [
         tuple(t.strftime("%Y-%m-%d") for t in fold) for fold in folds]
+
+
+def test_forecast_tier_unchanged(result):
+    """Days 1 to 91 as D42 made them (D52 decision 4 (a)): the golden history's result as input version 2 gave it
+    (golden/result-v2.json, written by make_golden.py at 14ed2487, the commit before year-long runs, and never
+    regenerated) against version 3's. Its forecast tier's days, reasons and weeks, its scorecard's gate fields and its
+    params but the outlook's anchors are the same. The model's figures in `engines` come from XGBoost, whose sampling
+    differs between builds, so they are held to the golden tolerance; everything else is the baseline's (pandas)."""
+    v2 = json.loads((GOLDEN / "result-v2.json").read_text(encoding="utf-8"))
+    tier_end = v2["run"]["days"][-1]["date"]
+    assert tier_end == forecast.iso(forecast.forecast_end(pd.Timestamp(v2["run"]["madeAt"]),
+                                                          pd.Timestamp(v2["run"]["dataThrough"])))
+    run = result["run"]
+    assert_close([d for d in run["days"] if d["date"] <= tier_end], v2["run"]["days"])
+    assert_close([w for w in run["weeks"] if w["to"] <= tier_end], v2["run"]["weeks"])
+    assert run["backtest"] == v2["run"]["backtest"] and run["dataThrough"] == v2["run"]["dataThrough"]
+    card, card2 = result["scorecard"], v2["scorecard"]
+    for key in ("horizonDays", "engine", "history", "backtest", "comparison", "horizon91", "horizonReach"):
+        assert_close(card[key], card2[key], f"scorecard.{key}")
+    assert_close(card["engines"]["baseline"], card2["engines"]["baseline"], "scorecard.engines.baseline")
+    assert_close(card["engines"]["model"], card2["engines"]["model"], "scorecard.engines.model", rel=GOLDEN_REL,
+                 abs_=GOLDEN_ABS, edge_slack=1)
+    params, params2 = dict(result["params"]), dict(v2["params"])
+    assert_close([w for w in params.pop("widening") if "horizon" not in w], params2.pop("widening"))
+    assert_close(params, params2)
 
 
 def test_golden_result_is_current(lab_input):
