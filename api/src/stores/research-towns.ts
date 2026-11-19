@@ -162,6 +162,11 @@ export interface TownResearchStore {
    * cleared on the threads of any ended run (clearEndedFound). Resolves the number deleted.
    */
   removeOld(townKey: TownId, input: { endedBefore: string; unseenBefore: Date; createdBefore: Date }): Promise<number>;
+  /**
+   * Staff suppression (design decision 9, scripts/research-suppress.ts): marks a town row `suppressed { at, code }`, so
+   * every read and every prompt leaves it out and a merge never clears it. False when the town holds no such row.
+   */
+  suppress(townKey: TownId, eventId: string, input: { at: Date; code: string }): Promise<boolean>;
 }
 
 function toTownRun(doc: TownRunDoc): TownRunRecord {
@@ -292,6 +297,9 @@ export function createTownResearchStore(connection: Connection): TownResearchSto
       }
       await clearEndedFound(runs, threads, { townKey });
       return deleted;
+    },
+    async suppress(townKey, eventId, input) {
+      return (await Event.updateOne({ _id: id(eventId), townKey }, { $set: { suppressed: { at: input.at, code: input.code } } })).matchedCount === 1;
     },
   };
 }

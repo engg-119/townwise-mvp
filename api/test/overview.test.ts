@@ -39,7 +39,7 @@ const DESIGN_TABLE = {
     'forecast.published', 'forecast.withdrawn', 'forecast.deleted', 'calibration.finished', 'calibration.scheduled',
     'org.forecasts_switched', 'forecast_schedule.paused', 'forecast_schedule.resumed', 'view_as.started', 'view_as.ended',
     'open_as_admin.started', 'open_as_admin.ended', 'people.signed_out_everywhere', 'person.deleted', 'staff_action.not_applied',
-    'agent.change_applied', 'agent.calendar_answered',
+    'agent.change_applied', 'agent.calendar_answered', 'research.town_event_suppressed',
   ],
 } as const;
 

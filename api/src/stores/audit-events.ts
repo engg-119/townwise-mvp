@@ -98,6 +98,9 @@ export const AUDIT_DETAIL_KEYS = {
   'research.event_edited': ['locationId', 'eventId'],
   'research.event_hidden': ['locationId', 'eventId'],
   'research.event_restored': ['locationId', 'eventId'],
+  // D66, staff taking a wrong shared town row down for everyone (scripts/research-suppress.ts): the town's key, the
+  // event's id and a code, never a title.
+  'research.town_event_suppressed': ['townKey', 'eventId', 'code'],
   // Orders: ids, dates, counts and a card's kind (change, rule or setup), never an item or supplier name, a servings
   // figure, a quantity, or the owner's reason or situation. A setup card (D56) is only ever dismissed: nothing saves
   // from it, so it never writes order.card_saved.

@@ -103,6 +103,8 @@ export const ACTION_GROUP: Readonly<Record<AuditAction, ActionGroup | null>> = {
   'research.event_edited': 'notes',
   'research.event_hidden': 'notes',
   'research.event_restored': 'notes',
+  // Staff taking a town row down for everyone: no organization's action.
+  'research.town_event_suppressed': null,
   'chat.turn_completed': 'townwiseAi',
   'chat.conversation_deleted': 'townwiseAi',
   'agent.question_answered': 'townwiseAi',
