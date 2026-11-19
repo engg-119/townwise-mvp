@@ -151,8 +151,9 @@ describe('GET /api/org/locations/:locationId/estimates/about', () => {
       calendar: { researched: true, covers: { from: '2025-01-06', to: '2028-06-11' } },
       people: { headcountInputs: [], sources: [] },
     });
-    // D52 release B: runs reach a year, the days after the first 3 months an outlook that can't know unannounced events
-    expect(body.card.estimates).toContain('Up to a year ahead: the first 3 months are the forecast, and the rest an outlook with a wider range.');
+    // D52 release B: runs reach a year, the days after the first 3 months an outlook that can't know unannounced events.
+    // The 8 in 10 claim is the forecast's only: the outlook's ranges are wider and not calibrated to 8 in 10.
+    expect(body.card.estimates).toBe('Guests per day and per week, each as a range, never one exact number. Up to a year ahead: the first 3 months are the forecast, whose ranges about 8 in 10 days should land inside, and the rest an outlook with wider ranges.');
     expect(body.card.limits).toContain('Days more than 3 months ahead don’t yet know events the town hasn’t announced.');
   });
 

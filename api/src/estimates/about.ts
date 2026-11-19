@@ -23,7 +23,7 @@ export interface ModelCardFacts {
 }
 
 export const MODEL_CARD: ModelCardFacts = {
-  estimates: 'Guests per day and per week, each as a range (about 8 in 10 days should land inside it), never one exact number. Up to a year ahead: the first 3 months are the forecast, and the rest an outlook with a wider range.',
+  estimates: 'Guests per day and per week, each as a range, never one exact number. Up to a year ahead: the first 3 months are the forecast, whose ranges about 8 in 10 days should land inside, and the rest an outlook with wider ranges.',
   inputs: [
     'Your daily guests and net sales.',
     'Your notes: closures, private events and other unusual days.',
