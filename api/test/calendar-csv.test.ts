@@ -54,7 +54,7 @@ describe('parseCalendarCsv', () => {
       header.join(','),
       ['2026-12-05T22:00:00-05:00', 'Holiday party', '"Bring, the cake\r\nand the ""good"" plates\nthanks"', '2026-12-05T19:00:00-05:00', 'evt-1'].join(','),
     ].join('\n');
-    expect(parseCalendarCsv(`﻿${text}`, EASTERN)).toEqual({
+    expect(parseCalendarCsv(`\uFEFF${text}`, EASTERN)).toEqual({
       events: [{ uid: 'evt-1', title: 'Holiday party', startDate: '2026-12-05', endDate: '2026-12-05', startTime: '19:00', endTime: '22:00', keyed: true }],
       skippedRepeating: 0,
       skippedRows: 0,
