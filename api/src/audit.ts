@@ -277,6 +277,9 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'org.research_switched': return d.on === true ? 'Turned town research on' : 'Turned town research off';
     case 'agent.change_applied': return `TownwiseAI added ${AGENT_ACTION_WORDS[text(d.action)] ?? 'something'}${d.sourceKind === 'file' ? ' from a file' : ''}`;
     case 'agent.change_undone': return `Undid ${AGENT_ACTION_WORDS[text(d.action)] ?? 'something'} TownwiseAI added${d.sourceKind === 'file' ? ' from a file' : ''}`;
+    case 'research.event_edited': return 'Edited an event research found';
+    case 'research.event_hidden': return 'Hid an event research found';
+    case 'research.event_restored': return 'Restored an event research found';
     case 'agent.calendar_answered': return `Your calendar answered ${text(d.count)} of TownwiseAI’s questions`;
     case 'agent.suggestion_accepted':
       return `Accepted${d.edited === true ? ', edited,' : ''} ${SUGGESTION_WORDS[text(d.type)] ?? 'a note TownwiseAI suggested'}${SUGGESTION_SOURCE_WORDS[text(d.source)] ?? ''}`;

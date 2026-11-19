@@ -99,6 +99,10 @@ export const ACTION_GROUP: Readonly<Record<AuditAction, ActionGroup | null>> = {
   'owner_calendar.bookings_confirmed': 'notes',
   'google_calendar.connected': 'notes',
   'google_calendar.disconnected': 'notes',
+  // D66: a person's edit of an event research found is a calendar change.
+  'research.event_edited': 'notes',
+  'research.event_hidden': 'notes',
+  'research.event_restored': 'notes',
   'chat.turn_completed': 'townwiseAi',
   'chat.conversation_deleted': 'townwiseAi',
   'agent.question_answered': 'townwiseAi',

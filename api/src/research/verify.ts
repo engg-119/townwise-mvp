@@ -91,9 +91,10 @@ function dayMs(value: string): number | null {
 
 /**
  * Whether an event's dates are refused (`bad_dates`): a day that does not parse, a start after its end, a start more than
- * 7 days outside the window, an event over 30 days or a season or closure over 200, or a weekday outside its span.
+ * 7 days outside the window, an event over 30 days or a season or closure over 200, or a weekday outside its span. Also
+ * the check on a person's edit of a researched event's dates (handlers/research.ts, design decision 11).
  */
-function datesRefused(event: { kind: EventKind; startDate: string; endDate: string; weekdays: number[] | null }, window: ResearchWindow): boolean {
+export function datesRefused(event: { kind: EventKind; startDate: string; endDate: string; weekdays: number[] | null }, window: ResearchWindow): boolean {
   const start = dayMs(event.startDate);
   const end = dayMs(event.endDate);
   const from = dayMs(window.from);
@@ -307,7 +308,8 @@ function sourcesOf(ids: readonly string[], ledger: Ledger, max: number): LedgerS
   return (sources as LedgerSource[]).slice(0, max);
 }
 
-const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+/** A start time, `HH:MM` on a 24-hour clock. */
+export const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 /**
  * The thread's findings from the extract's answer, or null when the answer is not the schema's object at all. Entities

@@ -25,25 +25,36 @@
 // PATCH /api/org/research { on, orgId? } (`org.research.switch`, org admin, `2kb`, open as admin may only turn it off):
 // the organization's research switch, as `org.agent_auto.switch`. A change records `org.research_switched { on }`
 // before it is applied; the same state again writes nothing.
+//
+// PATCH /api/org/locations/:locationId/research/events/:eventId (`org.research.event_update`, member, open as admin too,
+// never under view-as): a person's edit, hide or restore of a researched event at this location only (design decision
+// 11). It appends a revision based on the head the person saw (`basedOn`); a lost race, or a head that moved since, answers
+// 409 `changed_since` with the event's current view. `title` and `where` pass `safeText`, the dates verify's date rules.
+// Curated rows and holidays are not researched events, so their ids answer 404, as another town's or organization's. It
+// writes an audit event with the location's and the event's ids only, and logs nothing.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
-import { applyRecorded, recordBefore, recordNotApplied } from '../audit.ts';
+import { applyRecorded, recordAfter, recordBefore, recordNotApplied } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { Principal } from '../access/policy.ts';
+import { isoDate } from '../dates.ts';
 import { PlacesUnavailableError } from '../places/google.ts';
 import { mapThemeSchema, pinLabel, STATIC_MAP_HEIGHT, STATIC_MAP_WIDTH, type PlaceMap } from '../places/static-map.ts';
 import { fitView, type LatLng } from '../places/view.ts';
 import { COMPETITOR_RADIUS_M, matchCompetitor, pickCompetitors, type Competitor } from '../research/competitors.ts';
 import { isTownId, nextWeeklyRunDay, queuePressRun, researchRuns } from '../research/plan.ts';
-import { readResearchedViews, researchedEventsFor, type ResearchedEventView } from '../research/read.ts';
+import { parseResearchedId, readResearchedViews, researchedEventsFor, type ResearchedEventView } from '../research/read.ts';
+import { MAX_LOCATION_REVISIONS } from '../research/revisions.ts';
 import { researchWindow } from '../research/threads.ts';
+import { datesRefused, MAX_TITLE_CHARS, safeText, TIME } from '../research/verify.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { LocationRunRecord, RunTrigger } from '../stores/research-locations.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { EntityRecordBase, RunCounts, RunRecordBase, RunStatus, ThreadRecordBase } from '../stores/research-shared.ts';
+import type { RevisionFields, RevisionOp } from '../stores/research-revisions.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { pointOf } from './locations-map.ts';
 import { loadLocation, memberOf } from './locations.ts';
@@ -321,4 +332,102 @@ export async function switchResearch(ctx: TownwiseContext, req: Request, res: Re
   }
   ctx.logger.info({ orgId: scope.orgId, on }, 'townwise.research_switched');
   res.status(200).json({ research: { on } });
+}
+
+// ---- Hand edits (design decision 11) ----------------------------------------------------------------------------------
+
+/** The longest `where` a person may type; the title is held to research's own MAX_TITLE_CHARS. */
+const MAX_WHERE_CHARS = MAX_TITLE_CHARS;
+
+const basedOnSchema = z.union([z.literal('base'), z.string().regex(/^[0-9a-f]{24}$/)]);
+const editFieldsSchema = z.strictObject({
+  title: z.string().max(1_000).optional(),
+  start: isoDate.optional(),
+  end: isoDate.optional(),
+  weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).nullable().optional(),
+  startTime: z.string().regex(TIME).nullable().optional(),
+  where: z.string().max(1_000).nullable().optional(),
+}).refine((fields) => Object.values(fields).some((value) => value !== undefined));
+/** `revert` is TownwiseAI's Undo only, never a person's request. */
+const eventUpdateBody = z.union([
+  z.strictObject({ op: z.literal('edit'), fields: editFieldsSchema, basedOn: basedOnSchema }),
+  z.strictObject({ op: z.enum(['hide', 'restore']), fields: z.null().optional(), basedOn: basedOnSchema }),
+]);
+
+const AUDIT_ACTION = { edit: 'research.event_edited', hide: 'research.event_hidden', restore: 'research.event_restored' } as const;
+
+function notFound(): AppError {
+  return new AppError(404, 'not_found', 'Not found');
+}
+
+/** 409 `changed_since`, with the event as it is now so the client shows it and can try again from its head. */
+function changedSince(res: Response, event: ResearchedEventView | null): void {
+  res.status(409).json({ error: 'changed_since', message: 'This event changed since you opened it.', event });
+}
+
+/** The edit's fields, checked: `title` and `where` by safeText, and the dates as they would then show by verify's rules. */
+function checkedFields(view: ResearchedEventView, input: z.infer<typeof editFieldsSchema>, window: { from: string; to: string }): RevisionFields {
+  const title = input.title === undefined ? undefined : safeText(input.title, MAX_TITLE_CHARS);
+  if (title === null) throw new AppError(400, 'bad_title', 'That title can’t be used');
+  const where = input.where === undefined || input.where === null ? input.where : safeText(input.where, MAX_WHERE_CHARS);
+  if (where === null && input.where !== null && input.where !== undefined) throw new AppError(400, 'bad_where', 'That place can’t be used');
+  const weekdays = input.weekdays === undefined || input.weekdays === null ? input.weekdays : [...new Set(input.weekdays)].sort((x, y) => x - y);
+  const datesChanged = input.start !== undefined || input.end !== undefined || input.weekdays !== undefined;
+  // A start the edit keeps is held to no window: research accepted it when found, so an ongoing season's end or weekdays
+  // stay editable after its start has passed. A start the person types is held to the window as research's is.
+  const startWindow = input.start !== undefined ? window : {
+    from: view.start < window.from ? view.start : window.from, to: view.start > window.to ? view.start : window.to,
+  };
+  if (datesChanged && datesRefused({
+    kind: view.kind, startDate: input.start ?? view.start, endDate: input.end ?? view.end,
+    weekdays: weekdays === undefined ? (view.weekdays === null ? null : [...view.weekdays]) : weekdays,
+  }, startWindow)) {
+    throw new AppError(400, 'bad_dates', 'Those dates can’t be used');
+  }
+  return {
+    ...(title !== undefined ? { title } : {}),
+    ...(input.start !== undefined ? { start: input.start } : {}),
+    ...(input.end !== undefined ? { end: input.end } : {}),
+    ...(weekdays !== undefined ? { weekdays } : {}),
+    ...(input.startTime !== undefined ? { startTime: input.startTime } : {}),
+    ...(where !== undefined ? { where } : {}),
+  };
+}
+
+export async function updateResearchedEvent(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  const { scope } = caller;
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const eventId = String(req.params.eventId);
+  // A curated row's or a holiday's id is no researched event: they feed the forecast and are not editable.
+  if (parseResearchedId(eventId) === null) throw notFound();
+  const input = parseInput(eventUpdateBody, req.body);
+  const current = async () => (await readResearchedViews(ctx, scope, location, null)).find((view) => view.id === eventId) ?? null;
+  // Research off for the organization, another town's row, another location's or organization's: not found.
+  const view = await current();
+  if (view === null) throw notFound();
+  if (input.basedOn !== view.head) {
+    changedSince(res, view);
+    return;
+  }
+  if (await ctx.stores.researchRevisions.count(scope, location.id) >= MAX_LOCATION_REVISIONS) {
+    throw new AppError(409, 'too_many_edits', 'This location has too many edits of researched events');
+  }
+  const op: RevisionOp = input.op;
+  const fields = input.op === 'edit' ? checkedFields(view, input.fields, researchWindow(ctx.now(), timeZoneOf(location.town).timeZone)) : null;
+  const now = ctx.now();
+  const revision = await ctx.stores.researchRevisions.append(scope, {
+    locationId: location.id, eventId, op, fields, reverts: null, basedOn: input.basedOn,
+    by: { kind: 'person', userId: caller.userId }, now,
+  });
+  if (revision === null) {
+    // Another edit, or TownwiseAI's Undo, took this head first (the unique index).
+    changedSince(res, await current());
+    return;
+  }
+  await recordAfter(ctx, {
+    ...actorOf(caller), at: now, orgId: scope.orgId, action: AUDIT_ACTION[input.op],
+    target: { type: 'research_event', id: eventId }, details: { locationId: location.id, eventId },
+  });
+  res.status(200).json({ event: await current() });
 }

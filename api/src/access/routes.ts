@@ -46,7 +46,7 @@ import {
 } from '../handlers/owner-calendars.ts';
 import { placesAutocomplete, placesDetails, placesMap } from '../handlers/places.ts';
 import { getProfile, updateProfile } from '../handlers/profile.ts';
-import { getCompetition, getResearch, pressResearch, switchResearch } from '../handlers/research.ts';
+import { getCompetition, getResearch, pressResearch, switchResearch, updateResearchedEvent } from '../handlers/research.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
 import { acceptRuleSuggestion, dismissRuleSuggestion } from '../handlers/rule-suggestions.ts';
 import { createRule, deleteRule, listRules, updateRule } from '../handlers/rules.ts';
@@ -72,7 +72,7 @@ export interface TownwiseRoute {
    * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
    * switch, the weekly suggestions switch, (D31) a business rule, the order decisions and rules, the item and order change cards, connecting a
    * Google calendar and (D66) the research switch;
-   * '8kb' on a TownwiseAI proposal; '32kb' on the other JSON writes, among them (D29) the Places map, whose 25 place
+   * '8kb' on a TownwiseAI proposal and (D66) an edit of a researched event; '32kb' on the other JSON writes, among them (D29) the Places map, whose 25 place
    * ids may reach 13 KB, and an order count; '256kb' only on the upload routes (the member one, D23 staff setup's, and
    * the item sales upload) and (U13B) the staff forecast import; '1mb' only on the ordering setup's save (300 items
    * with 10 point-of-sale names each can pass 256kb); '2mb' only on adding an owner calendar, whose body may carry a
@@ -195,6 +195,12 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.research.run', method: 'POST', path: '/org/locations/:locationId/research/run', policy: 'org_admin', bodyLimit: '1kb',
     limiter: 'research', handler: pressResearch,
+  },
+  // D66: a person's edit, hide or restore of a researched event, at this location only (an appended revision; the
+  // chain's writes limiter only).
+  {
+    id: 'org.research.event_update', method: 'PATCH', path: '/org/locations/:locationId/research/events/:eventId', policy: 'member',
+    bodyLimit: '8kb', openAsAdmin: true, handler: updateResearchedEvent,
   },
   {
     id: 'org.sales.upload', method: 'POST', path: '/org/locations/:locationId/sales/uploads', policy: 'member',
