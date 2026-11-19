@@ -42,7 +42,7 @@ A file calendar, `.ics` or CSV, SHALL keep the events ending on or after the tow
 
 #### Scenario: The owner's four-year export
 - **WHEN** a member imports, on 2026-11-18, a 596 KB CSV of 1,067 events from 2023-11-18 to 2027-11-05
-- **THEN** all 1,067 events are stored, and the Calendar shows those in March 2024
+- **THEN** all 1,067 events are stored, and the calendar's page in Your data and TownwiseAI chat show those in March 2024 (the Calendar page keeps its 12 months)
 
 #### Scenario: A long history over the cap
 - **WHEN** a file holds 2,500 events in the window, 600 of them upcoming
