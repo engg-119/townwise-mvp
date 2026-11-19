@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Runs reach a year
-A lab run SHALL carry the days after its `dataThrough` through the calibration's `today` plus 365 days, capped at `dataThrough` plus 400 days, when its forecast tier is fully backed (8 or more backtest weeks at 91 days, and at the reach when sales lag past 91 days). When either of D42's stops applies, the run SHALL end where D42 ends it and carry no outlook. The lab input SHALL be `townwise.lab-input/3` with `horizonDays: 400` and `termsThrough`, accepted by the lab only in version 3, and `LAB_MODEL_VERSION` and the lab's `MODEL_VERSION` SHALL be `v9`. [CONFIRM: runs reach today plus 365 days, capped at 400 days after the last day of sales]
+A lab run SHALL carry the days after its `dataThrough` through the calibration's `today` plus 365 days, capped at `dataThrough` plus 400 days, when its forecast tier is fully backed (8 or more backtest weeks at 91 days, and at the reach when sales lag past 91 days). When either of D42's stops applies, the run SHALL end where D42 ends it and carry no outlook. The lab input SHALL be `townwise.lab-input/3` with `horizonDays: 400` and `termsThrough`, accepted by the lab only in version 3, and `LAB_MODEL_VERSION` and the lab's `MODEL_VERSION` SHALL be `v10` (develop's `v9` is the closed-weekday fix of 2026-11-18, so the year-long runs take the next version). [CONFIRM: runs reach today plus 365 days, capped at 400 days after the last day of sales]
 
 #### Scenario: Current sales
 - **WHEN** a calibration on Monday 2026-11-23 has sales through Sunday 2026-11-22 and every horizon is backed
@@ -53,22 +53,30 @@ For every day of the forecast tier the lab SHALL produce the same engine choice,
 - **THEN** the weekly refresh refits it on the Monday it would have refit a 91-day run
 
 ### Requirement: Outlook horizons and honest ranges
-Both engines SHALL be backtested at 182 and 365 days of lead, reported in the scorecard's `horizonOutlook` (`{ horizon, weeks, weeklyWape, coverage80, ratio, basis }`, never gated). For each outlook horizon H after the previous horizon P with ratio r_P (the forecast tier's last, 91 or the reach, then 182): the growth floor SHALL be r_P × sqrt(H / P), and the backtest ratio the larger of the two sides' ratios of H's weekly log band to the 28-day band's (a side whose 28-day size is 0 taking the width ratio). With fewer than 8 backtest weeks r_H SHALL be the floor; with 8 to 25, the larger of the floor and the backtest ratio; with 26 or more, the larger of r_P and the backtest ratio. By lead past the forecast tier, a day SHALL take r_182 up to 182 days, the square-root-of-lead interpolation between r_182 and r_365 from 182 to 365, and r_365 × sqrt(L / 365) past 365. Daily ranges SHALL widen by `widen_k` times the day's ratio on both sides, and an outlook week by the largest ratio among its days. The run's `widening` SHALL carry the forecast tier's entries unchanged and outlook anchors equal to `horizonOutlook`'s ratios. [CONFIRM: 26 backtest weeks at a horizon let its backtest alone set the outlook's band; under 26 the backtest can only widen the square-root-of-lead growth; while a location has under three years of history, its baseline's 365-day band rests on one year-over-year change]
+Both engines SHALL be backtested at 182 and 365 days of lead, reported in the scorecard's `horizonOutlook` (`{ horizon, weeks, weeklyWape, coverage80, ratio, basis }`, never gated). For each outlook horizon H after the previous horizon P with ratio r_P (the forecast tier's last, 91 or the reach, then 182), the growth floor SHALL be r_P × sqrt(H / P), and r_H SHALL be the larger of the floor and m over the 28-day weekly range's wider side, where m is a size of the engine's own weekly misses at H, |log(actual / forecast)| over the backtest weeks forecast the way the run is: n such weeks count as n × 7 / H independent windows, and m SHALL be the split conformal 80% rank on those windows from 9 of them, the largest miss from 1 to 9, and under 1 window the conformal 80% rank of every backtest week at H, of either kind, from 8 weeks. With fewer than 8 backtest weeks at H, r_H SHALL be the floor (`basis: 'growth'`); otherwise `basis` is `'growth_or_backtest'`, and the backtest only ever widens the floor. An outlook week's range SHALL be the same on both sides: the 28-day weekly range's wider side times the largest ratio among its days. By lead past the forecast tier, a day SHALL take r_182 up to 182 days, the square-root-of-lead interpolation between r_182 and r_365 from 182 to 365, and r_365 × sqrt(L / 365) past 365; daily ranges SHALL widen by `widen_k` times the day's ratio, each side as backtested. The run's `widening` SHALL carry the forecast tier's entries unchanged and outlook anchors equal to `horizonOutlook`'s ratios. This rule replaced the one first decided (26 backtest weeks letting the backtest alone set a horizon's band, under 26 the backtest only widening the growth, per-side backtest ratios), which failed the coverage check on 2026-11-18; it was chosen after that check had been seen, so it waits for the lead's decision before release B merges [DECISION NEEDED: the lead's sign-off on the outlook's range rule as built in release B, chosen after the coverage check had been measured, or a fallback (design.md, release B build notes, 2026-11-19)], and the first rule's [CONFIRM: 26 backtest weeks at a horizon let its backtest alone set the outlook's band; under 26 the backtest can only widen the square-root-of-lead growth; while a location has under three years of history, its baseline's 365-day band rests on one year-over-year change] stands in the index until the team decides.
 
 #### Scenario: No year-ahead backtest
-- **WHEN** a history has 15 backtest weeks at 182 days and none at 365, its 91-day ratio is 1.3 and its 182-day backtest ratio 1.5
+- **WHEN** a history has 15 backtest weeks at 182 days and none at 365, its 91-day ratio is 1.3 and its 182-day band 1.5 times the 28-day weekly range's wider side
 - **THEN** r_182 is max(1.3 × sqrt(2), 1.5) and r_365 is r_182 × sqrt(365 / 182)
 
-#### Scenario: A skewed band
-- **WHEN** the 365-day band's low side is 3 times the 28-day band's and its high side 1.5 times
-- **THEN** the backtest ratio is 3
+#### Scenario: The wider side sets the size
+- **WHEN** the 28-day weekly range is -0.1 to 0.2 in log terms and the 182-day band is (-0.6, 0.6)
+- **THEN** r_182 is 3 (when the growth floor is lower), and every outlook week whose widest day has 182 days of lead is at least 0.6 wide on each side
+
+#### Scenario: A 28-day side of 0
+- **WHEN** the 28-day weekly range is 0 to 0.1, so the forecast tier's weeks reach only above their middle
+- **THEN** each outlook week reaches the same distance below its middle as above it
+
+#### Scenario: Weeks are not independent windows
+- **WHEN** a history has 26 backtest weeks of its own kind at 182 days, one window of 182 days
+- **THEN** the band is the largest of their misses, and with all of them inside the 28-day range, r_182 is still the growth floor
 
 #### Scenario: Never narrower with lead
 - **WHEN** any calibration's run is assembled
 - **THEN** every day's ratio is at least the ratio of every earlier lead
 
 ### Requirement: A coverage check that can fail
-Before release B ships, `modeling/lab/tests/test_outlook_coverage.py` SHALL score synthetic four-year histories (the weekly swings of `test_coverage.py`, a 20% level shift and a changing trend inside the scored year, and a set with Hanover's calendar) cut at two and at three years, each cut's input carrying no calendar event that starts more than 182 days after it. Per horizon and per cut, the 80% weekly bands SHALL hold at least 80% of the scored weeks on average with no history under 65%, and the daily ranges at least 75% of days on average. The same check with every outlook ratio forced to the 28-day ratio SHALL fail. Its thresholds, the exponent, the 26 weeks and the horizons SHALL be fixed before measuring; a failure SHALL stop release B.
+Before release B ships, `modeling/lab/tests/test_outlook_coverage.py` SHALL score synthetic four-year histories (the weekly swings of `test_coverage.py`, a 20% level shift and a changing trend inside the scored year, and a set with Hanover's calendar) cut at two and at three years, each cut's input carrying no calendar event that starts more than 182 days after it. Per horizon and per cut, the 80% weekly bands SHALL hold at least 80% of the scored weeks on average with no history under 65%, and the daily ranges at least 75% of days on average. The same check with every outlook ratio forced to the 28-day ratio SHALL fail. Its histories, cuts, thresholds, horizons and control SHALL be fixed before measuring and never weakened; a failure SHALL stop release B. The range rule it scores was changed after the check was first measured (the requirement above), which the lead decides on before release B merges.
 
 #### Scenario: The control fails
 - **WHEN** the check runs with no outlook widening

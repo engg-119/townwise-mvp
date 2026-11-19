@@ -85,6 +85,14 @@ Why this is honest, and where it leans on assumptions:
 
 Alternatives: three horizons (182, 273, 365; cut by review: a third horizon adds a backtest and a ratio that the sqrt interpolation already gives within the check's precision); linear growth (4 times the 91-day band at a year); the measured band alone from 8 weeks; a symmetric width ratio (a skewed band would narrow on its wider side).
 
+**Amended in release B's build (2026-11-19), awaiting the lead's decision.** The rule above failed decision 6's check on 2026-11-18 (build notes, release B, 2026-11-18). As built in release B (`pipeline._outlook_band`, `_outlook_errors` and `outlook_ratios`; `forecast.assemble`):
+
+- **One size on both sides.** An outlook week's range is the same on both sides: the 28-day weekly range's wider side, max(-lo_28, hi_28), times the largest ratio among its days. A forecast-tier week is unchanged, and so are daily ranges.
+- **The band.** m is a size of the engine's own weekly misses at H, |log(actual / forecast)|, over the backtest weeks forecast the way the run is (for the baseline, the weeks forecast with last year's shape, `metrics.same_kind`'s later kind; for the model, every week). Weeks at a lead of H share most of their H days, so n of them count as n × 7 / H independent windows (n_eff). From 9 windows (`CONFORMAL_MIN`), m is the split conformal 80% rank on n_eff, ceil(0.8 (n_eff + 1)) of them; from 1 to 9, the largest miss; under 1, the conformal 80% rank of every backtest week at H, of either kind, from 8 weeks; with fewer than 8, there is no band.
+- **The ratio.** r_H = max(g_H, m / max(-lo_28, hi_28)): the backtest only ever widens the growth floor, at any count of weeks (`basis: 'growth_or_backtest'`, or `'growth'` with no band; `'backtest'` is no longer sent). Every ratio is still at least the one before.
+
+This rule was chosen after the check had been seen (one-sided bands first, then |miss|, then one size on both sides), so decision 6's "set here, before measuring, and not tuned after" does not hold for it. [DECISION NEEDED: the lead's sign-off on the outlook's range rule as built in release B, chosen after the coverage check had been measured: merge it, take the R2 fallback (every outlook ratio at least sqrt(lead / 28), no backtest read; build notes, 2026-11-19), or hold release B] The first rule's CONFIRM above (spec index item 96) stays until the team decides; the rule as built is `[CONFIRM: the outlook's range rule as built in release B: the growth floor always, widened by a band of the engine's own weekly misses at that lead read the same on both sides, counted as independent windows (a conformal 80% rank from 9 windows, the largest miss from 1 to 9 with no ceiling, every week's conformal rank under 1, the growth alone under 8 weeks), and outlook weeks the same on both sides]` (index item 143). Build notes, 2026-11-19, hold the numbers.
+
 ### 6. The coverage check can fail, and failing blocks release B
 
 `modeling/lab/tests/test_outlook_coverage.py` (synthetic only, never `data/`):
@@ -95,6 +103,8 @@ Alternatives: three horizons (182, 273, 365; cut by review: a third horizon adds
 - **Pass**, per horizon (182 and 365) and per cut, not pooled: mean weekly coverage of the 80% bands at least 80% and no history under 65%; mean daily coverage of the daily ranges at least 75%.
 - **It can fail**: a control run of the same check with every outlook ratio forced to the 28-day ratio (no widening) must fail it, which the test asserts, so a check that passes everything is caught.
 - The exponent 0.5, the 26 weeks, the horizons and these thresholds are set here, before measuring, and not tuned after. If the check fails, release B does not ship: the work stops and goes back to the lead with the numbers, as D42 decision 14 did for runtime. Release A, which only reads and labels, is unaffected.
+
+**Note, 2026-11-19.** The check (its histories, cuts, hindsight, thresholds and control) is unchanged and was run unchanged. Decision 5's rule was changed after the check had been measured, which the lead decides on before release B merges (decision 5's amendment and its DECISION NEEDED). Seeds 4 to 19, outside the check, were measured too (build notes, 2026-11-19); they are not part of it and change nothing in it.
 
 ### 7. The baseline reads two years back past 357 days of lead
 
@@ -230,3 +240,76 @@ Release B stopped at task B.6, as decision 6 says it must: the honest rule fails
 - **Built and passing their own tests, uncommitted**: B.2 (`forecast.forecast_end`, `run_end` with D42's stops and the term cap, `FORECAST_DAYS` and `FORECAST_CAP_DAYS`, the outlook week's widest day; `api/test/lab-contract.test.ts` follows the rename), B.3 (`pipeline.outlook_ratios`, `_backtest_ratio`, `forecast.outlook_ratio` and `Outlook`, `horizonOutlook`, the widening anchors: r_182 from the first outlook lead, r_365 from lead 365, the leads where each is the least ratio that holds on), B.4 (`baseline.shape` two years back), the lab side of B.5 (`townwise.lab-input/3`, `termsThrough`, `MODEL_VERSION` `v9`). Not done: B.5's `test_contract.py` needs the API's `api-input.json` at version 3 (B.8); B.7 (goldens, sizes, timing) and B.8 to B.12.
 - **Fixture changes**: `FUTURE_DAYS` is 400 (`CHAMPION_DAYS` keeps the champion at 182); `two_year_input` draws its guests over the same 182 future days as before and pads to 400 with no guests, so `test_coverage.py`'s histories are D42's; the fixture's copy of the notebook's holiday rule reads a day past the frame's end, as the lab does, since the 400-day frame ends on Thanksgiving Eve.
 - **A stricter variant, measured 2026-11-18 at the lead's request** (the check unchanged): the growth floor always applies and the backtest only widens it, at any count of weeks (`outlook_ratios` in the working tree carries this variant, marked; the tests that pin the 26-week rule, `test_outlook_backtest_decides_from_26_weeks` and `check_outlook`'s basis, follow the designed rule and fail against it). Weekly mean, lowest history, daily mean: 2 years at 182 97.4%, 84.6%, 98.8% (pass); 2 years at 365 97.4%, 73.1%, 99.3% (pass); 3 years at 182 95.0%, 30.8%, 93.4% (fail); 3 years at 365 95.1%, 74.1%, 95.8% (pass). The one history under 65% is drifting seed 2 at 3 years, 4 of 13 weeks at 182 (3 of 13 under the designed rule). The control is unchanged and fails all four pairs. Release B stays stopped.
+
+## Build notes (release B, 2026-11-19): the range rule as built, and its numbers
+
+Built on `feat/forecast-year-outlook-b2`, from develop at e53aaa53 with release B's parked work (a723bd0d) carried over. develop's lab had moved on: its `v9` is the closed-weekday fix of 2026-11-18, so release B's lab is model **`v10`** (`version.py`, `LAB_MODEL_VERSION`, `api/test/lab-contract.test.ts`). The conflict was that one line. Days 1 to 91 are unchanged: `test_forecast_tier_unchanged` passes against `tests/golden/result-v2.json`, which is now develop's own golden result at e53aaa53, the commit before year-long runs on this branch (it differed from the 14ed2487 file only in its model version).
+
+- **The rule** is decision 5's amendment: the growth floor always, widened by a band of the engine's own weekly misses read the same on both sides, and outlook weeks the same on both sides. Measured on the parked branch as a prototype on 2026-11-19 (the empirical approach of three put to the lead) and ported here with these changes: the conformal rank is computed in whole numbers (the prototype's `np.quantile` level could move a rank by one at 182 days, where H / 7 is a whole 26); the prototype's `_source` (which branch read the band) is dropped, since the API's outlook report is a strict object whose `basis` enum is `growth`, `growth_or_backtest` or `backtest` and has no field for it; `BACKTEST_ALONE_WEEKS` and `_backtest_ratio` are deleted, as nothing reads them.
+- **Why the same size on both sides.** All three approaches put to the lead agree here: the asymmetric 28-day band is a real defect that a scalar ratio cannot fix. The 28-day weekly range always holds zero, so a range whose misses ran one way has a side near or at 0, and widening it by any ratio carries that one-sidedness a year out, where a level can drift either way. An outlook week therefore takes the wider side on both sides, whichever rule the lead chooses. `test_an_outlook_week_is_the_same_both_sides_when_a_28_day_side_is_0` pins it.
+- **Why independent windows (n_eff).** The backtest forecasts each week from the Sunday cutoff at least H days before it, so two weeks a week apart share H - 7 of their H days of drift: at 182 days, 26 consecutive weeks hold about one independent draw of how the level moves in half a year, not 26. Reading them as n × 7 / H windows sizes the band by what the history can show: a conformal rank needs about 9 windows (as `baseline.weekly_band`'s ranks need 9 weeks), which at 182 days is 234 weeks of cutoffs (four and a half years), so on today's histories the band is the largest miss (from 26 weeks at 182, 53 at 365) or, with fewer, every week's conformal rank. The same reasoning explains the check's one held-out failure (below): its 65% floor per history scores about one drift draw per history, since 13 or 27 outlook weeks of one history are strongly autocorrelated, so an occasional history outside it is expected under any honest rule and is not a regression.
+- **The growth floor stays.** A level shift inside the scored year has never been seen in its own backtest, so the walk and backtest estimates give level-shift histories about 0 extra width: only the floor covers them. The rule never lets the backtest narrow under it, and must not in any later change. Across the 20 seeds below the floor set every 365-day ratio and 48 of the 320 182-day ones.
+- **Daily ranges** are unchanged (each side as backtested, widened by `widen_k` times the day's ratio). Daily coverage passes everywhere (96.8% to 99.1% means), and no screen shows a week row's range beside its days' ranges: the Calendar and Home show days, Home's This week reads the run's 28-day `weeklyRangePct`, and only TownwiseAI's `get_forecast` returns both, as it always has for two independently drawn ranges.
+
+**The coverage check, unchanged** (`tests/test_outlook_coverage.py`, seeds 0 to 3, 64 calibrations, 205 seconds; weekly mean, lowest history, daily mean): 3 passed, and the control fails all four pairs.
+
+| cut | horizon | rule as built | control (no outlook widening) |
+|---|---|---|---|
+| 2 years | 182 | 100.0%, 100.0%, 98.9%: pass | 86.3%, 15.4%, 78.0%: fail |
+| 2 years | 365 | 99.0%, 80.8%, 98.4%: pass | 79.9%, 0.0%, 72.8%: fail |
+| 3 years | 182 | 99.3%, 84.6%, 96.8%: pass | 84.4%, 0.0%, 80.4%: fail |
+| 3 years | 365 | 99.0%, 77.8%, 98.1%: pass | 74.4%, 18.5%, 76.2%: fail |
+
+**Held-out seeds** (copies of the check that change only its `SEEDS` line, outside the repository; 128 calibrations each):
+
+| seeds | cut | horizon | rule as built | control |
+|---|---|---|---|---|
+| 4 to 11 | 2 years | 182 | 99.4%, 76.9%, 99.1%: pass | 87.3%, 0.0%, 79.2%: fail |
+| 4 to 11 | 2 years | 365 | 99.4%, 69.2%, 98.6%: pass | 74.0%, 0.0%, 73.6%: fail |
+| 4 to 11 | 3 years | 182 | 99.8%, 92.3%, 97.9%: pass | 85.9%, 15.4%, 77.9%: fail |
+| 4 to 11 | 3 years | 365 | 97.9%, 74.1%, 97.6%: pass | 70.5%, 3.7%, 72.8%: fail |
+| 12 to 19 | 2 years | 182 | 99.8%, 92.3%, 98.7%: pass | 90.3%, 61.5%, 79.5%: fail |
+| 12 to 19 | 2 years | 365 | 99.6%, 76.9%, 98.0%: pass | 77.2%, 15.4%, 73.4%: fail |
+| 12 to 19 | 3 years | 182 | 98.7%, 92.3%, 96.9%: pass | 83.5%, 23.1%, 79.9%: fail |
+| 12 to 19 | 3 years | 365 | 97.7%, **37.0%**, 97.1%: **fail** | 75.3%, 0.0%, 74.2%: fail |
+
+The one failure is `level_shift` seed 13 at three years and 365 days: 10 of 27 weeks inside. Its history is calm (a 91-day ratio of 1.0, a 28-day weekly range of about ±0.14), its 182-day band the largest of 73 misses (r_182 1.52) and its 365-day ratio the floor (2.15), so its year-ahead weeks hold about ±0.30 in log terms, against a 20% fall (-0.22) from 183 days after the cut on top of its weekly swings. It is the only history under 65% in 640 history, cut and horizon pairs (20 seeds of 8 shapes, 2 cuts, 2 horizons), and the pass and fail of seeds 4 to 19 are the same as the prototype's on the parked branch. Seeds 4 to 19 are not part of the check and do not change it.
+
+**Widths** (outlook weeks of the 320 calibrations, seeds 0 to 19; log(high / low) median and 90th percentile, and (high - low) / mid median and 90th percentile):
+
+| cut | horizon | log(high / low) | (high - low) / mid |
+|---|---|---|---|
+| 2 years | 182 | 0.87, 1.05 | 0.90, 1.10 |
+| 2 years | 365 | 1.08, 1.31 | 1.13, 1.41 |
+| 3 years | 182 | 0.63, 1.13 | 0.64, 1.19 |
+| 3 years | 365 | 0.77, 1.37 | 0.79, 1.48 |
+| all | | 0.90, 1.26 | |
+
+A forecast-tier week's log(high / low) is a median 0.32 to 0.33. So an outlook week's high is a median 2.5 times its low, and one in ten is more than 3.5 times (seeds 0 to 3 alone: 0.85 and 1.16). The 90th percentile is under the 1.4 (4 times) the lead set for an owner-facing check overall, but not everywhere: on the Hanover-calendar histories it is 1.50 (1.64 at three years and 365 days) and on the drifting ones 1.53, where about one outlook week in five is more than 4 times as high as it is low (one in twenty overall). Since Sawtooth is in Hanover, the owner should see this before release B ships: `[CONFIRM: how wide year-ahead ranges may be: an outlook week's high a median 2.5 times its low and 1 in 10 more than 3.5 times on the synthetic check, and on Hanover-calendar and drifting histories 1 in 5 more than 4 times]` (spec index item 144). Those ranges are wide because they hold: Hanover's histories kept 98% to 100% of their outlook weeks at both horizons and cuts.
+
+**What each ratio was read from** (320 calibrations; the branch of `_outlook_band`, and how often its band was wider than the growth floor):
+
+| cut | horizon | band | wider than the floor |
+|---|---|---|---|
+| 2 years | 182 | every week's conformal rank, 160 (under 1 window) | 144 of 160 |
+| 2 years | 365 | every week's conformal rank, 152; growth alone, 8 (model runs with no 365-day week) | 0 of 160 |
+| 3 years | 182 | the largest miss, 160 (2.8 windows) | 128 of 160 |
+| 3 years | 365 | every week's conformal rank, 160 (0.9 windows) | 0 of 160 |
+
+No history reached 9 windows, so the conformal rank on own weeks never ran here; it is pinned by its unit test.
+
+**In-sample, as a diagnostic only** (not a widening step): the share of each horizon's own backtest weeks the band the run gives that horizon (the wider 28-day side times r_H) would have held: at two years 99.5% at 182 (lowest history 71.4%; no own weeks at 365 yet), at three years 100% at 182 and 99.4% at 365 (lowest 83.0%). Of every backtest week at the horizon: 82.9% and 100% at two years, 81.7% and 99.2% at three. The scorecard's `horizonOutlook` keeps `coverage80` as `horizon91`'s is, the past-only band coverage at that lead, so no new scorecard field was added for these shares; they are reported here.
+
+**The largest-miss step needs no ceiling.** One outlier week can set m when n_eff is 1 to 9, so it was measured against the every-week conformal rank: over the 160 horizons that took it, m over that rank is a median 0.93, a 90th percentile 1.37 and at most 2.40 (Hanover seed 16, whose ratio was then 2.00). The widest ratios it set were 3.48 and 3.35, on drifting seeds 18 and 17, which are the histories that need them; the widest outlook ratios overall (5.5 to 6.3) are the growth floor at 365 days on two-year cuts, mostly of calm histories, whose 28-day range is narrow. A ceiling at the every-week rank times a factor would bind only where a history has already shown a large miss, and would be one more number chosen after measuring, so none is set; the lead may add one with the rule's decision.
+
+**The Hanover model run, separately** (the check's own runs are the baseline's but for 10 of 320; seeds 0 to 7, both cuts, the model forced): weekly mean, lowest history and daily mean pass at every cut and horizon (2 years: 95.2%, 92.3%, 96.9% at 182 and 100%, 100%, 99.6% at 365; 3 years: 100%, 100%, 99.9% and 100%, 100%, 100%), and each three-year run stops at Hanover's `termsThrough`, 2028-06-06. Its control passes too (82.7% to 99.0% weekly means, lowest 76.9%): the model reads the term and week of term, so its own 28-day ranges already hold Hanover's outlook weeks, and the outlook widening adds width it did not need (median outlook-week log(high / low) 0.73 to 1.66).
+
+**The Hanover caveat.** Term boundaries move from year to year, so a baseline forecast a year ahead from last year's shape misses at the start and end of every term, which inflates the long-lead misses the band is read from; Hanover's weekly coverage of 98% to 100% with the widest ranges of any shape says its bands are wider than they need to be. If owners find Hanover's outlook too wide, the fix is calendar-adjusted residuals (misses read after moving last year's term weeks onto this year's dates), not a narrower rule.
+
+**Future work.** A drift-rate prior pooled across locations is the principled way to stop under-widening calm histories that do drift (the level-shift failure above): one location's few windows cannot show its drift rate, but many locations' can.
+
+**The fallback, R2** (from the third approach put to the lead), written down in case the lead rejects a rule tuned after measuring: every outlook ratio at least sqrt(lead / 28), the random-walk spread of the 28-day band, and no backtest read; the growth floor and the outlook weeks' one size on both sides kept. Measured once, on the check's seeds 0 to 3 with the check unchanged (a scratch plugin in place of the built rule; R2 is not built here): it passes (weekly means 99.6% to 100%, lowest history 92.3%, daily means 99.4% to 100%; the control fails as above), but its ranges are wider and do not narrow as history grows: outlook-week log(high / low) a median 0.98 and a 90th percentile 1.36, against the built rule's 0.85 and 1.16 on the same seeds, and at three years medians of 0.89 at 182 days and 1.07 at 365 against 0.60 and 0.73. It would not let the ranges firm up as data grows, which the owner asked for.
+
+**B.5 and B.7.** `tests/golden` regenerated: `input.json` and `result.json` by `tests/make_golden.py` (version 3, a 367-day run), and `api-input.json` by `api/test/lab-input.test.ts` with `TOWNWISE_UPDATE_LAB_GOLDEN=1` (version 3, `horizonDays` 400, `termsThrough` 2028-06-06); `hanover-calendar.json` came out unchanged. `tests/test_parity.py`, `test_contract.py`, `test_job.py` and `test_cli.py` pass on them. Sizes (decision 13): the golden result is 99,671 bytes as compact JSON (110,099 as `json.dumps` writes it), the golden input 162,197 and the API's golden input 157,414, so `LAB_RESULT_LIMIT` stays 256 KB (the bar was 192 KB). Runtime (decision 14), timed as D42's tasks 0.3 and 2.6 were: the lab image built from this branch for `linux/amd64` (under Rosetta on the M4 Max), `docker run --platform linux/amd64 --cpus=1 --memory=2g`, three runs each, the input on standard input to a script that calls `calibrate`. A 700-day synthetic history (`fixture.two_year_input(0, "steady", 700)`, 1,100 input days, a 366-day run): the engine chosen (the baseline) 3.4 to 3.5 seconds inside the container and 7.9 to 11.3 wall clock, the model forced 5.1 to 5.2 and 9.5 to 10.0. The golden input (with its champion, a 367-day run): the baseline 2.6 to 2.9 and 7.0 to 7.8, the model forced 3.8 to 4.0 and 8.2 to 8.4. Peak memory 170 to 192 MB of the 2 GiB, and the largest result 103,738 bytes (the golden input's model run). Far under 600 seconds.
+
+**CONFIRM numbers.** develop's index ends at 142 (D58). This change's new items are written as 143 and 144, provisionally: open PR #113 (a person's calibration from 230 days) also numbers an item 143, and #117 (D59's slice 1) items 143 to 158, so whichever merges later renumbers.
