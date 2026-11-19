@@ -711,7 +711,7 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
             {
               key: 'list', span: 6,
               node: (
-                <SkeletonPanel>
+                <SkeletonPanel grow>
                   <BlockHeadSkeleton eyebrow={110} width={280} />
                   <View style={styles.monthList}>
                     {[0, 1, 2, 3].map((item) => (
@@ -727,7 +727,7 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
             {
               key: 'people', span: 6,
               node: (
-                <SkeletonPanel>
+                <SkeletonPanel grow>
                   <BlockHeadSkeleton eyebrow={160} words="Who’s in town" />
                   <View style={styles.inTown}>
                     <InTownPeopleShapes />
@@ -743,7 +743,7 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
             {
               key: 'years', span: 6,
               node: (
-                <SkeletonPanel>
+                <SkeletonPanel grow>
                   <BlockHeadSkeleton eyebrow={120} width={280} />
                   <SkeletonWords type="small">{maskedPlain(PAST_YEAR_WORDS)}</SkeletonWords>
                   <SkeletonWords type="mono">Averages leave out closed days.</SkeletonWords>
@@ -753,7 +753,7 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
             {
               key: 'bar', span: 6,
               node: (
-                <SkeletonPanel>
+                <SkeletonPanel grow>
                   <SkeletonText type="label" width={80} />
                   <SkeletonText width="50%" />
                   <SkeletonText width="80%" />

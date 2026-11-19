@@ -124,9 +124,13 @@ export function SkeletonFigure(props: { width?: DimensionValue; compact?: boolea
   );
 }
 
-/** A card or panel: the `panel` surface with its padding (`Panel`), holding other shapes or a fixed height. */
-export function SkeletonPanel(props: { children?: React.ReactNode; minHeight?: number }): React.JSX.Element {
-  return <Panel {...(props.minHeight === undefined ? {} : { style: { minHeight: props.minHeight } })}>{props.children}</Panel>;
+/**
+ * A card or panel: the `panel` surface with its padding (`Panel`), holding other shapes or a fixed height. `grow`: it
+ * fills its row's height, as Home's blocks do side by side (home/Block.tsx).
+ */
+export function SkeletonPanel(props: { children?: React.ReactNode; minHeight?: number; grow?: boolean }): React.JSX.Element {
+  const style = { ...(props.minHeight === undefined ? {} : { minHeight: props.minHeight }), ...(props.grow === true ? { flexGrow: 1 } : {}) };
+  return <Panel {...(Object.keys(style).length === 0 ? {} : { style })}>{props.children}</Panel>;
 }
 
 /** A form field (FormField): its label, the 44px input outlined in `line`, and a helper line when it has one. */
