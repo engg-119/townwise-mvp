@@ -3,8 +3,10 @@
 // `invalid`. It only adds: a note (`note.add`), a summary item (`item.add`), missing sales days (`sales_days.add`),
 // (slice 2) the labels of a file calendar sorted on import (`booking.label`, one change per calendar, whose writer labels
 // only a calendar nobody sorted, labeled or confirmed, and then confirms it for forecasts, so the confirm covers only its
-// own labels) or (slice 3) a closure or hours rule (`rule.add`, through D31's rules: refused `invalid` at the 30-rule
-// limit or when a rule with its words exists); it never changes or deletes anything else that exists. There are no transactions (DocumentDB), so the writes are ordered
+// own labels), (slice 3) a closure or hours rule (`rule.add`, through D31's rules: refused `invalid` at the 30-rule
+// limit or when a rule with its words exists) or (D66) a revision correcting a researched event (`event.correct`,
+// appended on the head the chat tool read: one a person's edit got to first is refused `conflict`, and it never marks a
+// refit, since the forecast does not read researched events); it never changes or deletes anything else that exists. There are no transactions (DocumentDB), so the writes are ordered
 // for retries: the ledger row is inserted `applying` under the planned target id and a dedupe key unique per location in
 // every status; the target is written under that id (a second create fails on its primary key and counts as done); the
 // row is set `applied` with the target's updatedAt by compare-and-set; the audit event is recorded only by the call
@@ -37,6 +39,7 @@ import type { AuditEventInput } from '../stores/audit-events.ts';
 import { MAX_RULES, type BusinessRuleRecord, type RuleSchedule } from '../stores/business-rules.ts';
 import type { AiSource } from '../stores/files.ts';
 import type { NoteContent, NoteLink, NoteRecord } from '../stores/notes.ts';
+import type { RevisionFields } from '../stores/research-revisions.ts';
 import { closureKeyOf } from './closure-suggestions.ts';
 import { noteCovers } from './questions.ts';
 import { wantRefitFor } from './refit.ts';
@@ -85,21 +88,23 @@ export interface RuleCandidate extends CandidateBase {
 }
 
 /**
- * An item, missing sales days or a calendar's labels, written by the caller's own writer under the planned id. `key` is
- * the content the dedupe key is made of. `write` is handed the ledger row (`applying`; a retry gets the same row, so its
- * `appliedAt` is a time planned before any write) and resolves the target's updatedAt, or null when it added nothing
- * after all (the row is then removed, and the answer is `invalid`); a second call must complete the first's write. A
- * writer that only knows what it added once written (a calendar's labels, only on events nobody labeled) resolves
- * WrittenFacts instead, and the row takes that count and those dates before it is marked applied.
+ * An item, missing sales days, a calendar's labels or (D66) a researched event's correction, written by the caller's own
+ * writer under the planned id. `key` is the content the dedupe key is made of. `write` is handed the ledger row
+ * (`applying`; a retry gets the same row, so its `appliedAt` is a time planned before any write) and resolves the
+ * target's updatedAt, or null when it added nothing after all (the row is then removed, and the answer is `invalid`); a
+ * second call must complete the first's write. A writer that only knows what it added once written (a calendar's labels,
+ * only on events nobody labeled) resolves WrittenFacts instead, and the row takes that count and those dates before it
+ * is marked applied. A writer whose target someone else changed first (a correction's head taken by a person's edit)
+ * resolves `'conflict'`: the row is removed, as for `invalid`, and the answer is `conflict`.
  */
 export interface WrittenCandidate extends CandidateBase {
-  readonly action: 'item.add' | 'sales_days.add' | 'booking.label';
+  readonly action: 'item.add' | 'sales_days.add' | 'booking.label' | 'event.correct';
   readonly key: string;
   /** The dates the days (or a calendar's buyouts and parties) cover, for the activity and the refit; null for an item. */
   readonly dates: { readonly startDate: string; readonly endDate: string } | null;
   /** How many records it adds, for the activity's words (a calendar's labels); left out otherwise. */
   readonly count?: number;
-  readonly write: (change: AgentChangeRecord) => Promise<Date | WrittenFacts | null>;
+  readonly write: (change: AgentChangeRecord) => Promise<Date | WrittenFacts | 'conflict' | null>;
 }
 
 /** What a writer actually wrote: the target's updatedAt, how many records, and the dates they cover (or null). */
@@ -110,6 +115,9 @@ export interface WrittenFacts {
 }
 
 export type ChangeCandidate = NoteCandidate | RuleCandidate | WrittenCandidate;
+
+/** A candidate whose row exists, as finishRow reads it: a written one's key is already the row's. */
+type RowCandidate = NoteCandidate | RuleCandidate | Omit<WrittenCandidate, 'key'>;
 
 /** What applyChange reads and writes through: the stores, the clock, and the logger an audit failure is logged to. */
 export type ApplyContext = Pick<TownwiseContext, 'stores' | 'now' | 'logger'>;
@@ -301,7 +309,7 @@ function datesOf(candidate: ChangeCandidate): { startDate: string; endDate: stri
  * The days a change's refit check reads (agent/refit.ts): a note's dates; a rule's start, as a person's rule marks one
  * (handlers/rules.ts); a written change's row dates (its writer may set what it actually wrote). Null for none.
  */
-function refitDates(candidate: ChangeCandidate, current: AgentChangeRecord): { startDate: string; endDate: string } | null {
+function refitDates(candidate: RowCandidate, current: AgentChangeRecord): { startDate: string; endDate: string } | null {
   if (candidate.action === 'note.add') return { startDate: candidate.note.startDate, endDate: candidate.note.endDate };
   if (candidate.action === 'rule.add') return { startDate: candidate.schedule.startDate, endDate: candidate.schedule.startDate };
   return current.startDate === null || current.endDate === null ? null : { startDate: current.startDate, endDate: current.endDate };
@@ -349,6 +357,15 @@ export async function applyChange(
     // Another change took the key between the read and the insert.
     if (!inserted.created && row.targetId !== candidate.targetId) return { outcome: 'duplicate', change: row };
   }
+  return finishRow(ctx, scope, candidate, row);
+}
+
+/**
+ * applyChange's steps once the row exists: the target written (or found), the row marked applied with its audit event,
+ * and the refit. finishStaleChanges calls it directly for a correction, whose key it cannot make again (D66).
+ */
+async function finishRow(ctx: ApplyContext, scope: OrgScope, candidate: RowCandidate, row: AgentChangeRecord): Promise<ApplyResult> {
+  const { stores } = ctx;
   const wantRefit = async (current: AgentChangeRecord): Promise<void> => {
     const dates = refitDates(candidate, current);
     if (dates !== null) await wantRefitFor(ctx, scope, candidate.locationId, candidate.action === 'sales_days.add' ? 'always' : dates);
@@ -365,6 +382,11 @@ export async function applyChange(
     updatedAt = (await writeRule(ctx, scope, candidate, row))?.updatedAt ?? null;
   } else {
     const wrote = await candidate.write(row);
+    if (wrote === 'conflict') {
+      // Someone changed the target first (D66: a person's edit took the correction's head): the key is freed.
+      await stores.agentChanges.removeApplying(scope, candidate.locationId, row.id);
+      return { outcome: 'conflict', change: null };
+    }
     if (wrote === null || wrote instanceof Date) {
       updatedAt = wrote;
     } else {
@@ -391,13 +413,58 @@ export async function applyChange(
   return { outcome: 'applied', change: after ?? row };
 }
 
+/** D66: a correction of a researched event TownwiseAI makes in chat (town-research-agent design decision 12). */
+export interface EventCorrection {
+  readonly locationId: string;
+  /** The conversation and the tool call it was asked in: its key, so one undone can be asked for again in another turn. */
+  readonly conversationId: string;
+  readonly callId: string;
+  /** The researched event's view id (`t-<hex>` or `l-<hex>`). */
+  readonly eventId: string;
+  readonly op: 'edit' | 'hide' | 'restore';
+  /** An edit's values; null for a hide or a restore. */
+  readonly fields: RevisionFields | null;
+  /** The event's head as the tool read it: the revision is appended on it. */
+  readonly basedOn: string;
+  readonly why: string | null;
+  /** The person who asked. */
+  readonly onBehalfOf: string | null;
+  readonly actor: ChangeActor;
+}
+
+/**
+ * D66: a correction as applyChange takes it: `event.correct` from the chat, confidence high and no dates (so neither
+ * apply nor Undo marks a refit), its target a planned revision id. Its writer appends the revision on `basedOn` through
+ * the unique `(orgId, locationId, eventId, basedOn)` index: a retry finds the revision under the planned id, and a head a
+ * person's edit (or another correction) took first answers `'conflict'`.
+ */
+export function eventCorrectionCandidate(ctx: ApplyContext, scope: OrgScope, input: EventCorrection): WrittenCandidate {
+  const revisions = ctx.stores.researchRevisions;
+  return {
+    action: 'event.correct', locationId: input.locationId, sourceKind: 'chat', sourceId: input.conversationId,
+    targetId: new Types.ObjectId().toHexString(), confidence: 'high', why: input.why, onBehalfOf: input.onBehalfOf, actor: input.actor,
+    key: JSON.stringify([input.conversationId, input.callId]), dates: null,
+    write: async (change) => {
+      const appended = await revisions.append(scope, {
+        id: change.targetId, locationId: input.locationId, eventId: input.eventId, op: input.op, fields: input.fields, reverts: null,
+        basedOn: input.basedOn, by: { kind: 'chat', conversationId: input.conversationId, changeId: change.id }, now: ctx.now(),
+      });
+      if (appended !== null) return appended.createdAt;
+      // The planned id (an earlier or a racing attempt of this change wrote it), or another revision took the head.
+      return (await revisions.find(scope, input.locationId, change.targetId))?.createdAt ?? 'conflict';
+    },
+  };
+}
+
 /**
  * The location's weekly, sales and chat changes left `applying` for an hour or more (their pass or turn died mid-apply;
  * those sources plan a new target id each pass, and a failed chat turn is never run again, so no later candidate retries
  * one): one whose note or rule was written, as it was written, is finished through applyChange under its own target
  * (marked applied, its audit event as TownwiseAI finishing it, the row's onBehalfOf naming whose it is, its refit); any
  * other (nothing written, or changed since) is removed, which frees its key. A weekly pass runs it first. A chat row's
- * claim in tw_chat_proposals is left as it is: its turn was not kept, so no card reads it.
+ * claim in tw_chat_proposals is left as it is: its turn was not kept, so no card reads it. A correction (D66) whose
+ * revision exists under its planned id is finished through applyChange's own steps (finishRow: its key, a hash of the
+ * conversation and the call, cannot be made again from the revision); one without is removed.
  */
 export async function finishStaleChanges(ctx: ApplyContext, scope: OrgScope, locationId: string): Promise<void> {
   const { stores } = ctx;
@@ -408,6 +475,12 @@ export async function finishStaleChanges(ctx: ApplyContext, scope: OrgScope, loc
       locationId, sourceKind: row.sourceKind, sourceId: row.sourceId, targetId: row.targetId, confidence: row.confidence, why: row.why,
       onBehalfOf: row.onBehalfOf, actor: TOWNWISE_AI_ACTOR,
     };
+    if (row.action === 'event.correct') {
+      const revision = await stores.researchRevisions.find(scope, locationId, row.targetId);
+      if (revision === null) await stores.agentChanges.removeApplying(scope, locationId, row.id);
+      else await finishRow(ctx, scope, { ...base, action: 'event.correct', dates: null, write: () => Promise.resolve(revision.createdAt) }, row);
+      continue;
+    }
     let candidate: NoteCandidate | RuleCandidate | null = null;
     if (row.action === 'rule.add') {
       const rule = await stores.businessRules.find(scope, locationId, row.targetId);
