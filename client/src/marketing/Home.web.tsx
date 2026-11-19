@@ -207,7 +207,6 @@ export default function Home(): React.JSX.Element {
             </div>
             <div className="faq-i">
               <h3 className="h3">Is Townwise ready to use today?</h3>
-              {/* [CONFIRM: wording, awaiting the owner] Forecasts publish by default and refit weekly (autonomous-forecasts, D42). */}
               <p>Yes, in early access, though the forecasts are still being tested. Townwise is a student project in active development. With early access you can add your locations, upload your sales history, add notes about unusual days, import your calendars, ask TownwiseAI about your numbers, set up bar ordering and see your town’s public profile, if it is one of the twelve on the map. Once a location’s sales history spans 230 days, Townwise forecasts its daily guests, refits the forecast every week, and says whether its trained model or a simpler baseline made it.</p>
             </div>
           </div>

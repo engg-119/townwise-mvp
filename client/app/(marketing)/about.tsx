@@ -52,13 +52,11 @@ export default function About(): React.JSX.Element {
                     <Td data-l="What it covers">The town research agent, public datasets, the app’s foundation</Td>
                     <Td data-l="Status"><Div className="st-c"><Span className="tag tag-prog">In progress</Span><P>Sign-in and the server are built. Hanover’s public calendar is compiled, every date with a source. The research agent itself is not built yet.</P></Div></Td>
                   </Tr>
-                  {/* [CONFIRM: wording, awaiting the owner] Forecasts publish by default and refit weekly (autonomous-forecasts, D42). */}
                   <Tr>
                     <Th scope="row">2. Forecasting agent</Th>
                     <Td data-l="What it covers">Automatic feature building, model selection and training, against traditional baselines</Td>
                     <Td data-l="Status"><Div className="st-c"><Span className="tag tag-prog">In progress</Span><P>Candidate models run in our research notebooks and are tested with a rolling backtest. In the app, Townwise’s trained demand model and a simpler baseline are both tested on each restaurant’s own past weeks, and its forecast switches between them only when the other does clearly better. The forecasting agent itself is not built yet.</P></Div></Td>
                   </Tr>
-                  {/* [CONFIRM: wording, awaiting the owner] Forecasts publish by default and refit weekly (autonomous-forecasts, D42). */}
                   <Tr>
                     <Th scope="row">3. Calibration and forecasts</Th>
                     <Td data-l="What it covers">Calibrating with point-of-sale history; forecasts with ranges and reasons; testing how much history is needed</Td>
