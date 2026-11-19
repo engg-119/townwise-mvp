@@ -21,7 +21,8 @@ import { described } from './described';
 // fresh read of the event, so the tap is theirs (Reset on the Calendar undoes it). The card names no event title: the
 // call's views carry ids and the proposed values only. Under view-as both buttons are disabled, described by the
 // read-only line. Its state is the card's own: a reload reads the stored part again, and Apply then finds the change
-// already made and sends nothing.
+// already made and sends nothing, saying so without offering Reset as its undo: the revision that reads that way may be
+// another person's edit.
 
 /** Apply's refusals in words (the API's codes, as the Calendar's edit sheet reads them). */
 function applyErrorText(error: unknown): string {
@@ -35,7 +36,7 @@ function applyErrorText(error: unknown): string {
 }
 
 interface UndoState { status: 'applied' | 'undoing' | 'undone'; error: string | null; final: boolean }
-interface ApplyState { status: 'open' | 'applying' | 'applied' | 'gone'; error: string | null }
+interface ApplyState { status: 'open' | 'applying' | 'applied' | 'already' | 'gone'; error: string | null }
 
 function AppliedBody(props: { card: Extract<Card, { kind: 'applied' }>; locationId: string; readOnlyId: string | null }): React.JSX.Element {
   const { api } = usePortal();
@@ -81,7 +82,7 @@ function ProposedBody(props: { card: Extract<Card, { kind: 'proposed' }>; locati
     setState({ status: 'applying', error: null });
     applyCorrection(api, props.locationId, card, localToday()).then(
       (outcome) => {
-        if (outcome === 'applied' || outcome === 'already') setState({ status: 'applied', error: null });
+        if (outcome === 'applied' || outcome === 'already') setState({ status: outcome, error: null });
         else if (outcome === 'gone') setState({ status: 'gone', error: APPLY_NOTICES.gone });
         else setState({ status: 'open', error: APPLY_NOTICES.changedSince });
       },
@@ -93,8 +94,8 @@ function ProposedBody(props: { card: Extract<Card, { kind: 'proposed' }>; locati
       <Text style={styles.lead}>{correctionProposedLine(card.change)}</Text>
       {correctionFieldLines(card.fields).map((line) => <Text key={line} style={styles.field}>{line}</Text>)}
       <Small>{CORRECTION.why}</Small>
-      {state.status === 'applied' ? (
-        <View role="status"><Text style={styles.done}>{CORRECTION.applied}</Text></View>
+      {state.status === 'applied' || state.status === 'already' ? (
+        <View role="status"><Text style={styles.done}>{state.status === 'applied' ? CORRECTION.applied : CORRECTION.already}</Text></View>
       ) : null}
       <Actions>
         {state.status === 'open' || state.status === 'applying' ? (

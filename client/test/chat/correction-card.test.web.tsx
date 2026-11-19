@@ -162,6 +162,22 @@ test('a proposal shows the change and why it waits; Apply sends the person’s o
   expect(api.writes).toEqual([{ method: 'PATCH', path: PATCH, body: { op: 'edit', fields: { start: '2026-12-10', end: '2026-12-10' }, basedOn: 'r3' } }]);
 });
 
+test('Apply on an event that already reads as proposed sends nothing and says so, never offering Reset as its undo', async () => {
+  const api = fakeChatApi();
+  // Another member already made the same change by hand.
+  api.reads[calendarPath()] = () => ({
+    town: { name: 'Hanover', state: 'NH', townId: 'hanover-nh' }, researched: true, covers: null, events: [],
+    found: [found({ head: 'r4', start: '2026-12-10', end: '2026-12-10', edited: true })],
+  });
+  await openStored(api, [{ type: 'tool', ...PROPOSED }]);
+  const shown = await card();
+  fireEvent.click(within(shown).getByRole('button', { name: 'Apply' }));
+  expect(await within(shown).findByText('This event already reads that way. Nothing changed.')).toBeTruthy();
+  expect(within(shown).queryByText(/Reset it on the Calendar/)).toBeNull();
+  expect(within(shown).queryByRole('button', { name: 'Apply' })).toBeNull();
+  expect(api.writes).toEqual([]);
+});
+
 test('Apply refused: too many edits is said in words, and Apply stays to try again', async () => {
   const api = fakeChatApi();
   api.reads[calendarPath()] = () => ({ town: { name: 'Hanover', state: 'NH', townId: 'hanover-nh' }, researched: true, covers: null, events: [], found: [found()] });
