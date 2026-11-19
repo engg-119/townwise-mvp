@@ -75,6 +75,12 @@ export interface OwnerCalendarView {
   format: 'ics' | 'csv' | null;
   /** A file calendar's booking labels (D58): their state and counts; null for a link or a Google calendar. */
   bookings: { state: BookingsState; sortedAt: string | null; confirmedAt: string | null; counts: BookingCounts } | null;
+  /**
+   * D61, on the list only: the Your data item (`f_<fileId>`) a file calendar was imported from (D60), while that file is
+   * still kept and stored files are on; null otherwise. Your data shows such a file once, as this calendar, so the
+   * calendar's page links to it.
+   */
+  fromFile?: string | null;
 }
 
 /**
@@ -254,7 +260,7 @@ export function staffReads(caller: MemberPrincipal): boolean {
  * per organization, kept across a reconnect) and ending a connection removes its calendars, so the adder's connection
  * is the one that reads it. Never for staff: under view-as `userId` is the target's.
  */
-function shownView(calendar: OwnerCalendarRecord, caller: MemberPrincipal, counts?: BookingCounts): OwnerCalendarView {
+export function shownView(calendar: OwnerCalendarRecord, caller: MemberPrincipal, counts?: BookingCounts): OwnerCalendarView {
   const staff = staffReads(caller);
   const view = ownerCalendarView(calendar, !staff && calendar.kind === 'google' && calendar.createdBy === caller.userId, counts);
   return staff && calendar.kind === 'google' ? { ...view, label: GOOGLE_CALENDAR_LABEL } : view;
@@ -276,10 +282,24 @@ async function googleView(ctx: TownwiseContext, caller: MemberPrincipal): Promis
 }
 
 /**
+ * The Your data refs of the files `calendars` were imported from (D60) that are still kept, by file id (D61): none
+ * while stored files are off, and never a file being deleted or another location's.
+ */
+async function keptSourceFiles(
+  ctx: TownwiseContext, scope: OrgScope, locationId: string, calendars: readonly OwnerCalendarRecord[],
+): Promise<ReadonlySet<string>> {
+  const ids = calendars.flatMap((calendar) => calendar.fromFileId ?? []);
+  if (ctx.files === null || ids.length === 0) return new Set();
+  const files = await ctx.stores.files.byIds(scope, ids);
+  return new Set(files.filter((file) => file.locationId === locationId && file.status !== 'deleting' && file.uploadId === null).map((file) => file.id));
+}
+
+/**
  * GET /api/org/locations/:locationId/owner-calendars: the location's calendars, oldest first, each with `mine` (a Google
- * calendar the caller added, which they can reconnect) and, for a file, its format and booking labels' state and counts
- * (D58); `google`: whether Google calendars are on, whether the caller has a connection that is not revoked, and the
- * public client id; and `bookingSort`: whether Sort with TownwiseAI is available (a model key is set).
+ * calendar the caller added, which they can reconnect), for a file its format and booking labels' state and counts
+ * (D58), and `fromFile`, the Your data item it was imported from while that file is kept (D61); `google`: whether
+ * Google calendars are on, whether the caller has a connection that is not revoked, and the public client id; and
+ * `bookingSort`: whether Sort with TownwiseAI is available (a model key is set).
  */
 export async function listOwnerCalendars(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -287,8 +307,13 @@ export async function listOwnerCalendars(ctx: TownwiseContext, req: Request, res
   const [calendars, counts] = await Promise.all([
     ctx.stores.ownerCalendars.list(caller.scope, location.id), ctx.stores.ownerCalendars.labelCounts(caller.scope, location.id),
   ]);
+  const kept = await keptSourceFiles(ctx, caller.scope, location.id, calendars);
   res.status(200).json({
-    calendars: calendars.map((calendar) => shownView(calendar, caller, counts.get(calendar.id))), google: await googleView(ctx, caller),
+    calendars: calendars.map((calendar) => ({
+      ...shownView(calendar, caller, counts.get(calendar.id)),
+      fromFile: calendar.fromFileId !== null && kept.has(calendar.fromFileId) ? `f_${calendar.fromFileId}` : null,
+    })),
+    google: await googleView(ctx, caller),
     bookingSort: { available: ctx.chat !== null },
   });
 }

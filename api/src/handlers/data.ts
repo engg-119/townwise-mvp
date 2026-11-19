@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
+import { folderOf, type DataFolder } from '../data/folders.ts';
 import {
   DATA_PAGE, listDataItems, loadDataItem, parseRef, refString, type DataCursor, type DataItemRecord, type DataState, type DataVia,
 } from '../data/library.ts';
@@ -26,9 +27,10 @@ import type {
 } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord } from '../stores/notes.ts';
+import type { CalendarKind, CalendarStatus, OwnerCalendarRecord } from '../stores/owner-calendars.ts';
 import { fileView, isUploaderOrAdmin, removeWholeFile } from './files.ts';
 import { loadLocation, memberOf } from './locations.ts';
-import { calendarOfFile } from './owner-calendars.ts';
+import { calendarOfFile, shownView } from './owner-calendars.ts';
 import { finishAccepted } from './rule-suggestions.ts';
 import { filesUnavailable } from './sales.ts';
 import { actorOf } from './team.ts';
@@ -83,6 +85,19 @@ export interface DataItemView {
    * original is still stored); null for any other item, and while stored files are off.
    */
   calendar?: DataItemCalendarView | null;
+  /** D61: the Your data folder the item is in (data/folders.ts), from what Townwise knows of it, never its name. */
+  folder: DataFolder;
+}
+
+/**
+ * D61: one of the list's calendars, an item of Your data's Calendars folder: never its address, and to staff a Google
+ * calendar is "Google calendar" (as Your calendars shows it). It opens at the client's `c_<id>` item page.
+ */
+export interface DataCalendarView {
+  id: string; locationId: string; label: string; kind: CalendarKind;
+  /** A link's host (`calendar.google.com`); null for a file or a Google calendar. */
+  host: string | null;
+  eventCount: number; skippedRepeating: number; status: CalendarStatus; lastSuccessAt: string | null; createdAt: string;
 }
 
 /** What importing a calendar file kept in Your data did (DataItemView.calendar, D60). */
@@ -369,6 +384,7 @@ function dataItemView(
     canAiRead: aiReadable(member, item, file, aiOn),
     ai: aiView(member, file, links, withEvents),
     fromAiRead: links.sources.get(aiSourceOf(item) ?? '') ?? null,
+    folder: folderOf(item),
   };
 }
 
@@ -434,9 +450,27 @@ function parseCursor(raw: string): DataCursor {
   return { at, id: match[2] ?? '' };
 }
 
+/** The calendars of the location, or of every location of the organization for null (D61). */
+async function scopeCalendars(ctx: TownwiseContext, scope: OrgScope, location: LocationRecord | null): Promise<OwnerCalendarRecord[]> {
+  const ids = location === null ? (await ctx.stores.locations.list(scope)).map((each) => each.id) : [location.id];
+  return (await Promise.all(ids.map((id) => ctx.stores.ownerCalendars.list(scope, id)))).flat();
+}
+
+function dataCalendarView(calendar: OwnerCalendarRecord, member: MemberPrincipal): DataCalendarView {
+  const shown = shownView(calendar, member);
+  return {
+    id: shown.id, locationId: calendar.locationId, label: shown.label, kind: shown.kind, host: shown.host, eventCount: shown.eventCount,
+    skippedRepeating: shown.skippedRepeating, status: shown.status, lastSuccessAt: shown.lastSuccessAt, createdAt: shown.createdAt,
+  };
+}
+
 /**
  * GET /org/data?locationId=&after=: the location's items (every location's without one), newest first, 100 a page;
- * `next` is the cursor for the page after, or null on the last. A read: it logs nothing and records nothing.
+ * `next` is the cursor for the page after, or null on the last. D61: `calendars`, the same on every page, are the
+ * scope's calendars (oldest first, each location's in turn), each an item of the Calendars folder; a stored file a
+ * calendar was imported from (D60) is left out of `items` while that calendar exists, so it shows once, as the
+ * calendar (a page may then hold fewer than 100 with more to come). Each item carries its `folder`. A read: it logs
+ * nothing and records nothing.
  */
 export async function listData(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
@@ -444,10 +478,16 @@ export async function listData(ctx: TownwiseContext, req: Request, res: Response
   const query = parseInput(listQuery, req.query);
   const after = query.after === undefined ? null : parseCursor(query.after);
   const location = query.locationId === undefined ? null : await loadLocation(ctx, scope, query.locationId);
-  const page = await listDataItems(ctx, scope, { locationId: location?.id ?? null, viewerId: member.userId, after, limit: DATA_PAGE });
+  const [page, calendars] = await Promise.all([
+    listDataItems(ctx, scope, { locationId: location?.id ?? null, viewerId: member.userId, after, limit: DATA_PAGE }),
+    scopeCalendars(ctx, scope, location),
+  ]);
+  const imported = new Set(calendars.flatMap((calendar) => calendar.fromFileId ?? []));
+  const items = page.items.filter((item) => item.ref.type !== 'file' || !imported.has(item.ref.id));
   res.status(200).json({
-    items: await itemViews(ctx, member, page.items),
+    items: await itemViews(ctx, member, items),
     next: page.next === null ? null : `${page.next.at.toISOString()}_${page.next.id}`,
+    calendars: calendars.map((calendar) => dataCalendarView(calendar, member)),
   });
 }
 

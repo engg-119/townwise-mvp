@@ -250,6 +250,8 @@ describe('GET /api/org/data', () => {
       file: null, canTurnOff: true, canDelete: true, canEdit: false, editedAt: null, editedByEmail: null,
       // Spec 11A.9: a browser upload has no stored file for TownwiseAI to read.
       canAiRead: false, ai: null, fromAiRead: null,
+      // D61: a sales upload is in Sales.
+      folder: 'sales',
     });
     expect(items[1]).toMatchObject({
       name: 'sales.csv', sizeBytes: RAW.length, enabled: true, state: 'used', addedByEmail: team.adminEmail,
