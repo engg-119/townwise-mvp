@@ -1,8 +1,8 @@
 // Reference items (spec 11A, D28): pasted text kept as a `.txt` stored file, and the one reader TownwiseAI's tools use
-// for a text item's words, which also reads a file attached to a message for its turn (D36: text, a picture's bytes
-// without its metadata, or a PDF's, Word document's or workbook's text, made in the AI text thread as reading with
-// TownwiseAI makes it, parse/ai-text.ts), for the person who added it or an org admin only. The title, the text and a
-// picture are never logged or audited. The one log line here, a text thread that failed, carries ids and its error's
+// for a text item's words, which also reads a file attached to a message for its turn (D36: text, an .ics or .ical
+// calendar file's text read as a text file's (D63), a picture's bytes without its metadata, or a PDF's, Word document's
+// or workbook's text, made in the AI text thread as reading with TownwiseAI makes it, parse/ai-text.ts), for the person
+// who added it or an org admin only. The title, the text and a picture are never logged or audited. The one log line here, a text thread that failed, carries ids and its error's
 // type only, never its message, which could quote the file.
 import { createHash } from 'node:crypto';
 
@@ -23,7 +23,7 @@ import { extractAiText, type AiTextInput, type AiTextKind, type AiTextOutcome } 
 import { decoderFor, detectEncoding } from './parse/text.ts';
 import { SlotBusy } from './parse/thread-slot.ts';
 import { pictureSize, withoutMetadata } from './picture.ts';
-import { pictureType, sanitizeName, type PictureType } from './sniff.ts';
+import { isCalendarFileName, pictureType, sanitizeName, type PictureType } from './sniff.ts';
 import { fingerprintOf } from './upload.ts';
 
 export const TEXT_ITEM_MAX_CHARS = 10_000;
@@ -139,16 +139,19 @@ export type ItemText =
   | { readonly status: 'ok'; readonly text: string; readonly truncated: boolean }
   | { readonly status: 'files_off' | 'not_found' | 'not_readable' | 'turned_off' | 'gone' };
 
-/** What a file attached to a TownwiseAI message is, in its words (spec D36). A picture is known by its bytes. */
-export type AttachmentKind = 'text' | 'picture' | 'pdf' | 'word' | 'excel' | 'zip' | 'file';
+/**
+ * What a file attached to a TownwiseAI message is, in its words (spec D36). A picture is known by its bytes, and a
+ * calendar file (D63) by its name: an .ics or .ical file, which is read as a text file is.
+ */
+export type AttachmentKind = 'text' | 'picture' | 'pdf' | 'word' | 'excel' | 'zip' | 'calendar' | 'file';
 
 /** A stored file's kind as an attachment's; a file of kind `other` is a picture when its bytes say so. */
 const ATTACHMENT_KINDS: Readonly<Record<FileKind, AttachmentKind>> = {
   text: 'text', xlsx: 'excel', xls: 'excel', pdf: 'pdf', docx: 'word', doc: 'word', zip: 'zip', other: 'file',
 };
 
-/** The kinds TownwiseAI reads as text: a text file, and a PDF, Word (.docx) or Excel (.xlsx) file. */
-export type TextKind = 'text' | 'pdf' | 'word' | 'excel';
+/** The kinds TownwiseAI reads as text: a text file, a calendar file (D63), and a PDF, Word (.docx) or Excel (.xlsx) file. */
+export type TextKind = 'text' | 'calendar' | 'pdf' | 'word' | 'excel';
 
 /** A file attached to a TownwiseAI message, once its bytes are read for the turn (spec D36). */
 export type ItemContent =
@@ -310,12 +313,15 @@ export function createItemReader(stores: Pick<TownwiseStores, 'files'>, blobs: F
       if (file.purpose !== 'reference') return { status: 'not_reference' };
       if (file.status !== 'kept') return { status: 'not_ready' };
       if (!allowed) return { status: 'not_allowed' };
-      const kind = ATTACHMENT_KINDS[file.kind];
+      // D63: an .ics or .ical file, which sniff keeps as `other`, is a calendar file.
+      const calendar = file.kind === 'other' && isCalendarFileName(file.name);
+      const kind = calendar ? 'calendar' : ATTACHMENT_KINDS[file.kind];
       // A deleted original never comes back, so it is said before a turned-off item's state.
       if (file.rawDeletedAt !== null) return { status: 'gone', kind };
       if (file.disabledAt !== null) return { status: 'turned_off', kind };
-      if (file.kind === 'text') {
-        return { status: 'readable', kind: 'text', bytes: Math.min(file.sizeBytes, READ_ITEM_BYTES), read: () => contentOf(blobs, scope, file, null) };
+      if (file.kind === 'text' || calendar) {
+        const textKind = calendar ? 'calendar' : 'text';
+        return { status: 'readable', kind: textKind, bytes: Math.min(file.sizeBytes, READ_ITEM_BYTES), read: () => contentOf(blobs, scope, file, null, textKind) };
       }
       const document = DOCUMENTS[file.kind];
       if (document !== undefined) {
@@ -351,13 +357,18 @@ export function pictureContent(bytes: Uint8Array, mediaType: PictureType): ItemC
   return clean === null ? { status: 'not_readable', kind: 'picture' } : { status: 'picture', mediaType, base64: clean.toString('base64') };
 }
 
-/** A checked file's content: a text file's first characters (`picture` null), or a picture's. Its original deleted since is gone. */
-async function contentOf(blobs: FileBlobs, scope: OrgScope, file: FileRecord, picture: PictureType | null): Promise<ItemContent> {
+/**
+ * A checked file's content: a text or calendar file's first characters (`picture` null, `kind` which of them), or a
+ * picture's. Its original deleted since is gone.
+ */
+async function contentOf(
+  blobs: FileBlobs, scope: OrgScope, file: FileRecord, picture: PictureType | null, kind: 'text' | 'calendar' = 'text',
+): Promise<ItemContent> {
   try {
-    if (picture === null) return { status: 'text', kind: 'text', ...await textOf(blobs, scope, file) };
+    if (picture === null) return { status: 'text', kind, ...await textOf(blobs, scope, file) };
     return pictureContent(await rawBytes(blobs, scope, file, file.sizeBytes), picture);
   } catch (err) {
-    if (err instanceof BlobMissingError) return { status: 'gone', kind: picture === null ? 'text' : 'picture' };
+    if (err instanceof BlobMissingError) return { status: 'gone', kind: picture === null ? kind : 'picture' };
     throw err;
   }
 }

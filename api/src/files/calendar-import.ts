@@ -9,18 +9,18 @@
 // (stores/owner-calendars.ts), so a stored file is never imported twice; the file keeps what happened
 // (`calendarImport`), which its page shows (handlers/data.ts) with a retry while the cause can be mended. An .ics or
 // .ical file that is no calendar is recorded `not_calendar`; any other file is left as it was. Importing never fails
-// the upload. Logs carry the file's and calendar's ids and the outcome's code, never a name, label or title.
-import type { MemberPrincipal } from '../access/policy.ts';
+// the upload. Logs carry the file's and calendar's ids and the outcome's code, never a name, label or title. A calendar
+// file attached to a TownwiseAI message (D63) is told to the model with what its import did (attachedCalendars).
+import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { isCalendarCsvText } from '../calendar/csv-events.ts';
 import { MAX_ICS_BYTES } from '../calendar/ics.ts';
 import { addFileCalendar, labelOfFile } from '../handlers/owner-calendars.ts';
 import type { CalendarImport, CalendarImportCode, FileKind, FileRecord } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
+import { localDay } from '../time-zones.ts';
 import type { FileBlobs } from './blobs.ts';
-import { extensionOf } from './sniff.ts';
-
-const ICS_EXTENSIONS: ReadonlySet<string> = new Set(['ics', 'ical']);
+import { isCalendarFileName } from './sniff.ts';
 
 /** Codes a retry can mend: a calendar removed, or the original read again. */
 export const RETRYABLE_IMPORTS: ReadonlySet<CalendarImportCode> = new Set(['calendar_limit', 'unavailable']);
@@ -32,7 +32,7 @@ export const RETRYABLE_IMPORTS: ReadonlySet<CalendarImportCode> = new Set(['cale
 export function calendarCandidate(name: string, kind: FileKind, head: Uint8Array): 'calendar' | 'named' | null {
   // TextDecoder drops a byte-order mark.
   const text = new TextDecoder('utf-8').decode(head);
-  if (ICS_EXTENSIONS.has(extensionOf(name))) return /^\s*BEGIN:VCALENDAR\b/i.test(text) ? 'calendar' : 'named';
+  if (isCalendarFileName(name)) return /^\s*BEGIN:VCALENDAR\b/i.test(text) ? 'calendar' : 'named';
   return kind === 'text' && isCalendarCsvText(text) ? 'calendar' : null;
 }
 
@@ -88,4 +88,56 @@ export async function importIfCalendar(
   } catch (err) {
     ctx.logger.warn({ fileId: file.id, errType: err instanceof Error ? err.name : 'unknown' }, 'townwise.file_calendar_import_failed');
   }
+}
+
+/**
+ * D63: what importing a calendar file attached to a TownwiseAI message did, as of the send (chat/attachments.ts
+ * CalendarNote words it for the model). `added` while its calendar exists and was made at most JUST_ADDED_MS ago, so
+ * the upload that attached it made it; `already` for an older one (the file was in Your data before, or was attached
+ * again after Your data refused a copy of it as a duplicate); both with the calendar's id, label and event count and
+ * the town's date it was added. `removed` once that calendar was removed (the file is never imported again);
+ * `refused` with the code and whether Try again on the file's page may mend it (as handlers/data.ts calendarOf says);
+ * `not_imported` for an .ics or .ical file with no import record (one kept before D60).
+ */
+export type AttachedCalendar =
+  | { readonly outcome: 'added' | 'already'; readonly calendarId: string; readonly label: string; readonly eventCount: number; readonly addedOn: string }
+  | { readonly outcome: 'removed' | 'not_imported' }
+  | { readonly outcome: 'refused'; readonly code: CalendarImportCode; readonly retry: boolean };
+
+/** How recent a calendar's import is for a turn to call it just added. [CONFIRM: 30 minutes] */
+export const JUST_ADDED_MS = 30 * 60 * 1000;
+
+/**
+ * D63: by file id, what importing each of these attached files as a calendar did, for the ones that are calendar files
+ * (with an import record, or named .ics or .ical); any other file, and one not kept for reference at this location, is
+ * left out. Reads each file's record and, only when one is a calendar file, the location's calendars. Nothing is logged.
+ */
+export async function attachedCalendars(
+  ctx: TownwiseContext, scope: OrgScope, locationId: string, fileIds: readonly string[], timeZone: string,
+): Promise<Map<string, AttachedCalendar>> {
+  const found = await Promise.all(fileIds.map((id) => ctx.stores.files.get(scope, locationId, id)));
+  const files = found.filter((file): file is FileRecord => (
+    file !== null && file.purpose === 'reference' && file.status === 'kept' && (file.calendarImport !== null || isCalendarFileName(file.name))
+  ));
+  const notes = new Map<string, AttachedCalendar>();
+  if (files.length === 0) return notes;
+  const calendars = await ctx.stores.ownerCalendars.list(scope, locationId);
+  const now = ctx.now().getTime();
+  for (const file of files) {
+    const calendar = calendars.find((one) => one.fromFileId === file.id);
+    const record = file.calendarImport;
+    if (calendar !== undefined) {
+      notes.set(file.id, {
+        outcome: now - calendar.createdAt.getTime() <= JUST_ADDED_MS ? 'added' : 'already', calendarId: calendar.id,
+        label: calendar.label, eventCount: calendar.eventCount, addedOn: localDay(calendar.createdAt, timeZone),
+      });
+    } else if (record === null) {
+      notes.set(file.id, { outcome: 'not_imported' });
+    } else if (record.state === 'added') {
+      notes.set(file.id, { outcome: 'removed' });
+    } else {
+      notes.set(file.id, { outcome: 'refused', code: record.code, retry: RETRYABLE_IMPORTS.has(record.code) && file.rawDeletedAt === null });
+    }
+  }
+  return notes;
 }
