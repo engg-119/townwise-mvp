@@ -205,6 +205,43 @@ describe('correct_calendar_event in a clean turn', () => {
     expect(results().map((result) => result.code)).toEqual([null, null, 'too_many']);
     expect(await revisions(t)).toHaveLength(5);
   });
+
+  it('answers too_many_edits once the location holds 1,000 revisions, as the edit route does', async () => {
+    const t = await team();
+    const eventId = await ownEvent(t);
+    const at = { orgId: new Types.ObjectId(t.orgId), locationId: new Types.ObjectId(t.locationId) };
+    // Another event's chain, 999 deep: the location is one short of the cap.
+    await server.connection.collection('tw_research_revisions').insertMany(Array.from({ length: 999 }, (_, i) => ({
+      ...at, eventId: `l-${new Types.ObjectId().toHexString()}`, op: 'hide', fields: null, reverts: null,
+      basedOn: i === 0 ? 'base' : new Types.ObjectId().toHexString(), by: { kind: 'person', userId: t.member.userId }, createdAt: server.clock.now(),
+    })));
+    await turn(t, correcting({ eventId, change: 'hide', why }, { eventId, change: 'restore', why }));
+    expect(results().map((result) => result.code)).toEqual([null, 'too_many_edits']);
+    expect(await server.ctx.stores.researchRevisions.count(t.scope, t.locationId)).toBe(1_000);
+    expect(await shown(t, eventId)).toMatchObject({ hidden: true });
+    expect(await server.connection.collection('tw_agent_changes').countDocuments({ orgId: at.orgId })).toBe(1);
+  });
+
+  it('is not blocked by a calendar read (readNotTyped) nor gated on TownwiseAI working on its own', async () => {
+    const t = await team();
+    const eventId = await ownEvent(t);
+    await server.connection.collection('tw_orgs').updateOne(
+      { _id: new Types.ObjectId(t.orgId) }, { $set: { agentAuto: { on: false, at: server.clock.now(), by: t.member.userId } } },
+    );
+    const location = await server.ctx.stores.locations.find(t.scope, t.locationId);
+    if (location === null) throw new Error('fixture location missing');
+    const tc = {
+      ctx: server.ctx, conversationId: new Types.ObjectId().toHexString(), scope: t.scope, location, today: '2026-06-01', timeZone: 'America/New_York',
+      role: 'member', actor: { actorUserId: t.member.userId, actorEmail: null, actorRole: 'member', viewAsGrantId: null },
+      turn: { readUntrusted: false, readWeb: false, readNotTyped: true, pictureBytes: 0, readResearchedDays: new Set(['2026-06-17']) },
+      files: {} as ToolContext['files'],
+    } as unknown as ToolContext;
+    const input = correctCalendarEventTool.parse({ eventId, change: 'hide', why }, '2026-06-01');
+    if (input === null) throw new Error('fixture input refused');
+    const run = await correctCalendarEventTool.run(tc, input, 'toolu_not_typed');
+    expect(JSON.parse(run.content)).toMatchObject({ applied: true, code: null, eventId });
+    expect(await shown(t, eventId)).toMatchObject({ hidden: true });
+  });
 });
 
 describe('correct_calendar_event after a web or file read', () => {

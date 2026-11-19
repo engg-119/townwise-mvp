@@ -5,8 +5,9 @@
 // so TownwiseAI's activity lists it and Undo appends a revert. Code checks it first: a researched event (`t-`/`l-` id)
 // of this location or its town, never a curated row or holiday (`not_researched`); `title` and `where` through
 // verify's safeText (`bad_title`) and the dates through its date rules (`bad_dates`); never staff (open as admin acts
-// as `superadmin`) nor view-as; at most 5 a turn. In a turn that read the web or a file (turn.readUntrusted, which every
-// turn of a conversation that ever searched sets) nothing is written: the result proposes the change (`needs_tap`) and
+// as `superadmin`) nor view-as; at most 5 a turn; none past the location's 1,000 revisions (`too_many_edits`). In a
+// turn that read the web or a file (turn.readUntrusted, which every turn of a conversation that ever searched sets)
+// nothing is written: the result proposes the change (`needs_tap`) and
 // the card's Apply sends the person's own edit. It is not gated on TownwiseAI working on its own (a person asked, and
 // it has Undo), and reading the calendar (turn.readNotTyped) does not block it. [CONFIRM: TownwiseAI corrects a
 // researched event when a person asks, whether or not it works on its own; in a turn that read the web or a file it
@@ -20,6 +21,7 @@ import { z } from 'zod';
 import { applyChange, eventCorrectionCandidate } from '../../agent/apply.ts';
 import { isoDate } from '../../dates.ts';
 import { parseResearchedId, readResearchedViews, type ResearchedEventView } from '../../research/read.ts';
+import { MAX_LOCATION_REVISIONS } from '../../research/revisions.ts';
 import { researchWindow } from '../../research/threads.ts';
 import { datesRefused, MAX_TITLE_CHARS, safeText, TIME } from '../../research/verify.ts';
 import type { RevisionFields } from '../../stores/research-revisions.ts';
@@ -69,7 +71,7 @@ export interface CorrectionInput {
 /** The result's codes when nothing was applied. */
 export type CorrectionCode =
   | 'needs_tap' | 'not_researched' | 'not_found' | 'bad_title' | 'bad_dates' | 'staff' | 'view_as' | 'too_many'
-  | 'changed_since' | 'invalid' | 'duplicate';
+  | 'too_many_edits' | 'changed_since' | 'invalid' | 'duplicate';
 
 const WORDS: Readonly<Record<Exclude<CorrectionCode, 'needs_tap'>, string>> = {
   not_researched: 'That is not an event town research found (a curated town row or a holiday), so it can’t be changed here.',
@@ -79,6 +81,7 @@ const WORDS: Readonly<Record<Exclude<CorrectionCode, 'needs_tap'>, string>> = {
   staff: 'Townwise staff can’t change an organization’s calendar through TownwiseAI. Ask a member of the organization.',
   view_as: 'Nothing can be changed while viewing as someone else.',
   too_many: `At most ${String(MAX_CORRECTIONS_PER_TURN)} calendar corrections run in one reply. Ask the owner to ask for the rest in a new message.`,
+  too_many_edits: 'This location has 1,000 edits of researched events, the most it can hold, so nothing changed.',
   changed_since: 'Someone changed this event just now. Read the calendar again and ask the owner before trying again.',
   invalid: 'The correction couldn’t be saved. Nothing changed.',
   duplicate: 'This correction was already made.',
@@ -145,6 +148,9 @@ async function correct(tc: ToolContext, request: CorrectionInput, callId: string
   if (view === null) return refused(eventId, 'not_found');
   const fields = request.edit === null ? null : checkEdit(view, request.edit, researchWindow(ctx.now(), tc.timeZone));
   if (fields === 'bad_title' || fields === 'bad_dates') return refused(eventId, fields);
+  // Decision 11's cap, as the edit route checks it (agent/changes.ts targetStates reads every revision of the location
+  // on that bound). Checked before needs_tap too: the card's Apply would only meet the route's 409.
+  if (await ctx.stores.researchRevisions.count(scope, location.id) >= MAX_LOCATION_REVISIONS) return refused(eventId, 'too_many_edits');
   if (tc.turn.readUntrusted || callId === undefined) {
     ctx.logger.info({ orgId: scope.orgId, locationId: location.id, conversationId: tc.conversationId, eventId, outcome: 'needs_tap' }, 'townwise.chat_event_corrected');
     return json({
