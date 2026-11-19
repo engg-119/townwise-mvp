@@ -3,15 +3,16 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { theme } from '../../../theme';
 import { WIDE_CELL_HEIGHT, WIDE_ROWS } from '../../analytics/week';
 import { WEEK_ORDER, WEEKDAY_NAMES } from '../../analytics/words';
-import { cellLines, type EventDay, type MonthEntry } from './eventDays';
+import { cellLines, TITLE_MIN_SHARE, type EventDay, type MonthEntry } from './eventDays';
 import { EventMonthKey } from './EventMonthKey';
 
 // A calendar's events as a month grid on its page in Your data (D62), in the visual language of Home's month grid
 // (home/MonthGrid.tsx, wide cells): Monday first, each day a `raised` cell 96px tall with its number (today filled as
 // Home fills it) and its events' lines, a start time, a booking label's tag on a file calendar and the title cut to one
-// line, “+n more” past the cell's budget (eventDays.ts). The selected day is outlined in `mint`. Each day is a button
-// whose label says the date and every event in full; a tap selects it, and the page lists that day's events under the
-// grid. Web has its own file (EventMonth.web.tsx): one tab stop with arrow keys, and a tooltip on hover.
+// line (keeping TITLE_MIN_SHARE of it), “+n more” past the cell's budget (eventDays.ts). The selected day is outlined
+// in `mint`. Each day is a button whose label says the date and every event in full; a tap selects it, and the page
+// lists that day's events under the grid. Web has its own file (EventMonth.web.tsx): one tab stop with arrow keys, and
+// a tooltip on hover.
 
 export interface EventMonthProps {
   rows: readonly (readonly (EventDay | null)[])[];
@@ -28,11 +29,11 @@ const WEEKDAY_HEAD = WEEK_ORDER.map((day) => (WEEKDAY_NAMES[day] ?? '').slice(0,
 function Line(props: { entry: MonthEntry }): React.JSX.Element {
   const { entry } = props;
   return (
-    <Text numberOfLines={1} style={styles.entry}>
-      {entry.time === null ? null : <Text style={styles.time}>{`${entry.time} `}</Text>}
-      {entry.tag === null ? null : <Text style={styles.tag}>{`${entry.tag} `}</Text>}
-      {entry.title}
-    </Text>
+    <View style={styles.line}>
+      {entry.time === null ? null : <Text numberOfLines={1} style={styles.time}>{entry.time}</Text>}
+      {entry.tag === null ? null : <Text numberOfLines={1} style={styles.tag}>{entry.tag}</Text>}
+      <Text numberOfLines={1} style={[styles.entry, styles.title]}>{entry.title}</Text>
+    </View>
   );
 }
 
@@ -95,8 +96,10 @@ const styles = StyleSheet.create({
   // Filled in the primary button's colors so today reads apart from the selected day's mint outline (as on Home).
   today: { color: c.onCta, backgroundColor: c.cta, fontWeight: '600', paddingHorizontal: 5, borderRadius: 2, overflow: 'hidden', alignSelf: 'flex-start' },
   entries: { gap: WIDE_ROWS.entryGap, minWidth: 0 },
+  line: { flexDirection: 'row', alignItems: 'baseline', columnGap: 4, height: WIDE_ROWS.entry, minWidth: 0, overflow: 'hidden' },
   entry: { ...theme.type.small, fontSize: 11, lineHeight: WIDE_ROWS.entry, color: c.text2 },
-  time: { ...theme.type.mono, fontSize: 10, color: c.text3 },
-  tag: { ...theme.type.mono, fontSize: 10, color: c.white, textTransform: 'uppercase' },
+  title: { flexGrow: 1, flexShrink: 0, flexBasis: TITLE_MIN_SHARE },
+  time: { ...theme.type.mono, fontSize: 10, color: c.text3, flexShrink: 0 },
+  tag: { ...theme.type.mono, fontSize: 10, color: c.white, textTransform: 'uppercase', flexShrink: 1, minWidth: 0 },
   more: { color: c.text3 },
 });

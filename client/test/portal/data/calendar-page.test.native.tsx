@@ -7,9 +7,10 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { Dimensions } from 'react-native';
+import { Dimensions, StyleSheet, type StyleProp, type TextStyle } from 'react-native';
 import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
+import { monthLabel } from '../../../src/portal/calendar/model';
 import { BOOKINGS } from '../../../src/portal/data/item/bookingWords';
 import { ITEM } from '../../../src/portal/data/item/copy';
 import { localToday } from '../../../src/portal/locations/dates';
@@ -79,8 +80,15 @@ test('on the grid a file calendar’s labeled event shows its tag, and its day s
   })];
   await renderApp(`/locations/l1/data/c_${ID}`, fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake }));
   const day = await screen.findByRole('button', { name: /^\w+, \w+ 11, \d{4}\.( Today\.)? 1 event: Full house dinner, 6 pm to 9 pm, Buyout\.$/ });
-  expect(within(day).getByText('6 pm ')).toBeTruthy();
-  expect(within(day).getByText('Buyout ')).toBeTruthy();
+  expect(within(day).getByText('6 pm')).toBeTruthy();
+  expect(within(day).getByText('Buyout')).toBeTruthy();
+  // Review: the title keeps at least 40% of its line, the tag giving way first, so a long tag never hides it.
+  const share = (text: string): Record<string, unknown> => StyleSheet.flatten(within(day).getByText(text).props.style as StyleProp<TextStyle>) as Record<string, unknown>;
+  expect(share('Full house dinner')).toMatchObject({ flexBasis: '40%', flexGrow: 1, flexShrink: 0 });
+  expect(share('Buyout')).toMatchObject({ flexShrink: 1, minWidth: 0 });
+  expect(share('6 pm')).toMatchObject({ flexShrink: 0 });
+  // Review: the month shown is named above the grid.
+  expect(screen.getByRole('heading', { name: monthLabel(DAY.slice(0, 7)) })).toBeTruthy();
 });
 
 test('a file calendar’s Bookings: an org admin sees Sort’s words and both buttons; a member only the counts (D58)', async () => {

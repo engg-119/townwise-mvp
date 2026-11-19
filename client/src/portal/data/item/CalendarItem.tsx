@@ -39,11 +39,11 @@ import { defaultDay, emptyDayLine, eventMonthRows, eventsOnDay } from './eventDa
 // their results. Its events then show each one's label, with a label filter over the month (All events, or one label),
 // and for an org admin outside view-as a label choice under each card. A write's answer carries the calendar, which the
 // page shows in place of the list's; a label set is kept for its event until a sort reads the month again.
-// Wider than a phone (D62) the month's events are a month grid (item/EventMonth.tsx), Monday first, each day listing
-// its events (a start time, a booking label's tag and the title cut to a line); the selected day (today in today's
-// month, else the month's first day with an event) lists its events under the grid as the agenda's rows, with the
-// label choice under each, and on web a hovered day's tooltip says its events in full. Phones (640px and below), where
-// seven cells are too narrow to read, keep the month's agenda.
+// Wider than a phone (D62) the month's events are a month grid (item/EventMonth.tsx) under the month's name, Monday
+// first, each day listing its events (a start time, a booking label's tag and the title cut to a line); the selected
+// day (today in today's month, else the month's first day with an event) lists its events under the grid as the
+// agenda's rows, with the label choice under each, and on web a hovered day's tooltip says its events in full. Phones
+// (640px and below), where seven cells are too narrow to read, keep the month's agenda.
 
 export function CalendarItem(props: { calendarId: string }): React.JSX.Element {
   const { api, me } = usePortal();
@@ -172,6 +172,8 @@ export function CalendarItem(props: { calendarId: string }): React.JSX.Element {
             />
           </View>
         )}
+        {/* The grid draws only weekdays and day numbers, so the month it shows is named here (a phone's agenda heads its list). */}
+        {phone ? null : <Heading level={4}>{monthLabel(month)}</Heading>}
         {events.state.status === 'loading' ? <LoadingLine text={`Loading ${monthLabel(month)}`} /> : null}
         {events.state.status === 'failed' ? <ErrorNotice message={errorCopy(events.state.error)} onRetry={events.reload} /> : null}
         {empty === null ? null : <Small>{empty}</Small>}

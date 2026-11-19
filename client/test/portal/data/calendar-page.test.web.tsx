@@ -101,9 +101,13 @@ test('a linked calendar’s page: its name, kind and host as text, counts and re
 test('Later moves the grid a month on; a month with none says so; Earlier comes back', async () => {
   setup(`/locations/l1/data/c_${ID}`);
   await screen.findByRole('gridcell', { name: 'Wed, Nov 11, 2026. 1 event: Veterans Day.' });
+  // The month shown is named on the page, not only in the grid's label, so Earlier and Later say where they went.
+  expect(screen.getByRole('heading', { name: 'November 2026' }).getAttribute('aria-level')).toBe('4');
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Later: December 2026' })); await Promise.resolve(); });
   expect(await screen.findByText('No events in December 2026.')).toBeTruthy();
   expect(screen.getByRole('grid', { name: 'US holidays, December 2026' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'December 2026' })).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'November 2026' })).toBeNull();
   // With no events, December opens on its 1st and lists no day.
   expect(screen.getByRole('gridcell', { name: 'Tue, Dec 1, 2026. No events.' }).getAttribute('aria-selected')).toBe('true');
   expect(screen.queryByText(/^No events on /)).toBeNull();

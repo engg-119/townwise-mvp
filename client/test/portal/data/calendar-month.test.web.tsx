@@ -133,6 +133,44 @@ test('the grid is one tab stop: arrow keys move the selection, and the day’s l
   expect(cell(grid, /^Mon, Nov 30, 2026\./).getAttribute('aria-selected')).toBe('true');
 });
 
+// Review: a key past the month's edge keeps the day, so nothing renders; the grid must not keep that key's focus
+// request and take focus back from a control under it on a later render.
+test('a key past the month’s edge leaves no focus request behind for a later render', async () => {
+  setup();
+  const grid = await shownGrid();
+  const today = cell(grid, /^Tue, Nov 17, 2026\./);
+  act(() => { today.focus(); });
+  fireEvent.keyDown(today, { key: 'End', ctrlKey: true });
+  const last = cell(grid, /^Mon, Nov 30, 2026\./);
+  expect(document.activeElement).toBe(last);
+  fireEvent.keyDown(last, { key: 'ArrowRight' });
+  const earlier = screen.getByRole('button', { name: 'Earlier: October 2026' });
+  act(() => { earlier.focus(); });
+  // A hover re-renders the grid (its tooltip).
+  fireEvent.pointerOver(cell(grid, /^Sat, Nov 21, 2026\./), { pointerType: 'mouse' });
+  expect(screen.getByTestId('calendar-tooltip')).toBeTruthy();
+  expect(document.activeElement).toBe(earlier);
+});
+
+// Review: a time and a long tag must not push the title out of a cell's line; the title keeps at least 40% of it,
+// the tag giving way first (cut with an ellipsis), the time never.
+test('each line keeps a share for the title: the tag gives way first, the time never', async () => {
+  setup();
+  const grid = await shownGrid();
+  const party = cell(grid, /^Sat, Nov 21, 2026\./);
+  const time = within(party).getByText('6 pm');
+  const tag = within(party).getByText('Party');
+  const title = within(party).getByText('Retirement party');
+  expect(time.style.flexShrink).toBe('0');
+  expect(tag.style.flexShrink).toBe('1');
+  expect(tag.style.minWidth).toBe('0');
+  expect(tag.style.textOverflow).toBe('ellipsis');
+  expect(title.style.flexBasis).toBe('40%');
+  expect(title.style.flexShrink).toBe('0');
+  expect(title.style.flexGrow).toBe('1');
+  expect(title.style.textOverflow).toBe('ellipsis');
+});
+
 test('a mouse over a day with events shows its tooltip with them in full; leaving the grid hides it', async () => {
   setup();
   const grid = await shownGrid();

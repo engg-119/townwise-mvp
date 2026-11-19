@@ -5,7 +5,7 @@ import { monthMove, WIDE_CELL_HEIGHT, WIDE_ROWS } from '../../analytics/week';
 import { WEEK_ORDER, WEEKDAY_NAMES } from '../../analytics/words';
 import { anchorOf, DayTooltip, type TooltipAnchor } from '../../calendar/DayTooltip.web';
 import type { EventMonthProps } from './EventMonth';
-import { cellLines, dayTooltip, type EventDay, type MonthEntry } from './eventDays';
+import { cellLines, dayTooltip, TITLE_MIN_SHARE, type EventDay, type MonthEntry } from './eventDays';
 import { EventMonthKey } from './EventMonthKey';
 
 // A calendar's events as a month grid on web (D62): DOM, as Home's month grid is (home/MonthGrid.web.tsx), because
@@ -33,6 +33,13 @@ const entryLine = {
   display: 'block', fontFamily: theme.font.sans, fontSize: 11, lineHeight: `${String(WIDE_ROWS.entry)}px`, color: C.text2,
   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
 } as const;
+/**
+ * An event's line: its time, tag and title side by side, the title keeping TITLE_MIN_SHARE of the line, so a long tag
+ * gives way first (cut with an ellipsis) and the time never. The gap spaces them; each part's trailing space, which a
+ * flex item drops, keeps the cell's text as words for find and copy.
+ */
+const entryRow = { ...entryLine, display: 'flex', alignItems: 'baseline', columnGap: 4 } as const;
+const cut = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } as const;
 const smallMono = { fontFamily: theme.font.mono, fontSize: 10 } as const;
 /** Today's number, filled in the primary button's colors so it reads apart from the selected day's mint outline. */
 const TODAY_BADGE = { color: C.onCta, backgroundColor: C.cta, fontWeight: 600, padding: '0 5px', borderRadius: 2 } as const;
@@ -48,10 +55,12 @@ function dateOf(target: EventTarget | null): string | null {
 function Line(props: { entry: MonthEntry }): React.JSX.Element {
   const { entry } = props;
   return (
-    <span style={entryLine}>
-      {entry.time === null ? null : <span style={{ ...smallMono, color: C.text3 }}>{entry.time} </span>}
-      {entry.tag === null ? null : <span data-tag="" style={{ ...smallMono, color: C.white, textTransform: 'uppercase' }}>{entry.tag} </span>}
-      {entry.title}
+    <span style={entryRow}>
+      {entry.time === null ? null : <span style={{ ...smallMono, color: C.text3, flexShrink: 0 }}>{entry.time} </span>}
+      {entry.tag === null ? null : (
+        <span data-tag="" style={{ ...smallMono, ...cut, color: C.white, textTransform: 'uppercase', flex: '0 1 auto' }}>{entry.tag} </span>
+      )}
+      <span style={{ ...cut, flex: `1 0 ${TITLE_MIN_SHARE}` }}>{entry.title}</span>
     </span>
   );
 }
@@ -135,7 +144,9 @@ export function EventMonth(props: EventMonthProps): React.JSX.Element {
     event.preventDefault();
     cancelClear();
     setTip(null);
-    focusNext.current = next;
+    // A key past the month's edge keeps the day, and selecting the selected day renders nothing: a request left here
+    // would take focus back from wherever it is on the grid's next render (a hover, a label set under the grid).
+    focusNext.current = next === from ? null : next;
     onSelect(next);
   }
 

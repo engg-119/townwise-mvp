@@ -48,6 +48,12 @@ export const CELL_TAG: Readonly<Record<BookingLabel, string>> = {
 /** Entry lines a cell holds: all of them up to this many, else one fewer and “+n more”. */
 export const CELL_LINES = 4;
 
+/**
+ * The least of a cell's entry line the title keeps, web and native (a flex basis): a time and a long tag (“11:30 am
+ * NOT BOOKING”) fill a line from about 1024px down, so the tag gives way first, cut with an ellipsis, and the time never.
+ */
+export const TITLE_MIN_SHARE = '40%';
+
 /** All-day and continuing events first, then by start time, then by title; the same order on the day's list. */
 function byDay(date: string): (a: MonthEvent, b: MonthEvent) => number {
   const timeOn = (event: MonthEvent): string => (event.startDate === date && event.startTime !== null ? event.startTime : '');
