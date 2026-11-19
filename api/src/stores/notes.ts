@@ -20,7 +20,8 @@ export const NOTES_COLLECTION = 'tw_notes';
 export const MAX_NOTE_TITLE_CHARS = 120;
 
 export type NoteKind = 'closure' | 'private_event' | 'opening' | 'other';
-export type NoteEffect = 'closed' | 'more_guests' | 'fewer_guests' | 'unknown';
+/** `wrong_guest_count` (D67): a past day's stored guest count is wrong and its sales right; notes only, never a rule. */
+export type NoteEffect = 'closed' | 'more_guests' | 'fewer_guests' | 'unknown' | 'wrong_guest_count';
 
 /** Spec 12 NoteInput, after validation. */
 export interface NoteContent {

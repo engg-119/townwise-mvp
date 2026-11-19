@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { typicalGuests } from '../src/closed-days.ts';
+import { trustedGuestDays, typicalGuests } from '../src/closed-days.ts';
 import { classOfDay, closureOfDay, MIN_CELL_DAYS, yourHistory, type DayClass } from '../src/people-in-town/history.ts';
 import type { TermState } from '../src/people-in-town/term.ts';
 import type { RuleSchedule } from '../src/stores/business-rules.ts';
@@ -47,11 +47,13 @@ describe('the day classes', () => {
 
   for (const each of cases) {
     it(`${each.name}: ${each.class}${each.likelyClosed === true ? ', likely closed' : ''}`, () => {
-      const guests = new Map((each.history ?? []).map((other) => [other.date, other.guests]));
+      // A guest count marked wrong (D67) is read first, on the day and its history, as every reader does.
+      const guests = new Map(trustedGuestDays(each.history ?? [], each.notes).map((other) => [other.date, other.guests]));
       const typical = typicalGuests(each.date, (date) => guests.get(date));
+      const stored = each.day === null ? undefined : trustedGuestDays([{ date: each.date, ...each.day }], each.notes)[0];
       const [rules, today] = [each.rules ?? [], each.today ?? null];
-      expect(classOfDay(each.date, each.day ?? undefined, each.notes, each.events, typical, rules, today)).toBe(each.class);
-      expect(closureOfDay(each.date, each.day ?? undefined, each.notes, typical, rules, today) === 'likely_closed').toBe(each.likelyClosed === true);
+      expect(classOfDay(each.date, stored, each.notes, each.events, typical, rules, today)).toBe(each.class);
+      expect(closureOfDay(each.date, stored, each.notes, typical, rules, today) === 'likely_closed').toBe(each.likelyClosed === true);
     });
   }
 });

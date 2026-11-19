@@ -2,12 +2,15 @@ Spec decision D67 (reserved for this change). CONFIRM index items from 220 (219 
 
 ## 0. Coordination
 
-- [ ] 0.1 Recheck D67 and items 220 onward against develop's `docs/portal/spec.md` (section 2 and 22.2) and the reservation list. Rebase onto develop and check whether `closed-days.ts`, `lab/input.ts`, `forecasts/reader.ts` or `handlers/notes.ts` changed since b49029d9.
+- [x] 0.1 Recheck D67 and items 220 onward against develop's `docs/portal/spec.md` (section 2 and 22.2) and the reservation list. Rebase onto develop and check whether `closed-days.ts`, `lab/input.ts`, `forecasts/reader.ts` or `handlers/notes.ts` changed since b49029d9.
+  Done: D67 is not on origin/develop (29fd9c82; latest D64) and its 22.2 ends at item 218, so 220 onward is free (219 is D68's). None of the four files changed since b49029d9. Rebase skipped: the coordinator owns merging.
 
 ## 1. The predicate and the mask (design decisions 3 and 4)
 
-- [ ] 1.1 `api/src/closed-days.ts`: `isWrongGuestCount(entry)` beside `isClosure`, and `trustedGuestDays(days, notes)` with a local covers check (weekdays and range, as `people-in-town/history.ts` has). Answers the same array when no note has the effect. `closureOf`, `saysOpen`, `notesDecide` and `isAllZero` unchanged. Tests (`api/test/closed-days.test.ts`, new, or beside the fixture test): a covered date's guests null and sales kept; weekdays respected; no mark returns the same array (`toBe`); a marked day with guests 0 and sales above 0 is not likely closed and not closed; a marked day is not in a neighbor's `typicalByDate`. `npm test -w @townwise/api -- test/closed-days.test.ts`
-- [ ] 1.2 Shared fixture: new rows in `api/test/fixtures/day-classes.json` and `client/test/portal/analytics/day-classes.json` (a marked day with a near-zero count stays `noted`, not `closed`; a neighbor's typical skips it; a marked Monday under a closed-Mondays rule is `closed`). Server side: `npm test -w @townwise/api -- test/people-history.test.ts`
+- [x] 1.1 `api/src/closed-days.ts`: `isWrongGuestCount(entry)` beside `isClosure`, and `trustedGuestDays(days, notes)` with a local covers check (weekdays and range, as `people-in-town/history.ts` has). Answers the same array when no note has the effect. `closureOf`, `saysOpen`, `notesDecide` and `isAllZero` unchanged. Tests (`api/test/closed-days.test.ts`, new, or beside the fixture test): a covered date's guests null and sales kept; weekdays respected; no mark returns the same array (`toBe`); a marked day with guests 0 and sales above 0 is not likely closed and not closed; a marked day is not in a neighbor's `typicalByDate`. `npm test -w @townwise/api -- test/closed-days.test.ts`
+  Done: as designed; `trustedGuestDays` answers `readonly D[]` (the same array when nothing is marked). `NoteEffect` gained the value here (type only; the mongoose enum in 2.1). 7 tests pass.
+- [x] 1.2 Shared fixture: new rows in `api/test/fixtures/day-classes.json` and `client/test/portal/analytics/day-classes.json` (a marked day with a near-zero count stays `noted`, not `closed`; a neighbor's typical skips it; a marked Monday under a closed-Mondays rule is `closed`). Server side: `npm test -w @townwise/api -- test/people-history.test.ts`
+  Done: three rows in both fixture copies; the server harness masks the case's day and history with `trustedGuestDays` before classifying (the client harness follows in 5.3). Without the mask exactly those 3 rows fail; with it 64 pass.
 
 ## 2. Notes accept the mark (decisions 1, 2 and 8)
 
