@@ -185,6 +185,16 @@ export interface LocationResearchStore {
    * `createdBefore`. Resolves the number deleted.
    */
   removeOld(scope: OrgScope, locationId: string, input: { endedBefore: string; unseenBefore: Date; createdBefore: Date }): Promise<number>;
+  /**
+   * A place or town change (decision 9): ends the location's live run `off` with `code` and fails its open threads by
+   * compare-and-set, so a lane's heartbeat misses and its merge finds the run ended. False when it had no live run.
+   */
+  endLive(scope: OrgScope, locationId: string, input: { code: string; now: Date }): Promise<boolean>;
+  /**
+   * A place or town change: deletes the location's events and entities stamped with another place or town. Resolves
+   * the ids of the events left.
+   */
+  removeOtherStamps(scope: OrgScope, locationId: string, stamp: Stamp): Promise<string[]>;
   /** Location deletion: runs and threads first, then events and entities. Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion, in the same order. Resolves the number deleted. */
@@ -313,6 +323,24 @@ export function createLocationResearchStore(connection: Connection): LocationRes
         deleted += (await Run.deleteMany({ ...where, _id: trusted({ $in: ids }) })).deletedCount;
       }
       return deleted;
+    },
+    async endLive(scope, locationId, input) {
+      const live = await Run.findOne({ ...org(scope), liveSubject: oid(locationId) }, { _id: 1, costMicroUsd: 1, counts: 1 }).lean();
+      if (live === null) return false;
+      const ended = await runMoves.finish(runs, org(scope), live._id.toHexString(), {
+        status: 'off', code: input.code, counts: live.counts, costMicroUsd: live.costMicroUsd, now: input.now,
+      });
+      await Thread.updateMany(
+        { ...org(scope), runId: live._id, status: trusted({ $in: ['queued', 'running'] }) },
+        { $set: { status: 'failed', code: input.code, owner: null, leaseUntil: null, finishedAt: input.now } },
+      );
+      return ended;
+    },
+    async removeOtherStamps(scope, locationId, stamp) {
+      const other = { ...at(scope, locationId), $or: [{ placeId: trusted({ $ne: stamp.placeId }) }, { town: trusted({ $ne: stamp.town }) }] };
+      await Event.deleteMany(other);
+      await Entity.deleteMany(other);
+      return (await Event.find(at(scope, locationId), { _id: 1 }).lean()).map((doc) => doc._id.toHexString());
     },
     async removeForLocation(scope, locationId) {
       let deleted = 0;

@@ -18,6 +18,7 @@ import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { endUnusedGoogleAccess, googleAccessDeps, markLocationForCheck } from '../calendar/google-access.ts';
 import { calibrationFor, type Calibration } from '../calibration.ts';
 import { placeIdSchema } from '../place-id.ts';
+import { queueEarlyRun, researchRuns, townStamp } from '../research/plan.ts';
 import { PlacesUnavailableError, type PlaceDetails } from '../places/google.ts';
 import type { AuditDetails } from '../stores/audit-events.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -313,6 +314,34 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   return true;
 }
 
+/**
+ * D66 (design decisions 2 and 9): after a location is created, or its place or town changed, by an org admin's own
+ * request. A place or town change first ends the location's live research run `off` (`place_changed`) and deletes its
+ * research rows stamped with the old place or town and their edits, in open as admin too, since they no longer describe
+ * the location. Then, only while research runs here and the caller is not staff with the organization open as admin
+ * (the weekly planner picks those up later), it queues the early run, which checks the organization is active with
+ * research on. Staff setup (checkedCreate and checkedUpdate) never comes here. A failure is logged by code and never
+ * fails the request.
+ */
+async function researchAfterWrite(
+  ctx: TownwiseContext, admin: MemberPrincipal, location: LocationRecord, before: LocationRecord | null,
+): Promise<void> {
+  const { scope } = admin;
+  const moved = before !== null && (before.placeId !== location.placeId || townStamp(before.town) !== townStamp(location.town));
+  try {
+    if (moved) {
+      await ctx.stores.researchLocations.endLive(scope, location.id, { code: 'place_changed', now: ctx.now() });
+      const left = await ctx.stores.researchLocations.removeOtherStamps(scope, location.id, { placeId: location.placeId, town: townStamp(location.town) });
+      await ctx.stores.researchRevisions.removeStale(scope, location.id, { locationEventIds: left, townRows: townStamp(before.town) !== townStamp(location.town) });
+    }
+    if ((before !== null && !moved) || admin.openAsAdmin !== null) return;
+    if (!researchRuns({ research: ctx.config.research, chatWebSearch: ctx.config.chatWebSearch, anthropicKey: ctx.chat !== null })) return;
+    await queueEarlyRun(ctx, scope, location);
+  } catch (err) {
+    ctx.logger.warn({ orgId: scope.orgId, locationId: location.id, errType: err instanceof Error ? err.name : 'unknown' }, 'townwise.research_enqueue_failed');
+  }
+}
+
 /** POST /api/org/locations (P10). `orgId`, the organization the page shows, is required in open as admin (D25). */
 export async function createLocation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
@@ -329,6 +358,7 @@ export async function createLocation(ctx: TownwiseContext, req: Request, res: Re
     target: { type: 'location', id: location.id },
     details: locationDetails(location),
   });
+  await researchAfterWrite(ctx, admin, location, null);
   const summarize = await summarizer(ctx, scope);
   res.status(201).json({ location: await summarize(location) });
 }
@@ -347,6 +377,7 @@ export async function updateLocation(ctx: TownwiseContext, req: Request, res: Re
     target: { type: 'location', id: updated.id },
     details: locationDetails(updated),
   });
+  await researchAfterWrite(ctx, admin, updated, location);
   const summarize = await summarizer(ctx, scope);
   res.status(200).json({ location: await summarize(updated) });
 }

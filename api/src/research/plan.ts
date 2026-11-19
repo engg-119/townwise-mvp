@@ -52,6 +52,15 @@ export interface PlanContext {
   readonly config: Pick<ResolvedTownwiseConfig, 'researchTownMonthlyUsd' | 'researchOrgMonthlyUsd'>;
 }
 
+/**
+ * Whether research runs in this process (design decision 1): TOWNWISE_RESEARCH, an Anthropic key and TownwiseAI's web
+ * search all on. main.ts starts the runner only then, and handlers/locations.ts queues an early run only then, so no
+ * run waits in a deploy that never runs one.
+ */
+export function researchRuns(input: { readonly research: boolean; readonly chatWebSearch: boolean; readonly anthropicKey: boolean }): boolean {
+  return input.research && input.chatWebSearch && input.anthropicKey;
+}
+
 /** A merge the sweep claimed, for the runner to carry out under `owner`. */
 export type ClaimedMerge =
   | { readonly kind: 'town'; readonly runId: string; readonly owner: string }

@@ -7,6 +7,7 @@
 // title, URL or query; and no request holds the organization's name, a revision's text or (by the switch) the typed or
 // Google name. Synthetic pages, hosts and names only.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { BadRequestError, InternalServerError } from '@anthropic-ai/sdk';
 import type { BetaMessage, BetaMessageStreamParams } from '@anthropic-ai/sdk/resources/beta/messages/messages';
@@ -16,6 +17,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
 import type { ChatModel } from '../src/chat/model.ts';
 import { messageCostMicroUsd } from '../src/chat/pricing.ts';
+import { researchRuns } from '../src/research/plan.ts';
 import { createResearchRunner, staleGraceMicroUsd, type ResearchRunner, type ResearchRunnerDeps } from '../src/research/runner.ts';
 import type { ThreadId } from '../src/research/threads.ts';
 import type { TownwiseStores } from '../src/stores/index.ts';
@@ -393,5 +395,24 @@ describe('the runner: privacy', () => {
     for (const body of bodies) for (const secret of ['Qwertyp', 'Zyxwvut']) expect(body).not.toContain(secret);
     expect(bodies[0]).toContain('Fixture Google Bistro');
     expect(bodies[0]).toContain('1 Fixture Lane');
+  });
+});
+
+describe('the runner: its start gate (design decision 1)', () => {
+  it('runs only with research, an Anthropic key and TownwiseAI’s web search all on', () => {
+    for (const research of [true, false]) {
+      for (const chatWebSearch of [true, false]) {
+        for (const anthropicKey of [true, false]) {
+          expect(researchRuns({ research, chatWebSearch, anthropicKey })).toBe(research && chatWebSearch && anthropicKey);
+        }
+      }
+    }
+  });
+
+  it('main.ts builds the runner only behind the gate and the chat model, starts it, and stops it on shutdown', () => {
+    const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+    expect(main).toMatch(/const researchRunner = chat === undefined\s*\|\| !researchRuns\(\{ research: resolvedConfig\.research, chatWebSearch: resolvedConfig\.chatWebSearch, anthropicKey: true \}\)\s*\? undefined/);
+    expect(main).toContain('researchRunner?.start();');
+    expect(main.slice(main.indexOf('onShutdown: ['))).toContain('...(researchRunner === undefined ? [] : [researchRunner])');
   });
 });

@@ -7,7 +7,7 @@
 // Anthropic: under src/research/ only read.ts and revisions.ts import this file (test/isolation.test.ts).
 // Tenant store: every function takes the OrgScope first and filters on its orgId. `by.userId` is null once that person
 // is deleted (stores/cross-tenant.ts deletePersonRecords). Nothing here logs.
-import { Schema, Types, type Connection, type Model } from 'mongoose';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import { insertUnlessDuplicate } from './research-shared.ts';
@@ -113,6 +113,12 @@ export interface ResearchRevisionStore {
   list(scope: OrgScope, locationId: string): Promise<RevisionRecord[]>;
   /** How many the location holds (at most 1,000, decision 11). */
   count(scope: OrgScope, locationId: string): Promise<number>;
+  /**
+   * A place or town change (decision 9): deletes the location's revisions of its own (`l-`) events not in
+   * `locationEventIds` (hex ids of the events left), and of every town (`t-`) event when `townRows` (the town changed,
+   * so those rows are another town's). Resolves the number deleted.
+   */
+  removeStale(scope: OrgScope, locationId: string, input: { locationEventIds: readonly string[]; townRows: boolean }): Promise<number>;
   /** Location deletion. Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion. Resolves the number deleted. */
@@ -167,6 +173,14 @@ export function createResearchRevisionStore(connection: Connection): ResearchRev
       return (await Revision.find(at(scope, locationId)).sort({ createdAt: 1, _id: 1 }).lean()).map(toRevision);
     },
     count: (scope, locationId) => Revision.countDocuments(at(scope, locationId)),
+    async removeStale(scope, locationId, input) {
+      const keep = input.locationEventIds.map((id) => `l-${id}`);
+      const stale = [
+        { eventId: trusted({ $regex: '^l-', $nin: keep }) },
+        ...(input.townRows ? [{ eventId: trusted({ $regex: '^t-' }) }] : []),
+      ];
+      return (await Revision.deleteMany({ ...at(scope, locationId), $or: stale })).deletedCount;
+    },
     async removeForLocation(scope, locationId) {
       return (await Revision.deleteMany(at(scope, locationId))).deletedCount;
     },
