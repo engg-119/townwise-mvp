@@ -92,12 +92,13 @@ export async function importIfCalendar(
 
 /**
  * D63: what importing a calendar file attached to a TownwiseAI message did, as of the send (chat/attachments.ts
- * CalendarNote words it for the model). `added` while its calendar exists and was made at most JUST_ADDED_MS ago, so
- * the upload that attached it made it; `already` for an older one (the file was in Your data before, or was attached
- * again after Your data refused a copy of it as a duplicate); both with the calendar's id, label and event count and
- * the town's date it was added. `removed` once that calendar was removed (the file is never imported again);
+ * CalendarNote words it for the model). `added` while its calendar exists and was made at most JUST_ADDED_MS ago,
+ * `already` for an older one, by its age alone: a copy Your data refused as a duplicate is attached as the file it
+ * copies, so a recent calendar may be from an earlier upload of that file, and neither says which upload made it; both
+ * with the calendar's id, label and event count and the town's date it was added. `removed` once that calendar was removed (the file is never imported again);
  * `refused` with the code and whether Try again on the file's page may mend it (as handlers/data.ts calendarOf says);
- * `not_imported` for an .ics or .ical file with no import record (one kept before D60).
+ * `not_imported` for an .ics or .ical file with no import record (one kept before D60, which only deleting it and
+ * adding it again imports).
  */
 export type AttachedCalendar =
   | { readonly outcome: 'added' | 'already'; readonly calendarId: string; readonly label: string; readonly eventCount: number; readonly addedOn: string }

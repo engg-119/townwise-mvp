@@ -1,8 +1,9 @@
 // Calendar files attached to a TownwiseAI message (spec D63; docs/portal/tuning-chat.md section 3) against a scripted
 // model (helpers/chat-model.ts) and memory blobs, through the real upload route, whose complete imports a calendar file
 // (D60): an .ics file is sent as its text and listed as a calendar file, and the turn tells the model what importing
-// each did (added just now with its label, event count and page, already a calendar for a copy Your data refused as a
-// duplicate, or refused with Try again on the file's page), in that turn's request only. The stored conversation and
+// each did (added within the last 30 minutes with its label, event count and page, whichever upload of the file made it;
+// already a calendar for an older one; refused with Try again on the file's page; or, for a file kept before calendar
+// import, how to add it, which works), in that turn's request only. The stored conversation and
 // the view hold no label, and no log line or audit event holds a title, a label or a file name. Synthetic files only.
 import { randomUUID } from 'node:crypto';
 
@@ -109,7 +110,7 @@ describe('calendar files attached to a message (D63)', () => {
     expect(attachments).toEqual([`- ${ref}: a calendar file`]);
     expect(documents).toEqual([ics('a@example.test', 'b@example.test')]);
     expect(imports).toEqual([
-      `- ${ref}: added just now as the calendar "${NAME}", with 2 events. Its page: /locations/${locationId}/data/c_${calendarId}`,
+      `- ${ref}: added within the last 30 minutes as the calendar "${NAME}", with 2 events, when the file was added to Your data. Its page: /locations/${locationId}/data/c_${calendarId}`,
     ]);
     // Stored and shown: the ref and kind, never the label or the file's text.
     const stored = await server.connection.collection('tw_chat_conversations').findOne({ _id: new Types.ObjectId(id) });
@@ -136,6 +137,40 @@ describe('calendar files attached to a message (D63)', () => {
     ]);
     // Still one calendar from the file.
     expect(await server.connection.collection('tw_calendar_sources').countDocuments({ fromFileId: new Types.ObjectId(ref.slice(2)) })).toBe(1);
+  });
+
+  it('a copy refused as a duplicate within 30 minutes of the upload that made the calendar never says the message added it', async () => {
+    const ref = await keep(`${NAME}.ics`, ics('soon@example.test'));
+    const calendarId = await calendarIdOf(ref);
+    const copy = await uploadFile(server, locationId, member, `${NAME} copy.ics`, Buffer.from(ics('soon@example.test'), 'utf8'), { purpose: 'reference' });
+    expect(copy).toMatchObject({ status: 409, body: { error: 'file_duplicate', fileId: ref.slice(2) } });
+    await send('add this one too', [ref]);
+    expect(sent().imports).toEqual([
+      `- ${ref}: added within the last 30 minutes as the calendar "${NAME}", with 1 event, when the file was added to Your data. Its page: /locations/${locationId}/data/c_${calendarId}`,
+    ]);
+  });
+
+  it('an .ics file kept before calendar import says how to add it, and doing that adds it', async () => {
+    const ref = await keep(`${NAME}.ics`, ics('old@example.test'));
+    // As D36 kept it before D60: no calendar from it and no import record.
+    await server.connection.collection('tw_calendar_sources').deleteMany({ fromFileId: new Types.ObjectId(ref.slice(2)) });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(ref.slice(2)) }, { $unset: { calendarImport: '' } });
+    // Attaching it again in chat attaches the file Your data keeps.
+    const copy = await uploadFile(server, locationId, member, `${NAME}.ics`, Buffer.from(ics('old@example.test'), 'utf8'), { purpose: 'reference' });
+    expect(copy).toMatchObject({ status: 409, body: { error: 'file_duplicate', fileId: ref.slice(2) } });
+    await send('please add these to my calendar', [ref]);
+    const { imports, documents } = sent();
+    expect(documents).toEqual([ics('old@example.test')]);
+    expect(imports).toEqual([
+      `- ${ref}: not imported: it was kept in Your data before Townwise imported calendar files, and Townwise imports a file only when it is added. To add it as a calendar, the person who added it or an org admin can delete it on the file's page, then add the file again: /locations/${locationId}/data/${ref}`,
+    ]);
+    expect(await server.connection.collection('tw_calendar_sources').countDocuments({ locationId: new Types.ObjectId(locationId) })).toBe(0);
+    // What the line says works: deleting the file and adding it again imports it.
+    const removed = await call(server, `/api/org/locations/${locationId}/files/${ref.slice(2)}`, { session: member, method: 'DELETE' });
+    expect(removed.status).toBe(200);
+    const again = await keep(`${NAME}.ics`, ics('old@example.test'));
+    expect(await calendarIdOf(again)).not.toBe('undefined');
+    noNamesAnywhere();
   });
 
   it('a sixth calendar refused for the limit offers Try again on the file\'s page; one that is no calendar says so, and is still read', async () => {

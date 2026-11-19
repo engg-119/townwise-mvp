@@ -100,7 +100,7 @@ export interface CalendarNotes {
 
 const CALENDARS_BLOCK_OPEN = '<calendar_imports>';
 const CALENDARS_BLOCK_CLOSE = '</calendar_imports>';
-const CALENDARS_LEAD = 'Townwise added this before the person\'s message for this turn only; they didn\'t type it. When a calendar file is added to Your data, Townwise imports it as one of the location\'s calendars by itself, with no model call. Here is what that import did for each calendar file attached to this message, as of now. Tell the person what happened to each, and write each page below as a Markdown link with its path exactly as given. You can\'t add, retry or remove a calendar: where a line says the person can press Try again, tell them so, and never say a calendar was added unless a line here says it was.';
+const CALENDARS_LEAD = 'Townwise added this before the person\'s message for this turn only; they didn\'t type it. When a calendar file is added to Your data, Townwise imports it as one of the location\'s calendars by itself, with no model call. Here is what that import did for each calendar file attached to this message, as of now. Tell the person what happened to each, and write each page below as a Markdown link with its path exactly as given. You can\'t add, retry or remove a calendar: where a line says what the person can do, tell them so, and never say a calendar was added unless a line here says it was.';
 
 /** A path in the web app (client/src/portal/routing.ts itemHref): an item's page under Your data. Ids only. */
 function dataPath(locationId: string, ref: string): string {
@@ -122,12 +122,16 @@ function calendarLine(locationId: string, ref: string, note: CalendarNote): stri
   switch (note.outcome) {
     case 'added': case 'already': {
       const page = `Its page: ${dataPath(locationId, `c_${note.calendarId}`)}`;
+      // The calendar's age alone tells added from already, and a copy Your data refused as a duplicate attaches the file
+      // it copies, so a recent one may be from an earlier upload of the same file: the line never says which upload.
       return note.outcome === 'added'
-        ? `- ${ref}: added just now as the calendar ${quoted(note.label)}, with ${events(note.eventCount)}. ${page}`
+        ? `- ${ref}: added within the last 30 minutes as the calendar ${quoted(note.label)}, with ${events(note.eventCount)}, when the file was added to Your data. ${page}`
         : `- ${ref}: already one of the location's calendars, ${quoted(note.label)}, with ${events(note.eventCount)}, added on ${note.addedOn}. ${page}`;
     }
     case 'removed': return `- ${ref}: added as a calendar before; that calendar was removed since, and Townwise never imports the same file again.`;
-    case 'not_imported': return `- ${ref}: not a calendar: it was added to Your data before Townwise imported calendar files.`;
+    // A file kept before D60 is never imported (its upload is done, and D60's retry needs a record): deleting it and
+    // adding it again imports it, as a new upload.
+    case 'not_imported': return `- ${ref}: not imported: it was kept in Your data before Townwise imported calendar files, and Townwise imports a file only when it is added. To add it as a calendar, the person who added it or an org admin can delete it on the file's page, then add the file again: ${dataPath(locationId, ref)}`;
     case 'refused': break;
   }
   const gone = 'and its original was deleted, so it can\'t be tried again.';
@@ -273,12 +277,13 @@ export function bytesToRead(checks: readonly AttachmentCheck[]): number {
 
 /**
  * Reads the files this turn sends, after its claim, each done by `by` (Date.now() milliseconds); one past the pictures'
- * cap is `too_much`, one not sent stays as checked. Text files and pictures are read at once. A PDF, Word or Excel file
+ * cap is `too_much`, one not sent stays as checked. Text files, calendar files and pictures are read at once (a calendar
+ * file's text comes from its original, never the parse thread). A PDF, Word or Excel file
  * is read in the shared parse thread, one after another in the message's order, so a message's documents never wait on
  * each other: one the turn hasn't the time for is `too_much`, and once one found the thread busy (another turn's or a
  * file reader's), the rest are listed busy without waiting again. Only a document's text is kept, so the bytes the turn
- * held for it (bytesToRead) go back through `bytes` once it is read, or once it won't be; a picture's and a text file's
- * stay held for the turn. Once any read fails (the reads reject, and the send with them), no later document is read.
+ * held for it (bytesToRead) go back through `bytes` once it is read, or once it won't be; a picture's, a text file's and
+ * a calendar file's stay held for the turn. Once any read fails (the reads reject, and the send with them), no later document is read.
  */
 export async function readAttachments(
   checks: readonly AttachmentCheck[], by: number, bytes: Pick<ByteGate, 'release'>,
@@ -298,7 +303,7 @@ export async function readAttachments(
   return Promise.all(checks.map(async ({ ref, kind, check }, index): Promise<AttachmentRead> => {
     if (check.status !== 'readable') return { ref, kind, read: check };
     if (take[index] !== true) return { ref, kind, read: { status: 'too_much', kind: check.kind } };
-    if (check.kind === 'text' || check.kind === 'picture') return { ref, kind, read: asSent(await reading(check.read(by))) };
+    if (check.kind === 'text' || check.kind === 'calendar' || check.kind === 'picture') return { ref, kind, read: asSent(await reading(check.read(by))) };
     const mine = documents.then(async (): Promise<AttachmentRead> => {
       try {
         // The send already failed: what this returns is never used.

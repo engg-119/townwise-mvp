@@ -1,14 +1,17 @@
 // Calendar files attached to a TownwiseAI message (spec D63, docs/portal/tuning-chat.md section 3), without Docker: an
-// .ics file's kind word and its text sent as a document, and the turn-only calendar_imports block that says what
-// importing each calendar file did (D60): added just now, already a calendar, removed, refused with Try again on the
-// file's page only when a retry may mend it, or refused for good, each with links by id and the label quoted on one
-// line. Labels and titles here are made up.
+// .ics file's kind word and its text sent as a document, read at once as a text file is (never behind a document), and
+// the turn-only calendar_imports block that says what importing each calendar file did (D60): added within the last 30
+// minutes, already a calendar, removed, refused with Try again on the file's page only when a retry may mend it, refused
+// for good, or kept before calendar import with how to add it, each with links by id and the label quoted on one line.
+// Labels and titles here are made up.
 import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { describe, expect, it } from 'vitest';
 
 import {
-  attachedTo, calendarImportsBlock, expandedMessage, turnAttachments, type AttachmentRead, type CalendarNote, type CalendarNotes,
+  ATTACHMENT_BYTES_IN_FLIGHT, attachedTo, bytesToRead, calendarImportsBlock, createByteGate, expandedMessage, readAttachments, turnAttachments,
+  type AttachmentCheck, type AttachmentRead, type CalendarNote, type CalendarNotes,
 } from '../src/chat/attachments.ts';
+import type { ItemForModel } from '../src/files/items.ts';
 
 const LOCATION = '0000000000000000000000b1';
 const CAL = '0000000000000000000000c1';
@@ -50,7 +53,7 @@ describe('an attached calendar file (D63)', () => {
     expect(words.startsWith('<calendar_imports>\nTownwise added this before the person\'s message for this turn only')).toBe(true);
     expect(words.endsWith('\n</calendar_imports>')).toBe(true);
     expect(linesOf(words)).toEqual([
-      `- ${A}: added just now as the calendar "Sentinel-label bookings", with 12 events. Its page: /locations/${LOCATION}/data/c_${CAL}`,
+      `- ${A}: added within the last 30 minutes as the calendar "Sentinel-label bookings", with 12 events, when the file was added to Your data. Its page: /locations/${LOCATION}/data/c_${CAL}`,
       `- ${B}: already one of the location's calendars, "Sentinel-label master", with 1 event, added on 2026-05-20. Its page: /locations/${LOCATION}/data/c_${CAL}`,
       `- ${C}: not added: the location already had 5 calendars, the most it can have. Once the person removes one, they can press Try again on the file's page: /locations/${LOCATION}/data/${C}`,
     ]);
@@ -79,9 +82,21 @@ describe('an attached calendar file (D63)', () => {
       `- f_${'d'.repeat(24)}: not added: it is over 1 MB, the most a calendar file can be.`,
       `- f_${'e'.repeat(24)}: not added: Townwise found no calendar in it.`,
       `- f_${'f'.repeat(24)}: added as a calendar before; that calendar was removed since, and Townwise never imports the same file again.`,
-      `- f_${'0'.repeat(24)}: not a calendar: it was added to Your data before Townwise imported calendar files.`,
+      `- f_${'0'.repeat(24)}: not imported: it was kept in Your data before Townwise imported calendar files, and Townwise imports a file only when it is added. To add it as a calendar, the person who added it or an org admin can delete it on the file's page, then add the file again: /locations/${LOCATION}/data/f_${'0'.repeat(24)}`,
     ]);
     expect(block).toContain('You can\'t add, retry or remove a calendar');
+    // A line names the page only where the person can do something there.
+    expect(block).not.toContain('not a calendar');
+  });
+
+  it('never says the message added a calendar: one made in the last 30 minutes may be from an earlier upload of the same file', () => {
+    const block = calendarImportsBlock([A], notes([
+      [A, { outcome: 'added', calendarId: CAL, label: 'Sentinel-label bookings', eventCount: 1, addedOn: '2026-06-01' }],
+    ]));
+    expect(block).not.toContain('just now');
+    expect(linesOf(block)).toEqual([
+      `- ${A}: added within the last 30 minutes as the calendar "Sentinel-label bookings", with 1 event, when the file was added to Your data. Its page: /locations/${LOCATION}/data/c_${CAL}`,
+    ]);
   });
 
   it('quotes a label on one line, its angle brackets full-width, so no label can close the block or add a line', () => {
@@ -99,5 +114,41 @@ describe('an attached calendar file (D63)', () => {
     expect(turn.content).toEqual([]);
     const stored: BetaMessageParam = { role: 'user', content: [{ type: 'text', text: turn.block }, { type: 'text', text: 'Hi' }] };
     expect(expandedMessage(stored, turn)).toBeNull();
+  });
+});
+
+describe('reading an attached calendar file (D63)', () => {
+  it('reads it at once, as a text file, never behind a document: a PDF that found the thread busy leaves it read, its bytes held', async () => {
+    const log: string[] = [];
+    const pdf: ItemForModel = {
+      status: 'readable', kind: 'pdf', bytes: 10,
+      read: async () => {
+        log.push('start pdf');
+        await new Promise((resolve) => { setTimeout(resolve, 20); });
+        log.push('end pdf');
+        return { status: 'busy', kind: 'pdf' };
+      },
+    };
+    const calendar: ItemForModel = {
+      status: 'readable', kind: 'calendar', bytes: 300,
+      read: () => {
+        log.push('calendar');
+        return Promise.resolve({ status: 'text', kind: 'calendar', text: ICS, truncated: false });
+      },
+    };
+    const checks: AttachmentCheck[] = [{ ref: A, kind: null, check: pdf }, { ref: B, kind: null, check: calendar }];
+    const gate = createByteGate(ATTACHMENT_BYTES_IN_FLIGHT);
+    expect(gate.reserve(bytesToRead(checks))).toBe(true);
+    const read = await readAttachments(checks, Date.now() + 120_000, gate);
+    expect(read.map((file) => file.read)).toEqual([{ status: 'busy', kind: 'pdf' }, { status: 'text', kind: 'calendar', text: ICS, truncated: false }]);
+    // It didn't wait for the PDF.
+    expect(log).toContain('calendar');
+    expect(log.indexOf('calendar')).toBeLessThan(log.indexOf('end pdf'));
+    // Its text stays in the turn, so its bytes stay held, as a text file's do; the PDF's went back.
+    expect(gate.held).toBe(300);
+    expect(turnAttachments(read).block.split('\n').slice(2, -1)).toEqual([
+      `- ${A}: a PDF, not read: TownwiseAI was busy reading another file; try again in a moment`,
+      `- ${B}: a calendar file`,
+    ]);
   });
 });
