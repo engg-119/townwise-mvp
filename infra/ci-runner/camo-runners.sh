@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# Runs the repository's CI checks on camo while camo has compute to spare (infra/README.md, "CI on camo"). Up to N
-# slots (default 4), each pinned to its own 4 CPUs. A slot starts a one-job runner (a just-in-time registration at the
-# engg-119 organization with the labels self-hosted, townwise-ci and townwise-camo, in a fresh container) only while
-# camo is free (owner, 2026-11-19):
+# Runs the repository's CI checks on camo while camo has compute to spare (infra/README.md, "CI on camo"). Up to 2
+# slots, each pinned to half of camo's i5-13600K: 3 P-cores (6 threads) and 4 E-cores. (Four slots of 4 threads gave
+# each job only 2 P-cores, and verify hit its 30-minute timeout.) A slot starts a one-job runner (a just-in-time
+# registration at the engg-119 organization with the labels self-hosted, townwise-ci and townwise-camo, in a fresh
+# container) only while camo is free (owner, 2026-11-19):
 #   start     when the load from everything but these jobs is under 6 and at least 16 GiB of memory is available;
 #   withdraw  a runner still waiting for a job when that load reaches 8 or available memory drops under 12 GiB.
-# A runner that has taken a job always finishes it. The load from everything but these jobs is estimated as the
-# 1-minute load average minus 4 (a slot's CPUs) for each runner running a job.
+# A runner that has taken a job always finishes it. The load from everything but these jobs is the 1-minute load
+# average minus the CPU the runner containers used, read from their cgroups and averaged the way the kernel averages
+# the load (every 5 seconds, a 1-minute exponential decay). Containers a job starts (testcontainers, semgrep) count
+# as camo's own load, which errs toward holding back.
 #
 # Started by the user systemd unit townwise-ci-runners.service. TERM (systemctl --user stop) removes every container,
 # job folder and registration of the session. One session at a time (a lock in ~/.townwise-ci); each start removes
 # what earlier sessions left behind.
 #
 # Usage: camo-runners.sh [-n slots] [-i image]
-#   -n  slots (default 4)
+#   -n  slots (default 2, at most 2)
 #   -i  run this image (tag or ID) instead of building the Dockerfile next to this script
 # Needs Docker (this user in the socket's group), curl and jq, and in ~/.config/townwise-ci/token (mode 600) a
 # fine-grained token whose only permission is the engg-119 organization's "Self-hosted runners: Read and write". The
@@ -35,9 +38,10 @@ start_load=6
 withdraw_load=8
 start_mem_gib=16
 withdraw_mem_gib=12
-cpus_per_slot=4
+# camo's CPUs (lscpu -e): 0 to 11 are the 6 P-cores' two threads each, 12 to 19 the 8 E-cores. One set per slot.
+slot_cpus=("0-5,12-15" "6-11,16-19")
 
-slots=4
+slots=2
 image=''
 while getopts 'n:i:' opt; do
   case "$opt" in
@@ -50,7 +54,10 @@ case "$slots" in
   '' | *[!0-9]*) echo "slots must be a whole number above 0" >&2; exit 2 ;;
 esac
 slots=$((10#$slots))
-if [ "$slots" -lt 1 ]; then echo "slots must be a whole number above 0" >&2; exit 2; fi
+if [ "$slots" -lt 1 ] || [ "$slots" -gt "${#slot_cpus[@]}" ]; then
+  echo "slots must be from 1 to ${#slot_cpus[@]}" >&2
+  exit 2
+fi
 
 for tool in docker curl jq awk; do
   command -v "$tool" > /dev/null || { echo "$tool is required" >&2; exit 1; }
@@ -63,9 +70,7 @@ fi
 token="$(tr -d ' \r\n' < "$token_file")"
 if [ -z "$token" ]; then echo "$token_file is empty" >&2; exit 1; fi
 sock_gid="$(stat -c %g /var/run/docker.sock)"
-
-cpu_sets=$(($(nproc) / cpus_per_slot))
-if [ "$cpu_sets" -lt 1 ]; then echo "camo needs at least $cpus_per_slot CPUs" >&2; exit 1; fi
+if [ "$(nproc)" -lt 20 ]; then echo "slot_cpus assumes camo's 20 CPUs; this machine has $(nproc)" >&2; exit 1; fi
 
 session="$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 prefix="townwise-camo-$session"
@@ -139,7 +144,7 @@ retry_later() {
 }
 
 start_slot() {
-  local s="$1" n body resp cfg id first_cpu
+  local s="$1" n body resp cfg id
   count=$((count + 1))
   n="$prefix-$s-$count"
   body="$(jq -cn --arg name "$n" \
@@ -168,11 +173,10 @@ start_slot() {
     return
   fi
   started[s]=$(date +%s)
-  first_cpu=$(((s - 1) % cpu_sets * cpus_per_slot))
   # --cpu-shares 256: when camo's own work wants the same CPUs, it gets four times the jobs' share.
   # host-gateway: testcontainers reaches the containers it starts through camo's published ports, as on the Mac.
   if ! TOWNWISE_JIT_CONFIG="$cfg" docker run --detach --init --pull never --name "$n" --label "townwise-ci-session=$session" \
-      --cpuset-cpus "$first_cpu-$((first_cpu + cpus_per_slot - 1))" --cpu-shares 256 \
+      --cpuset-cpus "${slot_cpus[s - 1]}" --cpu-shares 256 \
       --group-add "$sock_gid" --add-host host.docker.internal:host-gateway \
       --env TOWNWISE_JIT_CONFIG --env "TOWNWISE_JOB_DIR=${dir[s]}" \
       --env TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
@@ -185,7 +189,7 @@ start_slot() {
   cfg=''
   log "slot $s: runner $n is waiting for a job"
   # The runner's own console (connected, job name, result); job logs stay on GitHub. "Running job" marks the
-  # runner busy: it is no longer withdrawn, and its CPUs no longer count as camo's own load.
+  # runner busy, so it is no longer withdrawn.
   docker logs --follow "$n" 2>&1 | while IFS= read -r line; do
     case "$line" in *'Running job:'*) : > "$state/busy-$n" ;; esac
     printf '[slot %s] %s\n' "$s" "$line"
@@ -205,22 +209,47 @@ withdraw_slot() {
   fi
 }
 
-# Prints "free", "busy" or "hold" (between the two thresholds), then the load and memory it read.
-compute_state() {
-  local busy=0 s
-  for s in $(seq 1 "$slots"); do
-    if [ -n "${name[s]}" ] && [ -e "$state/busy-${name[s]}" ]; then busy=$((busy + 1)); fi
+# The CPU the runner containers use, in cores, averaged like the 1-minute load: each call adds the CPU time their
+# cgroups used since the last call, decayed by exp(-elapsed/60). Containers that come or go between two calls add
+# only what both calls saw.
+declare -A cpu_prev=()
+jobs_cores=0
+last_sample=''
+sample_jobs_cpu() {
+  local now id usage used=0
+  local -A seen=()
+  now="$EPOCHREALTIME"
+  for id in $(docker ps --quiet --no-trunc --filter "label=townwise-ci-session=$session" 2> /dev/null || true); do
+    usage="$(awk '$1 == "usage_usec" { print $2 }' "/sys/fs/cgroup/system.slice/docker-$id.scope/cpu.stat" 2> /dev/null)" \
+      || continue
+    if [ -z "$usage" ]; then continue; fi
+    if [ -n "${cpu_prev[$id]:-}" ]; then used=$((used + usage - ${cpu_prev[$id]})); fi
+    seen[$id]="$usage"
   done
-  awk -v busy="$busy" -v per="$cpus_per_slot" -v sl="$start_load" -v wl="$withdraw_load" \
+  cpu_prev=()
+  for id in "${!seen[@]}"; do cpu_prev[$id]="${seen[$id]}"; done
+  if [ -n "$last_sample" ]; then
+    jobs_cores="$(awk -v e="$jobs_cores" -v u="$used" -v t0="$last_sample" -v t1="$now" 'BEGIN {
+      dt = t1 - t0; if (dt <= 0) { print e; exit }
+      a = 1 - exp(-dt / 60); printf "%.3f", e + a * (u / (dt * 1e6) - e) }')"
+  fi
+  last_sample="$now"
+}
+
+# Sets gate to "free", "busy" or "hold" (between the two thresholds), and load and mem to what it read. Runs in
+# this shell, not a subshell, so sample_jobs_cpu keeps its history.
+compute_state() {
+  sample_jobs_cpu
+  read -r gate load mem <<< "$(awk -v jobs="$jobs_cores" -v sl="$start_load" -v wl="$withdraw_load" \
       -v sm="$start_mem_gib" -v wm="$withdraw_mem_gib" '
-    FNR == 1 && FILENAME == "/proc/loadavg" { load = $1 - busy * per; if (load < 0) load = 0 }
+    FNR == 1 && FILENAME == "/proc/loadavg" { load = $1 - jobs; if (load < 0) load = 0 }
     FILENAME == "/proc/meminfo" && $1 == "MemAvailable:" { mem = $2 / 1048576 }
     END {
       state = "hold"
       if (load >= wl || mem < wm) state = "busy"
       else if (load < sl && mem >= sm) state = "free"
       printf "%s %.1f %.0f\n", state, load, mem
-    }' /proc/loadavg /proc/meminfo
+    }' /proc/loadavg /proc/meminfo)"
 }
 
 # Runs outside any signal trap, so a second TERM or Ctrl-C during it runs the trap set here.
@@ -294,11 +323,11 @@ fi
 sweep
 check_stop
 
-log "image $image ($image_id); $slots slots of $cpus_per_slot CPUs; runners named $prefix-*; job folders under $jobs"
+log "image $image ($image_id); $slots slots (CPUs ${slot_cpus[*]:0:$slots}); runners named $prefix-*; job folders under $jobs"
 log "free compute: start under load $start_load with ${start_mem_gib} GiB available; withdraw waiting runners at load $withdraw_load or under ${withdraw_mem_gib} GiB"
 last=''
 while :; do
-  read -r gate load mem < <(compute_state)
+  compute_state
   if [ "$gate" != "$last" ]; then
     case "$gate" in
       free) log "camo is free (load $load without CI jobs, $mem GiB available): runners may start" ;;
@@ -318,10 +347,14 @@ while :; do
           ;;
       esac
       lived=$(($(date +%s) - started[s]))
+      took_job=''
+      if [ -e "$state/busy-${name[s]}" ]; then took_job=yes; fi
       log "slot $s: runner ${name[s]} finished ($status, ${lived}s)"
       clear_slot "$s"
-      if [ "$lived" -lt 30 ]; then
-        log "slot $s: that was too quick to be a job; retrying in 60s"
+      # A runner that exits within seconds without taking a job (bad config, no network) waits before the next
+      # one; a short job (gitleaks, checkov) is not that.
+      if [ -z "$took_job" ] && [ "$lived" -lt 30 ]; then
+        log "slot $s: it exited without taking a job; retrying in 60s"
         not_before[s]=$(($(date +%s) + 60))
       fi
     fi

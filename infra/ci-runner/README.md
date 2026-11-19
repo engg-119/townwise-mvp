@@ -5,7 +5,7 @@ Runs the checks in `ci.yml`, `security.yml` and `gitleaks.yml` on the owner's Ma
 - `Dockerfile`: Ubuntu 24.04 for arm64 (the Mac) or amd64 (camo), whichever the engine runs, with the GitHub Actions runner, the Docker CLI and buildx, and what the jobs call. Each pin names its source, per architecture.
 - `entrypoint.sh`: copies the runner into the job folder (mounted at the same path as on the host) and runs exactly one job.
 - `run-runners.sh`: on the Mac, builds the image, keeps N slots of one-job runners, and cleans up on Ctrl-C. One session at a time; each start removes what earlier sessions left.
-- `camo-runners.sh` and `townwise-ci-runners.service`: on camo, the same with up to 4 slots that start runners only while camo is free (load and memory thresholds), run by a user systemd unit.
+- `camo-runners.sh` and `townwise-ci-runners.service`: on camo, the same with 2 slots (each half of camo's P- and E-cores) that start runners only while camo is free (load and memory thresholds), run by a user systemd unit.
 
 What each job needs from the runner. When a job changes, keep the image in step:
 
