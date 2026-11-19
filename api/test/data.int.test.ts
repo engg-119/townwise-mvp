@@ -250,6 +250,8 @@ describe('GET /api/org/data', () => {
       file: null, canTurnOff: true, canDelete: true, canEdit: false, editedAt: null, editedByEmail: null,
       // Spec 11A.9: a browser upload has no stored file for TownwiseAI to read.
       canAiRead: false, ai: null, fromAiRead: null,
+      // D61: a sales upload is in Sales.
+      folder: 'sales',
     });
     expect(items[1]).toMatchObject({
       name: 'sales.csv', sizeBytes: RAW.length, enabled: true, state: 'used', addedByEmail: team.adminEmail,
@@ -394,7 +396,8 @@ describe('GET /api/org/locations/:locationId/data/:ref', () => {
       for (const item of items) {
         const res = await getItem(session, l1, item.ref);
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ item });
+        // D60: one item's view also says what importing it as a calendar did (nothing, for these).
+        expect(await res.json()).toEqual({ item: { ...item, calendar: null } });
       }
     }
   });
@@ -428,7 +431,7 @@ describe('GET /api/org/locations/:locationId/data/:ref', () => {
     const res = await getItem(offAdmin, l1, `u_${read.uploadId}`, off);
     expect(res.status).toBe(200);
     const { item } = await res.json() as { item: DataItemView };
-    expect(item).toEqual((await list(offAdmin, `?locationId=${l1}`, off)).items[0]);
+    expect(item).toEqual({ ...(await list(offAdmin, `?locationId=${l1}`, off)).items[0], calendar: null });
     expect(item).toMatchObject({ ref: `u_${read.uploadId}`, kind: 'daily_totals', name: null, file: null, days: { count: 2, inUse: 2 } });
     expect(await errorOf(await getItem(offAdmin, l1, `f_${fileId}`, off))).toEqual({ status: 404, error: 'not_found' });
   });

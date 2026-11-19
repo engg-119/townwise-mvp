@@ -4,7 +4,6 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import type { DataItem } from '../../../src/portal/data/api';
-import { DATA } from '../../../src/portal/data/copy';
 import type { MeResponse, OrgResponse } from '../../../src/portal/schemas';
 import { theme } from '../../../src/theme';
 import { appRoutes, seededRoot } from '../../helpers/app';
@@ -31,6 +30,7 @@ Object.defineProperty(document.documentElement, 'clientWidth', { configurable: t
 afterEach(() => {
   cleanup();
   jest.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 const DAYS = daysOf('2025-01-01', 30, () => ({ guests: 50, netSalesCents: 150_000 }));
@@ -61,13 +61,20 @@ async function settle(fire: () => void): Promise<void> {
   });
 }
 
+/**
+ * The page for `me`, with `items` and `calendars`. `view` is the View remembered in this browser for the person signed
+ * in: Newest first unless given, so most tests read one table; 'organized' leaves nothing remembered (the default).
+ */
 function setup(
-  me: MeResponse, items: DataItem[] = ITEMS, opts: { files?: 'on' | 'off'; org?: OrgResponse; calendars?: unknown[] } = {},
+  me: MeResponse, items: DataItem[] = ITEMS,
+  opts: { files?: 'on' | 'off'; org?: OrgResponse; calendars?: unknown[]; view?: 'organized' | 'newest'; pageSize?: number } = {},
 ): DataFake {
+  if ((opts.view ?? 'newest') === 'newest') window.localStorage.setItem(`townwise.dataView.${me.user.id}`, 'newest');
   const inner = locationsFake({ sales: { l1: salesOf(DAYS, [uploadOf('u1')]) }, days: { l1: DAYS } });
   const fake = dataFake({ inner, items: items.map((item) => ({ ...item, file: item.file === null ? null : { ...item.file }, days: item.days === null ? null : { ...item.days } })) });
   if (opts.files === 'off') fake.files.lists[''] = refusal(503, 'files_unavailable');
   if (opts.calendars !== undefined) fake.calendars = opts.calendars;
+  if (opts.pageSize !== undefined) fake.pageSize = opts.pageSize;
   const api = fakePortalApi({ me, org: opts.org ?? orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake });
   portal = api;
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
@@ -106,7 +113,7 @@ test('lists every item as a table row: item, added, kind, size, status and days'
   setup(meOf(ACCESS.admin));
   expect(await screen.findByRole('heading', { level: 2, name: 'Your data' })).toBeTruthy();
   expect(screen.getByText('Everything your team added')).toBeTruthy();
-  expect(screen.getByText(/^Sales uploads, files and text your team added for Main Street Bar, newest first\./)).toBeTruthy();
+  expect(screen.getByText(/^Sales uploads, calendars, files and text your team added for Main Street Bar\./)).toBeTruthy();
   // Item sales, the ordering setup and counts are not listed here: one line points to where they live.
   expect(screen.getByText('Item sales, the ordering setup and counts live in Orders, under Ordering setup.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Open Ordering setup' }).getAttribute('href')).toBe('/locations/l1/orders/setup');
@@ -286,7 +293,7 @@ test('with one location the lead, the table and the empty line name the organiza
   const one = { org: orgOf('org_admin', LOCATIONS.slice(0, 1)) };
   setup(meOf(ACCESS.admin), ITEMS, one);
   expect(await table('Your data for Test Group')).toBeTruthy();
-  expect(screen.getByText(/^Sales uploads, files and text your team added for Test Group, newest first\./)).toBeTruthy();
+  expect(screen.getByText(/^Sales uploads, calendars, files and text your team added for Test Group\./)).toBeTruthy();
   cleanup();
   setup(meOf(ACCESS.admin), [], one);
   expect(await screen.findByText('Nothing here yet. What your team uploads or adds for Test Group shows here.')).toBeTruthy();
@@ -505,35 +512,250 @@ test('nothing yet: the empty line, and the failure to list shows the error with 
   expect(fake.items).toEqual([]);
 });
 
-// D49 (calendar-detail): the location's calendars, a group above the list, each opening its page in Your data.
-const KITCHEN = ownerCalendar({ id: '0123456789abcdef01234567', label: 'Kitchen', kind: 'file', eventCount: 12 });
-const HOLIDAYS = ownerCalendar({ id: 'fedcba9876543210fedcba98', label: 'US holidays', kind: 'link', host: 'calendar.google.com', eventCount: 11 });
-
-test('the Calendars group lists the location’s calendars above the list, each opening its page; a link’s host is text', async () => {
-  setup(meOf(ACCESS.member), ITEMS, { calendars: [KITCHEN, HOLIDAYS] });
-  const group = await screen.findByRole('list', { name: 'Calendars' });
-  expect(within(group).getAllByRole('listitem').map((row) => row.textContent)).toEqual([
-    'KitchenFile, 12 events', expect.stringMatching(/^US holidaysLink, calendar\.google\.com, 11 eventsUpdated /) as unknown,
-  ]);
-  const link = within(group).getByRole('link', { name: 'US holidays. Link, calendar.google.com, 11 events' });
-  expect(link.getAttribute('href')).toBe('/locations/l1/data/c_fedcba9876543210fedcba98');
-  // The host is never a link, and no link holds a calendar's address.
-  expect(within(group).getAllByRole('link').map((each) => each.getAttribute('href'))).toEqual([
-    '/locations/l1/data/c_0123456789abcdef01234567', '/locations/l1/data/c_fedcba9876543210fedcba98',
-  ]);
-  expect(group.compareDocumentPosition(await table()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  // The list has its own heading, so it never reads as part of Calendars (UI review S5).
-  const uploads = screen.getByRole('heading', { name: DATA.uploadsHeading });
-  expect(uploads.getAttribute('aria-level')).toBe(screen.getByRole('heading', { name: 'Calendars' }).getAttribute('aria-level'));
-  expect(group.compareDocumentPosition(uploads) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(uploads.compareDocumentPosition(await table()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+// D61: one list. Calendars are items of it (D49's pages, `c_<id>`), "Organized" shows folders by default, and the View
+// switch to "Newest first" is remembered in this browser per person signed in.
+const KITCHEN = ownerCalendar({ id: '0123456789abcdef01234567', label: 'Kitchen', kind: 'file', eventCount: 12, createdAt: '2026-11-01T15:00:00.000Z' });
+const HOLIDAYS = ownerCalendar({
+  id: 'fedcba9876543210fedcba98', label: 'US holidays', kind: 'link', host: 'calendar.google.com', eventCount: 11, createdAt: '2026-11-06T15:00:00.000Z',
 });
 
-test('no calendars, no group; with stored files off the group still shows', async () => {
-  setup(meOf(ACCESS.member));
-  await table();
+/** Items the API filed (D61), one in a folder this client doesn't know. */
+const FILED: DataItem[] = [
+  itemOf('f_menu', { name: 'menu-notes.txt', state: 'kept', outcome: 'reference', folder: 'menus' }),
+  itemOf('f_photo', { name: 'photo.jpg', kind: 'other', state: 'kept', outcome: 'reference', folder: 'unsorted' }),
+  itemOf('f_later', { name: 'later.txt', state: 'kept', outcome: 'reference', folder: 'a_folder_from_later' }),
+  dailyTotalsOf('u_1', { folder: 'sales' }),
+  dailyTotalsOf('u_2', { folder: 'sales', days: { count: 3, inUse: 3, firstDate: '2026-04-01', lastDate: '2026-04-03' } }),
+];
+
+/** Three items, each a second older than the one before, and all newer than KITCHEN. */
+const THREE: DataItem[] = Array.from({ length: 3 }, (_, index) => itemOf(`f_${String(index)}`, {
+  name: `file-${String(index)}.txt`, file: null, addedAt: `2026-11-05T15:00:0${String(5 - index)}.000Z`,
+}));
+
+async function folderList(name = 'Folders, Your data for Main Street Bar'): Promise<HTMLElement> {
+  return screen.findByRole('list', { name });
+}
+
+function folderButton(name: RegExp | string): HTMLElement {
+  return screen.getByRole('button', { name });
+}
+
+test('Organized is the default: the folders in order, each a closed button naming its count', async () => {
+  setup(meOf(ACCESS.admin), FILED, { view: 'organized', calendars: [KITCHEN] });
+  const folders = await folderList();
+  const buttons = within(folders).getAllByRole('button');
+  expect(buttons.map((button) => [button.getAttribute('aria-label'), button.getAttribute('aria-expanded')])).toEqual([
+    ['Sales, 2 items', 'false'], ['Calendars, 1 item', 'false'], ['Menus and recipes, 1 item', 'false'], ['Inventory and orders, 0 items', 'false'],
+    ['Staffing, 0 items', 'false'], ['Notes and pasted text, 0 items', 'false'], ['Other, 0 items', 'false'], ['Not sorted yet, 2 items', 'false'],
+  ]);
+  // Each shows its name and count, and is a tab stop.
+  expect(within(at(buttons, 0)).getByText('Sales')).toBeTruthy();
+  expect(within(at(buttons, 0)).getByText('2')).toBeTruthy();
+  expect(buttons.every((button) => button.tabIndex === 0)).toBe(true);
+  expect(screen.queryByRole('table')).toBeNull();
+  const group = screen.getByRole('radiogroup', { name: 'View' });
+  expect(within(group).getAllByRole('radio').map((radio) => [radio.textContent, radio.getAttribute('aria-checked')])).toEqual([
+    ['Organized', 'true'], ['Newest first', 'false'],
+  ]);
+  // No separate Calendars group or uploads heading any more.
+  expect(screen.queryByRole('heading', { name: 'Calendars' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'Uploads and files' })).toBeNull();
   expect(screen.queryByRole('list', { name: 'Calendars' })).toBeNull();
+});
+
+test('a folder opens its own table in place, under its button, and closes again; an empty one says so', async () => {
+  setup(meOf(ACCESS.admin), FILED, { view: 'organized', calendars: [KITCHEN] });
+  await folderList();
+  const sales = folderButton('Sales, 2 items');
+  await settle(() => { fireEvent.click(sales); });
+  expect(sales.getAttribute('aria-expanded')).toBe('true');
+  const region = await table('Sales, Your data for Main Street Bar');
+  // aria-controls names the opened part, which holds the table.
+  const controlled = document.getElementById(sales.getAttribute('aria-controls') ?? '');
+  expect(controlled?.contains(region)).toBe(true);
+  expect(sales.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(rowsOf(region).map((row) => within(row).getAllByRole('link')[0]?.getAttribute('href'))).toEqual(['/locations/l1/data/u_1', '/locations/l1/data/u_2']);
+  // A calendar is its folder's item, opening its page.
+  await settle(() => { fireEvent.click(folderButton('Calendars, 1 item')); });
+  const calendars = await table('Calendars, Your data for Main Street Bar');
+  const link = within(calendars).getByRole('link', { name: 'Kitchen. File, 12 events' });
+  expect(link.getAttribute('href')).toBe('/locations/l1/data/c_0123456789abcdef01234567');
+  expect(within(calendars).getByText('Calendar')).toBeTruthy();
+  // An empty folder, and Not sorted yet, which says how Townwise files an item and holds an unknown folder's item.
+  await settle(() => { fireEvent.click(folderButton('Staffing, 0 items')); });
+  expect(screen.getByText('Nothing in this folder yet.')).toBeTruthy();
+  await settle(() => { fireEvent.click(folderButton('Not sorted yet, 2 items')); });
+  expect(screen.getByText(/^Townwise files an item once it knows what it is/)).toBeTruthy();
+  const unsorted = await table('Not sorted yet, Your data for Main Street Bar');
+  expect(within(unsorted).getByRole('link', { name: 'later.txt' })).toBeTruthy();
+  await settle(() => { fireEvent.click(sales); });
+  expect(sales.getAttribute('aria-expanded')).toBe('false');
+  expect(sales.getAttribute('aria-controls')).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Sales, Your data for Main Street Bar' })).toBeNull();
+  // Opening is a read: a row of an open folder opens its page.
+  await settle(() => { fireEvent.click(link); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/data/c_0123456789abcdef01234567'); });
+});
+
+test('Newest first is one table, calendars among the items by when they were added, each a Calendar with its events', async () => {
+  setup(meOf(ACCESS.member), ITEMS, { calendars: [KITCHEN, HOLIDAYS] });
+  const rows = rowsOf(await table());
+  expect(rows).toHaveLength(5);
+  // US holidays (Nov 6) is newest, the items (Nov 5) next, Kitchen (Nov 1) last.
+  const holidays = within(at(rows, 0)).getByRole('link', { name: 'US holidays. Link, calendar.google.com, 11 events' });
+  expect(holidays.getAttribute('href')).toBe('/locations/l1/data/c_fedcba9876543210fedcba98');
+  expect(within(at(rows, 0)).getByText('Calendar')).toBeTruthy();
+  expect(within(at(rows, 0)).getByText('Nov 6, 2026')).toBeTruthy();
+  expect(within(at(rows, 4)).getByRole('link', { name: 'Kitchen. File, 12 events' })).toBeTruthy();
+  expect(within(at(rows, 4)).getByText('File, 12 events')).toBeTruthy();
+  // The host is text, and no link holds a calendar's address.
+  expect(within(at(rows, 0)).getAllByRole('link')).toHaveLength(1);
+  expect(screen.queryByRole('list', { name: /^Folders/ })).toBeNull();
+});
+
+test('Newest first holds back a calendar older than the items loaded until Show older items reaches it', async () => {
+  setup(meOf(ACCESS.admin), THREE, { calendars: [KITCHEN], pageSize: 2 });
+  expect(rowsOf(await table())).toHaveLength(2);
+  expect(screen.queryByRole('link', { name: 'Kitchen. File, 12 events' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Show older items' }));
+  await waitFor(() => { expect(rowsOf(screen.getByRole('table'))).toHaveLength(4); });
+  expect(within(at(rowsOf(screen.getByRole('table')), 3)).getByRole('link', { name: 'Kitchen. File, 12 events' })).toBeTruthy();
+});
+
+test('Organized while older items are still to load holds every calendar and says its counts are of what is shown', async () => {
+  setup(meOf(ACCESS.admin), THREE, { view: 'organized', calendars: [KITCHEN], pageSize: 2 });
+  await folderList();
+  expect(screen.getByText('The folders count the items shown so far. Show older items below sorts in the rest.')).toBeTruthy();
+  expect(folderButton('Not sorted yet, 2 items')).toBeTruthy();
+  expect(folderButton('Calendars, 1 item')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Show older items' }));
+  await waitFor(() => { expect(screen.queryByText(/^The folders count the items shown so far/)).toBeNull(); });
+  expect(folderButton('Not sorted yet, 3 items')).toBeTruthy();
+});
+
+test('the View is one tab stop; the arrows move it; Newest first is remembered in this browser for the person', async () => {
+  setup(meOf(ACCESS.admin), ITEMS, { view: 'organized' });
+  const group = await screen.findByRole('radiogroup', { name: 'View' });
+  const organized = within(group).getByRole('radio', { name: 'Organized' });
+  const newest = within(group).getByRole('radio', { name: 'Newest first' });
+  expect([organized.tabIndex, newest.tabIndex]).toEqual([0, -1]);
+  await settle(() => { fireEvent.keyDown(organized, { key: 'ArrowRight' }); });
+  expect(newest.getAttribute('aria-checked')).toBe('true');
+  expect([organized.tabIndex, newest.tabIndex]).toEqual([-1, 0]);
+  expect(document.activeElement).toBe(newest);
+  expect(rowsOf(await table())).toHaveLength(3);
+  expect(window.localStorage.getItem('townwise.dataView.u1')).toBe('newest');
+  // Another visit opens Newest first.
+  cleanup();
+  setup(meOf(ACCESS.admin), ITEMS, { view: 'organized' });
+  expect(rowsOf(await table())).toHaveLength(3);
+  await settle(() => { fireEvent.click(screen.getByRole('radio', { name: 'Organized' })); });
+  expect(await folderList()).toBeTruthy();
+  expect(window.localStorage.getItem('townwise.dataView.u1')).toBe('organized');
+});
+
+test('the View is each signed-in person’s own, and the person viewing as keeps theirs, with folders working read-only', async () => {
+  window.localStorage.setItem('townwise.dataView.u2', 'newest');
+  setup(meOf(ACCESS.admin), ITEMS, { view: 'organized' });
+  expect(await folderList()).toBeTruthy();
+  cleanup();
+  // Staff viewing as someone: their own pick (s1), and the folders and the switch work under view-as.
+  setup(viewAsMe(ACCESS.admin), FILED, { view: 'organized' });
+  await folderList();
+  await settle(() => { fireEvent.click(folderButton('Sales, 2 items')); });
+  expect(rowsOf(await table('Sales, Your data for Main Street Bar'))).toHaveLength(2);
+  await settle(() => { fireEvent.click(screen.getByRole('radio', { name: 'Newest first' })); });
+  expect(window.localStorage.getItem('townwise.dataView.s1')).toBe('newest');
+  expect(window.localStorage.getItem('townwise.dataView.u1')).toBeNull();
+});
+
+test('storage that throws: the page opens Organized and the View still switches', async () => {
+  jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+  jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+  setup(meOf(ACCESS.admin), ITEMS, { view: 'organized' });
+  expect(await folderList()).toBeTruthy();
+  await settle(() => { fireEvent.click(screen.getByRole('radio', { name: 'Newest first' })); });
+  expect(rowsOf(await table())).toHaveLength(3);
+});
+
+test('nothing yet, calendars included: the empty line in place of the folders', async () => {
+  setup(meOf(ACCESS.admin), [], { view: 'organized' });
+  expect(await screen.findByText('Nothing here yet. What your team uploads or adds for Main Street Bar shows here.')).toBeTruthy();
+  expect(screen.queryByRole('list', { name: /^Folders/ })).toBeNull();
+  cleanup();
+  setup(meOf(ACCESS.admin), [], { view: 'organized', calendars: [KITCHEN] });
+  expect(within(await folderList()).getByRole('button', { name: 'Calendars, 1 item' })).toBeTruthy();
+});
+
+test('Import a calendar file stays at the top of the list, with no calendar and with stored files off (D60)', async () => {
+  setup(meOf(ACCESS.member));
+  const region = await table();
+  const button = screen.getByRole('button', { name: 'Import a calendar file' });
+  expect(button.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(button.compareDocumentPosition(screen.getByRole('radiogroup', { name: 'View' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.queryByText('No calendars yet.')).toBeNull();
   cleanup();
   setup(meOf(ACCESS.member), ITEMS, { files: 'off', calendars: [KITCHEN] });
-  expect(await screen.findByRole('list', { name: 'Calendars' })).toBeTruthy();
+  expect(within(await table()).getByRole('link', { name: 'Kitchen. File, 12 events' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Import a calendar file' })).toBeTruthy();
+});
+
+/** The calendar import's file input (Add a file has its own), and a chosen file whose text is `text` (jsdom's Blob lacks it). */
+function chooseCalendarFile(name: string, text: string, size?: number): void {
+  const input = [...document.querySelectorAll<HTMLInputElement>('input[type="file"]')].find((each) => each.accept.includes('.ics'));
+  if (input === undefined) throw new Error('no calendar file input');
+  const file = new File(['x'], name, { type: 'text/calendar' });
+  Object.defineProperty(file, 'text', { value: () => Promise.resolve(text) });
+  if (size !== undefined) Object.defineProperty(file, 'size', { value: size });
+  fireEvent.change(input, { target: { files: [file] } });
+}
+
+test('Import a calendar file posts the file as Your calendars does, says what it did, and the list reads fresh with it (D60)', async () => {
+  const fake = setup(meOf(ACCESS.member));
+  await table();
+  const reads = fake.lists.length;
+  const button = screen.getByRole('button', { name: 'Import a calendar file' });
+  // Described by the weekly reading's words it sends `titlesNotice` for.
+  const help = screen.getByText(/^Once a week TownwiseAI reads the titles/);
+  expect(button.getAttribute('aria-describedby')).toBe(help.id);
+  chooseCalendarFile('Front desk.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n');
+  expect(await screen.findByText('Added Front desk: 2 events.')).toBeTruthy();
+  expect(fake.calendarAdds).toEqual([{ kind: 'file', label: 'Front desk', ics: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n', titlesNotice: 1 }]);
+  await waitFor(() => { expect(fake.lists.length).toBe(reads + 1); });
+  const link = await within(await table()).findByRole('link', { name: /^Front desk\./ });
+  expect(link.getAttribute('href')).toBe('/locations/l1/data/c_c1');
+});
+
+test('a refused import says why at the top of the list and adds nothing; a file over 1 MB is refused unread (D60)', async () => {
+  const fake = setup(meOf(ACCESS.member));
+  await table();
+  fake.answers['POST owner-calendars'] = () => refusal(409, 'calendar_limit');
+  chooseCalendarFile('Late.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n');
+  expect(await screen.findByText('This location has 5 calendars, the most it can hold. Remove one to add another.')).toBeTruthy();
+  chooseCalendarFile('Big.ics', '', 1024 * 1024 + 1);
+  expect(await screen.findByText('This file is over 1 MB. Export a shorter range of your calendar, or a CSV with fewer columns.')).toBeTruthy();
+  expect(fake.calendarAdds).toHaveLength(1);
+  expect(within(await table()).queryByRole('link', { name: /^Late/ })).toBeNull();
+});
+
+test('under view-as Import a calendar file stays in place, disabled, described by the read-only line (D60)', async () => {
+  const fake = setup(viewAsMe(ACCESS.member));
+  await table();
+  const button = screen.getByRole('button', { name: 'Import a calendar file' });
+  expect(button.getAttribute('aria-disabled') === 'true' || (button as HTMLButtonElement).disabled).toBe(true);
+  expect((button.getAttribute('aria-describedby') ?? '').split(' ')).toContain('data-ro');
+  expect(fake.calendarAdds).toEqual([]);
+});
+
+test('a fresh read of the list (text saved) shows a calendar the API imported meanwhile (D60)', async () => {
+  const fake = setup(meOf(ACCESS.member));
+  expect(rowsOf(await table())).toHaveLength(3);
+  // The API imported a calendar file meanwhile; saving pasted text reads the list fresh, as a stored file does.
+  fake.calendars = [KITCHEN];
+  fireEvent.click(screen.getByRole('button', { name: 'Paste text' }));
+  fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Winter hours' } });
+  fireEvent.change(screen.getByLabelText('Text'), { target: { value: 'Closed Mondays.' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  expect(await within(await table()).findByRole('link', { name: 'Kitchen. File, 12 events' })).toBeTruthy();
 });

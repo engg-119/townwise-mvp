@@ -40,6 +40,17 @@ export const SYSTEM_ACTOR = {
   actorUserId: 'system', actorEmail: 'Townwise forecast lab', actorRole: 'system', viewAsGrantId: null,
 } as const satisfies Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>;
 
+/** D59: the actor of a change TownwiseAI saved on its own (an automatic read), shown as TownwiseAI. */
+export const TOWNWISE_AI_ACTOR = {
+  actorUserId: 'townwise_ai', actorEmail: 'TownwiseAI', actorRole: 'system', viewAsGrantId: null,
+} as const satisfies Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>;
+
+/** D59: a change TownwiseAI saved, by its typed action. */
+const AGENT_ACTION_WORDS: Readonly<Record<string, string>> = {
+  'note.add': 'a note', 'item.add': 'a summary of a file', 'sales_days.add': 'missing sales days', 'rule.add': 'a business rule',
+  'booking.label': 'a booking label',
+};
+
 /**
  * The codes a staff_action.not_applied event may carry (spec 9.3), each with the plain words org admins read in their
  * staff activity. A refusal's code is its error code; `conflict` means a concurrent change to the same row won,
@@ -242,7 +253,7 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'rule.created': return d.via === 'townwise_ai' ? 'Added a business rule, from TownwiseAI' : 'Added a business rule';
     case 'rule.updated': return 'Edited a business rule';
     case 'rule.deleted': return 'Deleted a business rule';
-    case 'owner_calendar.added': return `Added ${calendarWords(d)} with ${text(d.eventCount)} events`;
+    case 'owner_calendar.added': return `Added ${calendarWords(d)}${d.fileId === undefined ? '' : ' from Your data'} with ${text(d.eventCount)} events`;
     case 'owner_calendar.removed': return `Removed ${calendarWords(d)}`;
     case 'owner_calendar.refreshed':
       return d.status === 'ok' ? `Refreshed ${calendarWords(d)}: ${text(d.eventCount)} events` : `Refreshing ${calendarWords(d)} failed (${text(d.status)})`;
@@ -262,6 +273,10 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'org.weekly_suggestions_changed': return d.on === true ? 'Turned TownwiseAI’s weekly suggestions on' : 'Turned TownwiseAI’s weekly suggestions off';
     case 'org.calendar_titles_ai_changed':
       return d.on === true ? 'Turned sending calendar event titles to TownwiseAI on' : 'Turned sending calendar event titles to TownwiseAI off';
+    case 'org.agent_auto_switched': return d.on === true ? 'Turned TownwiseAI working on its own on' : 'Turned TownwiseAI working on its own off';
+    case 'agent.change_applied': return `TownwiseAI added ${AGENT_ACTION_WORDS[text(d.action)] ?? 'something'}${d.sourceKind === 'file' ? ' from a file' : ''}`;
+    case 'agent.change_undone': return `Undid ${AGENT_ACTION_WORDS[text(d.action)] ?? 'something'} TownwiseAI added${d.sourceKind === 'file' ? ' from a file' : ''}`;
+    case 'agent.calendar_answered': return `Your calendar answered ${text(d.count)} of TownwiseAI’s questions`;
     case 'agent.suggestion_accepted':
       return `Accepted${d.edited === true ? ', edited,' : ''} ${SUGGESTION_WORDS[text(d.type)] ?? 'a note TownwiseAI suggested'}${SUGGESTION_SOURCE_WORDS[text(d.source)] ?? ''}`;
     case 'agent.suggestion_dismissed':

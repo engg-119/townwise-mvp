@@ -15,7 +15,9 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { utcDay } from '../dates.ts';
+import { queueAutoRead } from '../files/ai-auto.ts';
 import { BlobMissingError, BlobUnavailableError, type BlobRef, type FileBlobs } from '../files/blobs.ts';
+import { importIfCalendar } from '../files/calendar-import.ts';
 import { importEta, type ImportEta } from '../files/eta.ts';
 import {
   CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_IMPORT, FILES_PER_LOCATION, MAX_CHUNKS, MAX_FILE_BYTES, RAW_PART_BYTES, RAW_RETENTION_DAYS,
@@ -280,6 +282,8 @@ export async function createFile(ctx: TownwiseContext, req: Request, res: Respon
   res.status(201).json({
     file: fileView(member, file, file.byStaff ? TOWNWISE_STAFF : member.email, null),
     import: record === null ? null : { id: record.id, status: record.status },
+    // D59: whether TownwiseAI reads files here on its own now, so the client sends its box's `aiAuto: true` on complete.
+    autoRead: ctx.config.agentAuto && ctx.aiReads !== null && (await ctx.stores.orgs.findById(scope.orgId))?.agentAuto.on === true,
     limits: {
       maxFileBytes: MAX_FILE_BYTES,
       chunkSize: CHUNK_BYTES,
@@ -357,12 +361,21 @@ async function receive(ctx: TownwiseContext, req: Request, res: Response, princi
   });
 }
 
-/** POST /files/:fileId/complete: commits the chunks, tells the kind, and queues the file if its import started. */
+const completeBody = z.strictObject({ aiAuto: z.boolean().optional() });
+
+/**
+ * POST /files/:fileId/complete: commits the chunks, tells the kind, and queues the file if its import started. A
+ * reference file that is a calendar file is then imported as one of the location's calendars (D60,
+ * files/calendar-import.ts), which never fails the upload; the answer is the same either way.
+ */
 export async function completeFile(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const blobs = filesOn(ctx);
   const member = memberOf(principal);
   const { scope } = member;
-  parseInput(z.strictObject({}), req.body);
+  // D59: `aiAuto: true` only when the person left the box checked as the upload finished; anything else keeps the file
+  // from TownwiseAI's automatic reads, so an upload with no box (a chat attachment, an item's edit) or from an older
+  // client is never read on its own.
+  const body = parseInput(completeBody, req.body);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const file = await loadFile(ctx, scope, location.id, req.params.fileId);
   if (file.uploadedBy !== member.userId) throw new AppError(403, 'forbidden', 'Only the person uploading this file can finish it');
@@ -381,7 +394,8 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
     throw storageUnavailable(ctx, 'commit', new BlobUnavailableError('BlockMissing', null));
   });
   const fingerprint = fingerprintOf(session.chunkSize, session.chunks.map((chunk) => chunk?.sha256 ?? ''));
-  const { kind } = sniff(file.name, Buffer.from(session.head ?? '', 'base64'));
+  const head = Buffer.from(session.head ?? '', 'base64');
+  const { kind } = sniff(file.name, head);
   const duplicate = await ctx.stores.files.duplicateOf(scope, location.id, file.purpose, fingerprint, file.id);
   if (duplicate !== null) {
     await blobCall(ctx, 'delete_raw', () => blobs.deleteRaw(scope, ref), () => undefined);
@@ -395,15 +409,20 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
   }
   if (file.purpose === 'reference') {
     // Kept as it is: read by no one, in no import.
-    const kept = await ctx.stores.files.finishUpload(scope, file.id, { fingerprint, kind, status: 'kept', outcome: 'reference' });
+    const kept = await ctx.stores.files.finishUpload(scope, file.id, { fingerprint, kind, status: 'kept', outcome: 'reference', aiAuto: body.aiAuto === true });
     if (kept === null) throw new AppError(409, 'file_not_uploading', 'This file is not uploading');
     await recordUploaded(ctx, member, kept);
+    await importIfCalendar(ctx, blobs, member, location, kept, head);
+    // D59: TownwiseAI reads it on its own, unless its box was unchecked or either switch is off.
+    if (await queueAutoRead({ stores: ctx.stores, logger: ctx.logger, now: ctx.now, on: ctx.config.agentAuto && ctx.aiReads !== null }, scope, kept)) {
+      ctx.aiReads?.nudge();
+    }
     res.status(200).json({ file: fileView(member, kept, kept.byStaff ? TOWNWISE_STAFF : member.email, null), import: null });
     return;
   }
   const before = await ctx.stores.imports.get(scope, location.id, file.importId ?? '');
   const stored = await ctx.stores.files.finishUpload(scope, file.id, {
-    fingerprint, kind, status: before === null || before.status === 'open' ? 'stored' : 'queued',
+    fingerprint, kind, status: before === null || before.status === 'open' ? 'stored' : 'queued', aiAuto: body.aiAuto === true,
   });
   if (stored === null) throw new AppError(409, 'file_not_uploading', 'This file is not uploading');
   const placed = await place(ctx, member, stored);
@@ -456,9 +475,11 @@ async function place(ctx: TownwiseContext, member: MemberPrincipal, file: FileRe
   }
 }
 
+// D59 slice 4: `aiAuto: true` only when the person left the box checked as they saved it, as on an upload's complete.
 const textBody = z.strictObject({
   title: z.string().trim().min(1).max(TEXT_ITEM_TITLE_MAX),
   text: z.string().min(1).max(TEXT_ITEM_MAX_CHARS),
+  aiAuto: z.boolean().optional(),
 });
 
 /**
@@ -469,7 +490,7 @@ const textBody = z.strictObject({
  */
 export async function keepTextItem(
   ctx: TownwiseContext, res: Response, member: MemberPrincipal, blobs: FileBlobs, locationId: string,
-  input: { id?: string; title: string; text: string; addedVia: 'townwise_ai' | null },
+  input: { id?: string; title: string; text: string; addedVia: 'townwise_ai' | null; aiAuto?: boolean },
 ): Promise<{ file: FileRecord; created: boolean } | null> {
   const { scope } = member;
   const now = ctx.now();
@@ -498,14 +519,23 @@ export async function keepTextItem(
   return saved;
 }
 
-/** POST /data/text: pasted text kept as a reference item, a `.txt` file named from its title. */
+/**
+ * POST /data/text: pasted text kept as a reference item, a `.txt` file named from its title. D59 slice 4: with its box
+ * checked (`aiAuto: true`), TownwiseAI reads it on its own as a stored file, while both switches are on.
+ */
 export async function addTextItem(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const blobs = filesOn(ctx);
   const member = memberOf(principal);
   const body = parseInput(textBody, req.body);
   const location = await loadLocation(ctx, member.scope, req.params.locationId);
-  const saved = await keepTextItem(ctx, res, member, blobs, location.id, { title: body.title, text: body.text, addedVia: null });
-  if (saved !== null) res.status(201).json({ file: fileView(member, saved.file, saved.file.byStaff ? TOWNWISE_STAFF : member.email, null) });
+  const saved = await keepTextItem(ctx, res, member, blobs, location.id, {
+    title: body.title, text: body.text, addedVia: null, ...(body.aiAuto === true ? { aiAuto: true } : {}),
+  });
+  if (saved === null) return;
+  if (saved.created && await queueAutoRead({ stores: ctx.stores, logger: ctx.logger, now: ctx.now, on: ctx.config.agentAuto && ctx.aiReads !== null }, member.scope, saved.file)) {
+    ctx.aiReads?.nudge();
+  }
+  res.status(201).json({ file: fileView(member, saved.file, saved.file.byStaff ? TOWNWISE_STAFF : member.email, null) });
 }
 
 // ---- Reading the list ---------------------------------------------------------------------------------------------

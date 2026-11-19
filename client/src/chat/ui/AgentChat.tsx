@@ -135,14 +135,28 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 const SATURDAY = 'Tell me about last Saturday';
 
 /**
- * The landing's words (spec P25), known from the location before the chat loads: the landing and its skeleton both
- * set them, so the skeleton takes the lines the landing will.
+ * What the landing says TownwiseAI saves (UI review 2026-11-19): while it works on its own (D59, the panel's
+ * `agentAuto` on and running here) what it's sure of, with Undo; otherwise, as before, notes the person decides on.
+ * [CONFIRM: the landing's words while TownwiseAI works on its own]
  */
-function landingWords(ctx: AgentChatContext): { heading: string; line: string; help: string; link: boolean } {
+const SAVES_AUTO = 'It saves what it’s sure of, each change with Undo in its activity; anything it isn’t sure of waits for you.';
+const SAVES_OFF = 'It suggests notes; you decide what’s saved.';
+
+/** TownwiseAI works on its own here, from the panel's read: off while it loads, fails or comes from an API before D59. */
+function worksOnItsOwn(panel: AgentPanelState): boolean {
+  const auto = panel.state.status === 'ready' ? panel.state.data.agentAuto : null;
+  return auto?.on === true && auto.available;
+}
+
+/**
+ * The landing's words (spec P25), known from the location before the chat loads: the landing and its skeleton both
+ * set them, so the skeleton takes the lines the landing will. `auto`: TownwiseAI works on its own here.
+ */
+function landingWords(ctx: AgentChatContext, auto: boolean): { heading: string; line: string; help: string; link: boolean } {
   return {
     heading: `Ask TownwiseAI about ${ctx.locationName}`,
     line: ctx.hasSales
-      ? `It reads ${readsLine(ctx)}, and shows you each thing it reads. It suggests notes; you decide what’s saved.`
+      ? `It reads ${readsLine(ctx)}, and shows you each thing it reads. ${auto ? SAVES_AUTO : SAVES_OFF}`
       : ctx.uploadsOff === true
         ? `Every sales upload for this location is turned off, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}. Turn one back on in Your data.`
         : `You haven’t uploaded sales yet, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}.`,
@@ -171,8 +185,8 @@ function landingSuggestions(ctx: AgentChatContext, today: string): ReturnType<ty
  * (useTuningChat), so a refresh mid-reply goes from this to the thread, never through the landing. Nothing here
  * scrolls, so the thread's pin starts fresh when the thread mounts.
  */
-function PageSkeleton(props: { ctx: AgentChatContext; phone: boolean; beside: boolean }): React.JSX.Element {
-  const words = landingWords(props.ctx);
+function PageSkeleton(props: { ctx: AgentChatContext; phone: boolean; beside: boolean; auto: boolean }): React.JSX.Element {
+  const words = landingWords(props.ctx, props.auto);
   const line = <Text style={styles.body}><SkeletonWords>{words.line}</SkeletonWords></Text>;
   return (
     <Skeleton name="agent" label="Loading TownwiseAI…" fill>
@@ -524,7 +538,7 @@ export function AgentChat(props: {
   }
 
   // Every state of the page catches a drop of files, so the browser never opens one in its place.
-  if (state.status === 'loading') return <View style={styles.fill}><PageSkeleton ctx={ctx} phone={phone} beside={beside} />{drop}</View>;
+  if (state.status === 'loading') return <View style={styles.fill}><PageSkeleton ctx={ctx} phone={phone} beside={beside} auto={worksOnItsOwn(props.panel)} />{drop}</View>;
   if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text>{drop}</View>;
   if (state.status === 'failed') return panelOnly(<ErrorNotice message={state.loadError ?? 'Something went wrong.'} onRetry={chat.reload} />);
   if (!state.enabled) {
@@ -538,7 +552,7 @@ export function AgentChat(props: {
 
   const today = localToday();
   const suggestions = landingSuggestions(ctx, today);
-  const words = landingWords(ctx);
+  const words = landingWords(ctx, worksOnItsOwn(props.panel));
   const examples = [...suggestions.flatMap((item) => (item.kind === 'ask' ? [item.text] : [])), ...(ctx.hasSales ? [SATURDAY] : [])];
   const exhausted = state.budget?.exhausted === true;
   const warning = state.budget === null ? null : budgetLines(state.budget).warning;

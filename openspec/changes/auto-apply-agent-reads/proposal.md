@@ -27,6 +27,7 @@ By the owner's rule of 2026-11-16, features the owner asks for ship on by defaul
 - **Slice 2 (after PR #110 merges):** D58's sort runs on import, and labels it is sure of are confirmed on their own, with Undo per calendar.
 - **Slice 3:** weekly, calendar-event and closure-rule suggestions it is sure of are applied. A calendar refresh brings the weekly pass forward, at most once a day.
 - **Slice 4:** chat saves a note the person stated plainly, with Undo on the card. This changes the frozen prefix, so it ships with the other prefix changes.
+- **Slice 5 (owner, 2026-11-18):** "if he connects his google calendar and puts in that they are closed then the question should go away about the rule in all places". When a calendar's events switch, code (no model) checks the location's open closure questions and suggestions against all its calendars. One that a calendar plainly answers closed goes from every place it shows, and, while TownwiseAI works on its own, the closure is saved from the calendar event with Undo, so the forecast follows (design decision 16).
 
 ## Capabilities
 

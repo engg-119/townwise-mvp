@@ -13,8 +13,14 @@ export const TITLE_MAX = 120;
 export const DATA = {
   kicker: 'Everything your team added',
   title: 'Your data',
-  /** The list's heading, under the Calendars group, so the list never reads as part of it (UI review S5). */
-  uploadsHeading: 'Uploads and files',
+  /** The kind of a calendar's row (D61). */
+  calendarKind: 'Calendar',
+  /** Under Organized while an older page is still to load (D61). */
+  foldersSoFar: 'The folders count the items shown so far. Show older items below sorts in the rest.',
+  /** An open folder with nothing in it (D61). */
+  folderEmpty: 'Nothing in this folder yet.',
+  /** Atop the open Not sorted yet folder (D61): how Townwise files an item. */
+  unsortedHelp: 'Townwise files an item once it knows what it is: a sales upload, a calendar, pasted text, or a file TownwiseAI read. Let TownwiseAI read a file on its page to sort it.',
   show: 'Show',
   allLocations: 'All locations',
   uploadHistory: 'Upload sales history',
@@ -62,7 +68,12 @@ export const COLUMNS = {
 } as const;
 
 export function lead(locationName: string): string {
-  return `Sales uploads, files and text your team added for ${locationName}, newest first. Open an item to turn it off and leave it out of your numbers, forecasts and TownwiseAI without deleting it.`;
+  return `Sales uploads, calendars, files and text your team added for ${locationName}. Open an item to turn it off and leave it out of your numbers, forecasts and TownwiseAI without deleting it.`;
+}
+
+/** A folder's button's name (D61): “Sales, 3 items”. */
+export function folderCountLine(folder: string, count: number): string {
+  return `${folder}, ${plural(count, 'item', 'items')}`;
 }
 
 export function tableLabel(locationName: string | null): string {

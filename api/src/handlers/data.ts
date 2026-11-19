@@ -9,25 +9,30 @@ import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+import { wantRefitFor } from '../agent/refit.ts';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
+import { folderOf, isUnimportedCalendarFile, type DataFolder } from '../data/folders.ts';
 import {
   DATA_PAGE, listDataItems, loadDataItem, parseRef, refString, type DataCursor, type DataItemRecord, type DataState, type DataVia,
 } from '../data/library.ts';
 import type { FileBlobs } from '../files/blobs.ts';
+import { RETRYABLE_IMPORTS, runCalendarImport } from '../files/calendar-import.ts';
 import { renamedItemName, replaceClaimLive, replaceClaimStaleBefore, TEXT_ITEM_TITLE_MAX } from '../files/items.ts';
 import { AI_READS_IN_FLIGHT } from '../files/limits.ts';
 import { currentEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
 import type {
-  AiActionsOutcome, AiCalibration, AiDaysReason, AiEventEffect, AiEventKind, AiFileKind, AiItemReason, AiReadStatus, FileKind, FileRecord,
-  FileStatus,
+  AiActionsOutcome, AiCalibration, AiDaysReason, AiEventEffect, AiEventKind, AiFileKind, AiItemReason, AiReadStatus, CalendarImportCode,
+  FileKind, FileRecord, FileStatus,
 } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord } from '../stores/notes.ts';
+import type { CalendarKind, CalendarStatus, OwnerCalendarRecord } from '../stores/owner-calendars.ts';
 import { fileView, isUploaderOrAdmin, removeWholeFile } from './files.ts';
 import { loadLocation, memberOf } from './locations.ts';
-import { finishAccepted } from './rule-suggestions.ts';
+import { calendarOfFile, shownView } from './owner-calendars.ts';
+import { finishAccepted, finishAcceptedNote } from './rule-suggestions.ts';
 import { filesUnavailable } from './sales.ts';
 import { actorOf } from './team.ts';
 
@@ -73,7 +78,34 @@ export interface DataItemView {
    * stored files are off.
    */
   fromAiRead: string | null;
+  /**
+   * D60: on one item's view only (GET .../data/:ref and POST .../data/:ref/calendar), never the list's, what importing
+   * the stored file (`f_`) as a calendar did: `added` while its calendar exists (its id, label and event count);
+   * `removed` once that calendar was removed (the file stays, and is never imported again); `refused` with the code and
+   * whether a retry may mend it (`retry`: the location had 5 calendars, or the original couldn't be read, and the
+   * original is still stored); null for any other item, and while stored files are off.
+   */
+  calendar?: DataItemCalendarView | null;
+  /** D61: the Your data folder the item is in (data/folders.ts), from what Townwise knows of it, never its name. */
+  folder: DataFolder;
 }
+
+/**
+ * D61: one of the list's calendars, an item of Your data's Calendars folder: never its address, and to staff a Google
+ * calendar is "Google calendar" (as Your calendars shows it). It opens at the client's `c_<id>` item page.
+ */
+export interface DataCalendarView {
+  id: string; locationId: string; label: string; kind: CalendarKind;
+  /** A link's host (`calendar.google.com`); null for a file or a Google calendar. */
+  host: string | null;
+  eventCount: number; skippedRepeating: number; status: CalendarStatus; lastSuccessAt: string | null; createdAt: string;
+}
+
+/** What importing a calendar file kept in Your data did (DataItemView.calendar, D60). */
+export type DataItemCalendarView =
+  | { status: 'added'; calendarId: string; label: string; eventCount: number }
+  | { status: 'removed' }
+  | { status: 'refused'; reason: CalendarImportCode; retry: boolean };
 
 /**
  * A read's state and, once done, what TownwiseAI found and what it made (spec 11A.9). `kind`, `summary`, `facts` and
@@ -353,6 +385,7 @@ function dataItemView(
     canAiRead: aiReadable(member, item, file, aiOn),
     ai: aiView(member, file, links, withEvents),
     fromAiRead: links.sources.get(aiSourceOf(item) ?? '') ?? null,
+    folder: folderOf(item),
   };
 }
 
@@ -379,13 +412,31 @@ async function itemViews(ctx: TownwiseContext, member: MemberPrincipal, items: r
 
 /**
  * One item as the client sees it, with its emails read now (also Keep on a TownwiseAI card, chat-item-proposals.ts);
- * with `events`, its read's events too (DataItemAiView.events, D49).
+ * with `events`, its read's events too (DataItemAiView.events, D49); with `calendar`, its calendar import (D60).
  */
 export async function itemView(
-  ctx: TownwiseContext, member: MemberPrincipal, item: DataItemRecord, opts: { events?: boolean } = {},
+  ctx: TownwiseContext, member: MemberPrincipal, item: DataItemRecord, opts: { events?: boolean; calendar?: boolean } = {},
 ): Promise<DataItemView> {
-  const [emails, links] = await Promise.all([emailsFor(ctx, [item]), aiLinksFor(ctx, member.scope, [item])]);
-  return dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, ctx.now(), links, opts.events === true);
+  const [emails, links, calendar] = await Promise.all([
+    emailsFor(ctx, [item]), aiLinksFor(ctx, member.scope, [item]), opts.calendar === true ? calendarOf(ctx, member.scope, item) : undefined,
+  ]);
+  const view = dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, ctx.now(), links, opts.events === true);
+  return calendar === undefined ? view : { ...view, calendar };
+}
+
+/**
+ * A stored file's calendar import (DataItemCalendarView): the calendar that keeps its id says it was added, also when
+ * the file's own record was never written; else the file's record says whether it was added once or refused.
+ */
+async function calendarOf(ctx: TownwiseContext, scope: OrgScope, item: DataItemRecord): Promise<DataItemCalendarView | null> {
+  const file = item.file;
+  if (ctx.files === null || item.ref.type !== 'file' || file === null) return null;
+  const calendar = await calendarOfFile(ctx, scope, item.locationId, file.id);
+  if (calendar !== null) return { status: 'added', calendarId: calendar.id, label: calendar.label, eventCount: calendar.eventCount };
+  const record = file.calendarImport;
+  if (record === null) return null;
+  if (record.state === 'added') return { status: 'removed' };
+  return { status: 'refused', reason: record.code, retry: RETRYABLE_IMPORTS.has(record.code) && file.rawDeletedAt === null };
 }
 
 const listQuery = z.object({ locationId: objectId.optional(), after: z.string().max(64).optional() });
@@ -400,9 +451,28 @@ function parseCursor(raw: string): DataCursor {
   return { at, id: match[2] ?? '' };
 }
 
+/** The calendars of the location, or of every location of the organization for null (D61). */
+async function scopeCalendars(ctx: TownwiseContext, scope: OrgScope, location: LocationRecord | null): Promise<OwnerCalendarRecord[]> {
+  const ids = location === null ? (await ctx.stores.locations.list(scope)).map((each) => each.id) : [location.id];
+  return (await Promise.all(ids.map((id) => ctx.stores.ownerCalendars.list(scope, id)))).flat();
+}
+
+function dataCalendarView(calendar: OwnerCalendarRecord, member: MemberPrincipal): DataCalendarView {
+  const shown = shownView(calendar, member);
+  return {
+    id: shown.id, locationId: calendar.locationId, label: shown.label, kind: shown.kind, host: shown.host, eventCount: shown.eventCount,
+    skippedRepeating: shown.skippedRepeating, status: shown.status, lastSuccessAt: shown.lastSuccessAt, createdAt: shown.createdAt,
+  };
+}
+
 /**
  * GET /org/data?locationId=&after=: the location's items (every location's without one), newest first, 100 a page;
- * `next` is the cursor for the page after, or null on the last. A read: it logs nothing and records nothing.
+ * `next` is the cursor for the page after, or null on the last. D61: `calendars`, the same on every page, are the
+ * scope's calendars (oldest first, each location's in turn), each an item of the Calendars folder; a stored file a
+ * calendar was imported from (D60) is left out of `items` while that calendar exists, so it shows once, as the
+ * calendar (a page may then hold fewer than 100 with more to come). Each item carries its `folder`. D59: `agentAuto`,
+ * whether TownwiseAI reads a file added here on its own (TOWNWISE_AGENT_AUTO, TownwiseAI reading files and the
+ * organization's switch), so Add a file's box starts checked. A read: it logs nothing and records nothing.
  */
 export async function listData(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
@@ -410,10 +480,18 @@ export async function listData(ctx: TownwiseContext, req: Request, res: Response
   const query = parseInput(listQuery, req.query);
   const after = query.after === undefined ? null : parseCursor(query.after);
   const location = query.locationId === undefined ? null : await loadLocation(ctx, scope, query.locationId);
-  const page = await listDataItems(ctx, scope, { locationId: location?.id ?? null, viewerId: member.userId, after, limit: DATA_PAGE });
+  const [page, calendars] = await Promise.all([
+    listDataItems(ctx, scope, { locationId: location?.id ?? null, viewerId: member.userId, after, limit: DATA_PAGE }),
+    scopeCalendars(ctx, scope, location),
+  ]);
+  const imported = new Set(calendars.flatMap((calendar) => calendar.fromFileId ?? []));
+  const items = page.items.filter((item) => item.ref.type !== 'file' || !imported.has(item.ref.id));
+  const agentAuto = ctx.config.agentAuto && ctx.aiReads !== null && (await ctx.stores.orgs.findById(scope.orgId))?.agentAuto.on === true;
   res.status(200).json({
-    items: await itemViews(ctx, member, page.items),
+    items: await itemViews(ctx, member, items),
     next: page.next === null ? null : `${page.next.at.toISOString()}_${page.next.id}`,
+    calendars: calendars.map((calendar) => dataCalendarView(calendar, member)),
+    agentAuto,
   });
 }
 
@@ -429,7 +507,42 @@ export async function getDataItem(ctx: TownwiseContext, req: Request, res: Respo
   const location = await loadLocation(ctx, member.scope, req.params.locationId);
   const item = await loadDataItem(ctx, member.scope, location.id, ref, member.userId);
   if (item === null) throw notFound();
-  res.status(200).json({ item: await itemView(ctx, member, item, { events: true }) });
+  res.status(200).json({ item: await itemView(ctx, member, item, { events: true, calendar: true }) });
+}
+
+/**
+ * POST /locations/:locationId/data/:ref/calendar {}: imports a calendar file kept in Your data again (D60), after its
+ * import was refused for a cause a retry may mend (`calendar.retry`: the location had 5 calendars, or its original
+ * couldn't be read), or (UI review 2026-11-19, Import as a calendar) for the first time, a calendar file kept before
+ * D60 with no import record while its original is kept. Any member, as Your calendars' import; never under view-as (the
+ * chain refuses it). In order: 400 for the body and the ref, 404 for another organization's or an unknown location or
+ * item, 503 files_unavailable while stored files are off, and 400 invalid_request for an item that is no calendar file
+ * (an old one whose original was deleted included). 200 with the item and its
+ * `calendar` as they are after it: a retry refused again says so there, and an item already added, removed or refused
+ * for good is answered as it is, so a double press is harmless and never imports a file twice.
+ */
+export async function retryDataCalendar(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const member = memberOf(principal);
+  const { scope } = member;
+  parseInput(z.strictObject({}), req.body);
+  const ref = parseRef(req.params.ref);
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const blobs = ctx.files;
+  if (blobs === null) throw filesUnavailable();
+  const item = await loadDataItem(ctx, scope, location.id, ref, member.userId);
+  if (item === null) throw notFound();
+  const calendar = await calendarOf(ctx, scope, item);
+  const file = item.file;
+  // UI review 2026-11-19: a calendar file kept before D60 (no record, no calendar) is imported here once, while its
+  // original is kept; the calendar's unique index on the file's id still holds two presses at once to one calendar.
+  const unimported = calendar === null && file !== null && item.ref.type === 'file' && file.purpose === 'reference'
+    && file.status === 'kept' && file.rawDeletedAt === null && isUnimportedCalendarFile(file);
+  if (file === null || (calendar === null && !unimported)) throw invalidRequest();
+  let shown = item;
+  if (unimported || (calendar?.status === 'refused' && calendar.retry)) {
+    shown = { ...item, file: { ...file, calendarImport: await runCalendarImport(ctx, blobs, member, location, file) } };
+  }
+  res.status(200).json({ item: await itemView(ctx, member, shown, { calendar: true }) });
 }
 
 /** The location, then the item by its ref; a stored file answers 503 files_unavailable while files are off. */
@@ -779,7 +892,10 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
   let suggestions = 0;
   for (const open of await ctx.stores.agentSuggestions.openFromFile(scope, location.id, file.id)) {
     const rule = await ctx.stores.businessRules.find(scope, location.id, open.id);
+    // D59: a note suggestion whose note an accept already wrote under its id is finished as accepted, as a rule is.
+    const accepted = open.type === 'note' ? await ctx.stores.notes.find(scope, location.id, open.id) : null;
     if (rule !== null && open.type === 'rule') await finishAccepted(ctx, member, location, open, rule);
+    else if (accepted !== null && open.type === 'note') await finishAcceptedNote(ctx, member, location, open);
     else if (await ctx.stores.agentSuggestions.removeOpen(scope, location.id, open.id)) suggestions += 1;
   }
   let days = 0;
@@ -792,6 +908,9 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
     ctx.logger.info({ fileId: summary.id }, 'townwise.file_deleted');
     items += 1;
   }
+  // D59: the file's changes in TownwiseAI's ledger read as undone, so none of them is ever made again.
+  await ctx.stores.agentChanges.markSourceUndone(scope, location.id, { kind: 'file', id: file.id }, { by: member.userId, now: ctx.now() });
+  if (notes > 0 || days > 0) await wantRefitFor(ctx, scope, location.id, 'always');
   if (await ctx.stores.files.finishAiUndo(scope, location.id, file.id)) {
     await recordAfter(ctx, {
       ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'file.ai_undone',
@@ -812,7 +931,7 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
  * may still have had a write in flight: days it landed meanwhile go too. Shared by DELETE .../data/:ref and an undo of
  * a TownwiseAI read (whose upload no stored file wrote).
  */
-async function removeUpload(ctx: TownwiseContext, scope: OrgScope, locationId: string, uploadId: string): Promise<{ deletedDays: number; deletedFiles: number }> {
+export async function removeUpload(ctx: TownwiseContext, scope: OrgScope, locationId: string, uploadId: string): Promise<{ deletedDays: number; deletedFiles: number }> {
   // Read whether files are on or not: an upload read from a stored file keeps it, and its blobs, while files are off.
   const files = await ctx.stores.files.byUploadIds(scope, [uploadId]);
   if (files.length > 0) {

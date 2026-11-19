@@ -9,10 +9,18 @@
 // so one read shows once. Never the file's name: names stay in the files list, and this panel is read under view-as
 // too. A later source appends itself to ACTIVITY_SOURCES (forecasts add `forecast_made`). The client renders a kind it
 // does not know as nothing.
+//
+// D59 (openspec change auto-apply-agent-reads, design decision 11): each change TownwiseAI saved on its own, as
+// `agent_change { changeId, action, sourceKind, status, startDate, endDate, noteKind, weekdays, count, undoable, sourcePasted }`, dated when it was
+// applied, with no title, why, file name or figure (the why is in the log). `undoable` is false under view-as, once a
+// person changed the target, and for a caller the action's role refuses. The upload a `sales_days.add` change wrote is
+// then left out, so the change shows once.
 import type { TownwiseContext } from '../app.ts';
-import type { OrgScope } from '../access/policy.ts';
+import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
+import type { AgentChangeAction, AgentChangeStatus, AgentSourceKind } from '../stores/agent-changes.ts';
 import type { NoteKind, NoteRecord } from '../stores/notes.ts';
 import type { AnswerRecord } from '../stores/agent-answers.ts';
+import { fromPasted, pastedSources, targetStates, undoable } from './changes.ts';
 import { noteFor, parseQuestionId } from './questions.ts';
 
 /** At most this many items. */
@@ -21,12 +29,21 @@ export const MAX_ACTIVITY = 20;
 const UPLOADS_READ = 10;
 /** F3: stored files read per request, newest first. */
 const FILES_READ = 10;
+/** D59: TownwiseAI's changes read per request, newest first. */
+const CHANGES_READ = MAX_ACTIVITY;
 
 export type ActivityItem =
   | { at: string; kind: 'upload_applied'; firstDate: string; lastDate: string; dayCount: number }
   | { at: string; kind: 'note_saved'; via: 'chat' | 'question'; noteId: string; noteKind: NoteKind; startDate: string; endDate: string }
   | { at: string; kind: 'question_answered'; questionId: string; answer: 'open' | 'not_sure' | 'other' }
-  | { at: string; kind: 'file_processed'; fileId: string; firstDate: string; lastDate: string; dayCount: number };
+  | { at: string; kind: 'file_processed'; fileId: string; firstDate: string; lastDate: string; dayCount: number }
+  | {
+    at: string; kind: 'agent_change'; changeId: string; action: AgentChangeAction; sourceKind: AgentSourceKind; status: AgentChangeStatus;
+    startDate: string | null; endDate: string | null; noteKind: NoteKind | null; weekdays: readonly number[] | null; count: number | null;
+    undoable: boolean;
+    /** UI review 2026-11-19: a `file` change from text pasted on Your data. */
+    sourcePasted: boolean;
+  };
 
 export interface ActivityInput {
   readonly ctx: TownwiseContext;
@@ -34,6 +51,8 @@ export interface ActivityInput {
   readonly locationId: string;
   /** The caller: only their own conversations' proposals show. */
   readonly userId: string;
+  /** D59: the caller, for whether Undo is offered on TownwiseAI's changes; none offered when left out. */
+  readonly caller?: Pick<MemberPrincipal, 'role' | 'userId' | 'viewAs'>;
   /** The location's notes and answers, already read for the questions. */
   readonly notes: readonly NoteRecord[];
   readonly answers: readonly AnswerRecord[];
@@ -103,8 +122,24 @@ const files: ActivitySource = async ({ ctx, scope, locationId, userId }) => {
   });
 };
 
+/**
+ * D59: the changes TownwiseAI saved on its own, newest first, but those still being applied; a `sales_days.add` change
+ * carries its upload's id, so the merge leaves that upload's own item out.
+ */
+export const agentChangeSource: ActivitySource = async ({ ctx, scope, locationId, caller }) => {
+  const { changes } = await ctx.stores.agentChanges.page(scope, locationId, { limit: CHANGES_READ });
+  const shown = changes.filter((change) => change.status !== 'applying');
+  const [states, pasted] = await Promise.all([targetStates(ctx, scope, locationId, shown), pastedSources(ctx, scope, shown)]);
+  return shown.map((change): SourceItem => ({
+    at: change.appliedAt.toISOString(), kind: 'agent_change', changeId: change.id, action: change.action, sourceKind: change.sourceKind,
+    status: change.status, startDate: change.startDate, endDate: change.endDate, noteKind: change.noteKind, weekdays: change.weekdays,
+    count: change.count, undoable: caller === undefined ? false : undoable(caller, change, states), sourcePasted: fromPasted(change, pasted),
+    ...(change.action === 'sales_days.add' ? { uploadId: change.targetId } : {}),
+  }));
+};
+
 /** Append-only: each later source adds one entry. */
-export const ACTIVITY_SOURCES: readonly ActivitySource[] = [uploads, savedProposals, answers, files];
+export const ACTIVITY_SOURCES: readonly ActivitySource[] = [uploads, savedProposals, answers, files, agentChangeSource];
 
 /** The item as the route answers it: without the merge's upload link. */
 function published(item: SourceItem): ActivityItem {
@@ -116,7 +151,9 @@ function published(item: SourceItem): ActivityItem {
 /** Every source's items, newest first, at most MAX_ACTIVITY; an upload a listed file's read wrote shows as that file. */
 export async function activityFor(input: ActivityInput, sources: readonly ActivitySource[] = ACTIVITY_SOURCES): Promise<ActivityItem[]> {
   const items = (await Promise.all(sources.map((source) => source(input)))).flat();
-  const fromFiles = new Set(items.flatMap((item) => (item.kind === 'file_processed' && item.uploadId !== undefined ? [item.uploadId] : [])));
+  const fromFiles = new Set(items.flatMap((item) => (
+    (item.kind === 'file_processed' || item.kind === 'agent_change') && item.uploadId !== undefined ? [item.uploadId] : []
+  )));
   return items
     .filter((item) => item.kind !== 'upload_applied' || item.uploadId === undefined || !fromFiles.has(item.uploadId))
     .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, MAX_ACTIVITY).map(published);

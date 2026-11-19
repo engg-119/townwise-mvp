@@ -49,6 +49,8 @@ import type { LocationRecord } from '../stores/locations.ts';
 import { REFRESH_INTERVAL_MS, type CalendarFailure, type ParsedCalendar, type ReplaceResult } from '../stores/owner-calendars.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { createCalendarFetcher, type CalendarFetcher, type CalendarFetchResult } from './fetch.ts';
+import { answerFromCalendars } from './answers.ts';
+import { bringPassForward } from './early-pass.ts';
 import { followLinkedNotes } from './follow-up.ts';
 import type { GoogleCalendarClient, revokeGoogleGrant } from './google.ts';
 import { endGoogleAccess, endUnusedGoogleAccess, markCalendarForCheck, readGoogleSource, seatOf, type GoogleAccessDeps } from './google-access.ts';
@@ -78,6 +80,11 @@ export interface CalendarRefresherDeps {
   readonly tickMs?: number;
   /** The first look after start; tests shorten it. */
   readonly firstTickMs?: number;
+  /**
+   * TOWNWISE_AGENT_AUTO (D59 slice 5): with an organization's own switch, whether a calendar's answers to TownwiseAI's open
+   * questions are saved as notes and rules (calendar/answers.ts). Absent, false: the answers are recorded and nothing is saved.
+   */
+  readonly agentAuto?: boolean;
 }
 
 export interface CalendarRefresher {
@@ -212,8 +219,14 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
     // After: a location or calendar removed meanwhile keeps nothing this refresh wrote.
     const after = await calendars.find(scope, locationId, calendarId);
     if (after === null || (await stores.locations.find(scope, locationId)) === null) return removed();
-    // Notes linked to its events follow them (calendar-event-suggestions); never fails the refresh.
-    if (replaced?.switched === true) await followLinkedNotes({ stores, logger }, scope, location, calendarId, replaced, at);
+    // Notes linked to its events follow them (calendar-event-suggestions), (D59 slice 5) the location's calendars answer
+    // its open closure questions (calendar/answers.ts), and (D59 slice 3) an event added or moved in the next 91 days
+    // brings the weekly pass forward (calendar/early-pass.ts); none fails the refresh.
+    if (replaced?.switched === true) {
+      await followLinkedNotes({ stores, logger }, scope, location, calendarId, replaced, at);
+      await answerFromCalendars({ stores, logger, now, agentAuto: deps.agentAuto ?? false }, scope, location);
+      await bringPassForward({ stores, logger }, scope, location, calendarId, replaced.changed, at);
+    }
     await calendars.releaseRefresh(scope, locationId, calendarId, {
       leaseUntil, nextRefreshAt: nextRefreshAt(at, result.ok ? 0 : after.consecutiveFailures),
     });

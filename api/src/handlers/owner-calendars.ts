@@ -25,6 +25,9 @@ import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter } from '../audit.ts';
 import type { CalendarFetchCode } from '../calendar/fetch.ts';
+import { queueAutoSort } from '../calendar/auto-sort.ts';
+import { bringPassForward } from '../calendar/early-pass.ts';
+import { answerFromCalendars, takeBackAnswers } from '../calendar/answers.ts';
 import { followLinkedNotes } from '../calendar/follow-up.ts';
 import {
   endUnusedGoogleAccess, googleAccessDeps, googleAccessToken, logGoogleFailure, markCalendarForCheck,
@@ -75,6 +78,12 @@ export interface OwnerCalendarView {
   format: 'ics' | 'csv' | null;
   /** A file calendar's booking labels (D58): their state and counts; null for a link or a Google calendar. */
   bookings: { state: BookingsState; sortedAt: string | null; confirmedAt: string | null; counts: BookingCounts } | null;
+  /**
+   * D61, on the list only: the Your data item (`f_<fileId>`) a file calendar was imported from (D60), while that file is
+   * still kept and stored files are on; null otherwise. Your data shows such a file once, as this calendar, so the
+   * calendar's page links to it.
+   */
+  fromFile?: string | null;
 }
 
 /**
@@ -224,9 +233,15 @@ async function loadCalendar(ctx: TownwiseContext, scope: OrgScope, locationId: s
 
 type CalendarAction = 'owner_calendar.added' | 'owner_calendar.removed' | 'owner_calendar.refreshed';
 
-/** Ids, the kind, the event count and (but on removal) the status: never the label, host, address or a title. */
+/**
+ * Ids, the kind, the event count, (but on removal) the status and (D60, on an add from a stored file) the file's id:
+ * never the label, host, address or a title.
+ */
 function recordCalendar(ctx: TownwiseContext, caller: MemberPrincipal, action: CalendarAction, calendar: OwnerCalendarRecord, at: Date): Promise<void> {
-  const details: AuditDetails = { locationId: calendar.locationId, calendarId: calendar.id, kind: calendar.kind, eventCount: calendar.eventCount };
+  const details: AuditDetails = {
+    locationId: calendar.locationId, calendarId: calendar.id, kind: calendar.kind, eventCount: calendar.eventCount,
+    ...(action === 'owner_calendar.added' && calendar.fromFileId !== null ? { fileId: calendar.fromFileId } : {}),
+  };
   return recordAfter(ctx, {
     ...actorOf(caller), at, orgId: caller.scope.orgId, action,
     target: { type: 'owner_calendar', id: calendar.id },
@@ -248,7 +263,7 @@ export function staffReads(caller: MemberPrincipal): boolean {
  * per organization, kept across a reconnect) and ending a connection removes its calendars, so the adder's connection
  * is the one that reads it. Never for staff: under view-as `userId` is the target's.
  */
-function shownView(calendar: OwnerCalendarRecord, caller: MemberPrincipal, counts?: BookingCounts): OwnerCalendarView {
+export function shownView(calendar: OwnerCalendarRecord, caller: MemberPrincipal, counts?: BookingCounts): OwnerCalendarView {
   const staff = staffReads(caller);
   const view = ownerCalendarView(calendar, !staff && calendar.kind === 'google' && calendar.createdBy === caller.userId, counts);
   return staff && calendar.kind === 'google' ? { ...view, label: GOOGLE_CALENDAR_LABEL } : view;
@@ -270,10 +285,24 @@ async function googleView(ctx: TownwiseContext, caller: MemberPrincipal): Promis
 }
 
 /**
+ * The Your data refs of the files `calendars` were imported from (D60) that are still kept, by file id (D61): none
+ * while stored files are off, and never a file being deleted or another location's.
+ */
+async function keptSourceFiles(
+  ctx: TownwiseContext, scope: OrgScope, locationId: string, calendars: readonly OwnerCalendarRecord[],
+): Promise<ReadonlySet<string>> {
+  const ids = calendars.flatMap((calendar) => calendar.fromFileId ?? []);
+  if (ctx.files === null || ids.length === 0) return new Set();
+  const files = await ctx.stores.files.byIds(scope, ids);
+  return new Set(files.filter((file) => file.locationId === locationId && file.status !== 'deleting' && file.uploadId === null).map((file) => file.id));
+}
+
+/**
  * GET /api/org/locations/:locationId/owner-calendars: the location's calendars, oldest first, each with `mine` (a Google
- * calendar the caller added, which they can reconnect) and, for a file, its format and booking labels' state and counts
- * (D58); `google`: whether Google calendars are on, whether the caller has a connection that is not revoked, and the
- * public client id; and `bookingSort`: whether Sort with TownwiseAI is available (a model key is set).
+ * calendar the caller added, which they can reconnect), for a file its format and booking labels' state and counts
+ * (D58), and `fromFile`, the Your data item it was imported from while that file is kept (D61); `google`: whether
+ * Google calendars are on, whether the caller has a connection that is not revoked, and the public client id; and
+ * `bookingSort`: whether Sort with TownwiseAI is available (a model key is set).
  */
 export async function listOwnerCalendars(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -281,8 +310,13 @@ export async function listOwnerCalendars(ctx: TownwiseContext, req: Request, res
   const [calendars, counts] = await Promise.all([
     ctx.stores.ownerCalendars.list(caller.scope, location.id), ctx.stores.ownerCalendars.labelCounts(caller.scope, location.id),
   ]);
+  const kept = await keptSourceFiles(ctx, caller.scope, location.id, calendars);
   res.status(200).json({
-    calendars: calendars.map((calendar) => shownView(calendar, caller, counts.get(calendar.id))), google: await googleView(ctx, caller),
+    calendars: calendars.map((calendar) => ({
+      ...shownView(calendar, caller, counts.get(calendar.id)),
+      fromFile: calendar.fromFileId !== null && kept.has(calendar.fromFileId) ? `f_${calendar.fromFileId}` : null,
+    })),
+    google: await googleView(ctx, caller),
     bookingSort: { available: ctx.chat !== null },
   });
 }
@@ -367,6 +401,68 @@ async function googleToAdd(
 }
 
 /**
+ * D60: a stored file's name as its calendar's, as Your calendars words it (client/src/portal/calendar/calendars.ts
+ * labelOfFile): a final `.ics`, `.ical` or `.csv` off, trimmed, at most 60 code units (one fewer when the last would
+ * open a surrogate pair), and "Calendar file" when empty.
+ */
+export function labelOfFile(name: string): string {
+  const bare = name.replace(/\.(?:ics|ical|csv)$/i, '').trim();
+  const cut = bare.length <= MAX_LABEL_CHARS ? bare : bare.slice(0, MAX_LABEL_CHARS);
+  const last = cut.charCodeAt(cut.length - 1);
+  const label = (cut.length < bare.length && last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut).trim();
+  return label === '' ? 'Calendar file' : label;
+}
+
+/** D60: the location's calendar imported from the stored file, if it still exists (its page in Your data says so). */
+export async function calendarOfFile(ctx: TownwiseContext, scope: OrgScope, locationId: string, fileId: string): Promise<OwnerCalendarRecord | null> {
+  return (await ctx.stores.ownerCalendars.list(scope, locationId)).find((calendar) => calendar.fromFileId === fileId) ?? null;
+}
+
+/** Why a file calendar was not added: over 1 MB, not a calendar, or the location already has 5. */
+export type FileCalendarRefusal = 'too_large' | 'not_calendar' | 'calendar_limit';
+
+/** The 400 or 409 a refused file add answers. */
+function fileRefusal(code: FileCalendarRefusal): AppError {
+  return code === 'calendar_limit' ? calendarLimit() : new AppError(400, code, READ_FAILURES[code]);
+}
+
+/**
+ * Adds a calendar file, .ics or CSV, as a file calendar of the location: at most 1 MB of UTF-8 (too_large), parsed with
+ * the town's today and time zone in the file window (calendar/csv-events.ts parseCalendarFile; not_calendar), stored
+ * with its format and, when its screen said so, `titlesNotice`, then recorded as `owner_calendar.added`. The add of
+ * POST .../owner-calendars and (D60) of a calendar file kept in Your data (files/calendar-import.ts), which passes the
+ * stored file's id: 'file_imported' when that file already made a calendar, and nothing is stored. D59 slice 2: either
+ * add is then queued for TownwiseAI's sort on its own (calendar/auto-sort.ts queueAutoSort says when).
+ */
+export async function addFileCalendar(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord,
+  input: { label: string; text: string; titlesNotice?: typeof WEEKLY_TITLES_NOTICE; fromFileId?: string },
+): Promise<{ calendar: OwnerCalendarRecord; skippedRows: number } | FileCalendarRefusal | 'file_imported'> {
+  const { scope } = caller;
+  const now = ctx.now();
+  if (Buffer.byteLength(input.text, 'utf8') > MAX_ICS_BYTES) return 'too_large';
+  const read = parseCalendarFile(input.text, townOf(location, now));
+  if ('error' in read) return read.error;
+  const calendar = {
+    kind: 'file', label: input.label, format: read.format, ...(input.titlesNotice === undefined ? {} : { titlesNotice: input.titlesNotice }),
+  } as const;
+  const by = { createdBy: caller.userId, now };
+  const calendars = ctx.stores.ownerCalendars;
+  const added = input.fromFileId === undefined
+    ? await calendars.add(scope, location.id, calendar, read, by)
+    : await calendars.addFromFile(scope, location.id, input.fromFileId, calendar, read, by);
+  if (added === 'calendar_limit' || added === 'file_imported') return added;
+  // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none. D59 slice 5:
+  // the location's calendars answer its open closure questions (calendar/answers.ts); neither fails the add.
+  await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
+  await answerFromCalendars(answerDeps(ctx), scope, location);
+  await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
+  // D59 slice 2: TownwiseAI sorts a file on its own, after the add is recorded; it never fails the add.
+  await queueAutoSort(ctx, scope, added, { openAsAdmin: caller.openAsAdmin !== null });
+  return { calendar: added, skippedRows: read.skippedRows };
+}
+
+/**
  * POST /api/org/locations/:locationId/owner-calendars: `{ kind: 'file', label, ics }`, `{ kind: 'link', label, url }` or
  * `{ kind: 'google', googleCalendarId }`. A file of at most 1 MB (400 too_large), whose text `ics` carries whether it is
  * an .ics file or a calendar CSV (D58; the field keeps its name for shipped builds), is parsed with the town's today and
@@ -375,29 +471,30 @@ async function googleToAdd(
  * code); its address is stored sealed, with its host. A Google calendar is checked and read as googleToAdd says, stored
  * with its Google calendar id sealed and its connection, and checked again after storing: a connection ended meanwhile
  * takes the new calendar with it (409 google_not_connected). A sixth calendar answers 409 calendar_limit. 201 with the
- * calendar and `skippedRows`, a CSV's rows whose start could not be read (0 otherwise).
+ * calendar and `skippedRows`, a CSV's rows whose start could not be read (0 otherwise). D59 slice 2: a file is then
+ * queued for TownwiseAI's sort on its own (calendar/auto-sort.ts queueAutoSort says when).
  */
 export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const { scope } = caller;
   const body = parseInput(calendarBody, req.body);
   const location = await loadLocation(ctx, scope, req.params.locationId);
+  if (body.kind === 'file') {
+    const added = await addFileCalendar(ctx, caller, location, {
+      label: body.label, text: body.ics, ...(body.titlesNotice === undefined ? {} : { titlesNotice: body.titlesNotice }),
+    });
+    // No fromFileId was passed, so the store never answers file_imported here.
+    if (added === 'file_imported') throw new Error('a file add without a stored file answered file_imported');
+    if (typeof added === 'string') throw fileRefusal(added);
+    res.status(201).json({ calendar: shownView(added.calendar, caller), skippedRows: added.skippedRows });
+    return;
+  }
   const calendars = ctx.stores.ownerCalendars;
   const now = ctx.now();
   const town = townOf(location, now);
   let calendar: NewCalendar;
   let parsed: ParsedCalendar;
-  let skippedRows = 0;
-  if (body.kind === 'file') {
-    if (Buffer.byteLength(body.ics, 'utf8') > MAX_ICS_BYTES) throw new AppError(400, 'too_large', READ_FAILURES.too_large);
-    const read = parseCalendarFile(body.ics, town);
-    if ('error' in read) throw new AppError(400, read.error, READ_FAILURES[read.error]);
-    calendar = {
-      kind: 'file', label: body.label, format: read.format, ...(body.titlesNotice === undefined ? {} : { titlesNotice: body.titlesNotice }),
-    };
-    parsed = read;
-    ({ skippedRows } = read);
-  } else if (body.kind === 'link') {
+  if (body.kind === 'link') {
     const key = linksKey(ctx);
     // Before the fetch, so a full location costs no request; the add itself holds the limit against concurrent adds.
     if ((await calendars.list(scope, location.id)).length >= MAX_CALENDARS) throw calendarLimit();
@@ -419,10 +516,17 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
     await calendars.remove(scope, location.id, added.id);
     throw googleNotConnected();
   }
-  // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none.
+  // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none. D59 slice 5:
+  // the location's calendars answer its open closure questions (calendar/answers.ts); neither fails the add.
   await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
+  await answerFromCalendars(answerDeps(ctx), scope, location);
   await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
-  res.status(201).json({ calendar: shownView(added, caller), skippedRows });
+  res.status(201).json({ calendar: shownView(added, caller), skippedRows: 0 });
+}
+
+/** D59 slice 5: what a calendar's answers to TownwiseAI's open questions read and write through (calendar/answers.ts). */
+function answerDeps(ctx: TownwiseContext): Parameters<typeof answerFromCalendars>[0] {
+  return { stores: ctx.stores, logger: ctx.logger, now: ctx.now, agentAuto: ctx.config.agentAuto };
 }
 
 /** 429 rate_limited until 5 minutes after the calendar's last "Refresh now". */
@@ -487,8 +591,13 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
   // A replace that loses to a concurrent one leaves that one's events, which are as new.
   if (read.ok) {
     const replaced = await calendars.replaceEvents(scope, location.id, found.id, read.parsed, now);
-    // Notes linked to its events follow them (calendar-event-suggestions); never fails the refresh.
-    if (replaced.switched) await followLinkedNotes(ctx, scope, location, found.id, replaced, now);
+    // Notes linked to its events follow them (calendar-event-suggestions), and (D59 slice 3) an event added or moved in
+    // the next 91 days brings the weekly pass forward; neither fails the refresh.
+    if (replaced.switched) {
+      await followLinkedNotes(ctx, scope, location, found.id, replaced, now);
+      await answerFromCalendars(answerDeps(ctx), scope, location);
+      await bringPassForward(ctx, scope, location, found.id, replaced.changed, now);
+    }
   } else {
     await calendars.recordFailure(scope, location.id, found.id, read.code, now);
   }
@@ -499,7 +608,8 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
 }
 
 /**
- * DELETE /api/org/locations/:locationId/owner-calendars/:calendarId: the calendar and all of its events. 204. A Google
+ * DELETE /api/org/locations/:locationId/owner-calendars/:calendarId: the calendar and all of its events, then (D59 slice
+ * 5) the closure notes its answers saved that nobody changed since, taken back as TownwiseAI. 204. A Google
  * calendar's connection is marked for a check first (so a request that stops here leaves it due at once), and ended
  * after when it backs no other calendar of the organization, whoever pressed Remove: an unused grant is a credential
  * Townwise should not hold (audited `google_calendar.disconnected`, reason `last_calendar`).
@@ -514,6 +624,8 @@ export async function removeOwnerCalendar(ctx: TownwiseContext, req: Request, re
   if (!(await ctx.stores.ownerCalendars.remove(scope, location.id, calendar.id))) throw notFound();
   const now = ctx.now();
   await recordCalendar(ctx, caller, 'owner_calendar.removed', calendar, now);
+  // D59 slice 5: the closure notes this calendar's answers saved, that nobody changed since, are taken back.
+  await takeBackAnswers(ctx, scope, location.id, calendar.id);
   const calendarCount = connectionId === null ? null : await endUnusedGoogleAccess(deps, scope, connectionId, 'last_calendar');
   if (connectionId !== null && calendarCount !== null) {
     await recordAfter(ctx, {

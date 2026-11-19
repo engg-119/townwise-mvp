@@ -23,14 +23,22 @@ class ResizeObserverPolyfill {
 if (typeof globalThis.ResizeObserver !== 'function') globalThis.ResizeObserver = ResizeObserverPolyfill;
 Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1280 });
 
+// D61: Your data's rows read as one table, Newest first, remembered for the person signed in.
+beforeEach(() => { window.localStorage.setItem('townwise.dataView.u1', 'newest'); });
+
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
 });
 
 const OPT_IN = 'Let TownwiseAI read these files and use what it finds';
 
-function setup(me: MeResponse = meOf(ACCESS.admin)): DataFake {
+function setup(me: MeResponse = meOf(ACCESS.admin), agentAuto?: boolean): DataFake {
   const fake = dataFake({ inner: locationsFake() });
+  if (agentAuto !== undefined) {
+    fake.agentAuto = agentAuto;
+    fake.files.autoRead = agentAuto;
+  }
   const api = fakePortalApi({ me, org: orgOf('org_admin'), fallback: fake });
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
   window.history.replaceState(null, '', '/locations/l1/data');
@@ -124,6 +132,44 @@ test('a kind TownwiseAI can’t read is not sent, and says why beside the file',
   expect(fake.ai).toEqual([]);
 });
 
+// UI review 2026-11-19: a calendar file is imported as a calendar (D60), never sent to TownwiseAI: the line beside it
+// says what the import did, with its link or Try again, never that TownwiseAI can't read it.
+describe('a calendar file added here', () => {
+  function completesAsCalendar(fake: DataFake, calendar: NonNullable<ReturnType<typeof itemOf>['calendar']>): void {
+    fake.files.answers['POST /files/f1/complete'] = () => ({
+      file: fileViewOf('f1', { name: 'Bookings.ics', kind: 'other', status: 'kept', purpose: 'reference', importId: null, result: null }), import: null,
+    });
+    fake.items = [itemOf('f_f1', { name: 'Bookings.ics', kind: 'other', state: 'kept', outcome: 'reference', calendar })];
+  }
+
+  test('checked or not, it says it was added to your calendars, with the calendar’s link', async () => {
+    const fake = setup();
+    completesAsCalendar(fake, { status: 'added', calendarId: 'c1', label: 'Bookings', eventCount: 2 });
+    await optIn();
+    await add(fake, ['Bookings.ics']);
+    const files = screen.getByRole('list', { name: 'Files being added' });
+    expect(await within(files).findByText('Added to your calendars as Bookings: 2 events.')).toBeTruthy();
+    expect(within(files).getByRole('link', { name: 'Open the calendar' }).getAttribute('href')).toBe('/locations/l1/data/c_c1');
+    expect(screen.queryByText(/can’t read this file/)).toBeNull();
+    expect(fake.ai).toEqual([]);
+    cleanup();
+    const unchecked = setup();
+    completesAsCalendar(unchecked, { status: 'added', calendarId: 'c1', label: 'Bookings', eventCount: 2 });
+    await add(unchecked, ['Bookings.ics']);
+    expect(await screen.findByText('Added to your calendars as Bookings: 2 events.')).toBeTruthy();
+  });
+
+  test('refused for a fixable cause, it says why and offers Try again', async () => {
+    const fake = setup();
+    completesAsCalendar(fake, { status: 'refused', reason: 'calendar_limit', retry: true });
+    await add(fake, ['Bookings.ics']);
+    expect(await screen.findByText('Not added to your calendars: this location already has 5 calendars. Remove one on the Calendar, then try again.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => { expect(fake.calendarRetries).toEqual(['f_f1']); });
+    expect(screen.queryByText(/can’t read this file/)).toBeNull();
+  });
+});
+
 test('503 ai_unavailable says so beside the file, keeps the upload, and hides the box', async () => {
   const fake = setup();
   fake.answers['POST ai'] = () => refusal(503, 'ai_unavailable');
@@ -140,4 +186,118 @@ test('view-as: the box is shown disabled and can’t be checked', async () => {
   expect(box.getAttribute('aria-disabled')).toBe('true');
   fireEvent.click(box);
   expect((box as HTMLInputElement).checked).toBe(false);
+});
+
+// ---- D59: while TownwiseAI works on its own ---------------------------------------------------------------------------
+
+// A sales export added here is never read into days, so the box never promises one isn't sent.
+const AUTO_HELP = 'TownwiseAI reads each file you add on its own: the whole file is sent to Anthropic’s Claude, a sales export too, and TownwiseAI saves what it’s sure of, each change with Undo in TownwiseAI’s activity. Uncheck this to keep these files from it.';
+
+/** The bodies of POST .../files, which open each upload. */
+function creates(fake: DataFake): unknown[] {
+  return fake.files.calls.filter((call) => call.method === 'POST' && call.path === '/files').map((call) => call.body);
+}
+
+test('while TownwiseAI works on its own the box starts checked and says so; an added file is read with no press', async () => {
+  const fake = setup(meOf(ACCESS.admin), true);
+  const box = await screen.findByRole('checkbox', { name: OPT_IN });
+  await waitFor(() => { expect((box as HTMLInputElement).checked).toBe(true); });
+  const help = screen.getByText(AUTO_HELP);
+  expect(box.getAttribute('aria-describedby')?.split(' ')).toContain(help.id);
+  await add(fake, ['menu.pdf']);
+  await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+  expect(fake.ai).toEqual([]);
+  expect(creates(fake)).toEqual([{ name: 'menu.pdf', sizeBytes: 4, purpose: 'reference' }]);
+  const files = screen.getByRole('list', { name: 'Files being added' });
+  expect(within(files).getByText('Added. TownwiseAI reads it on its own; open it on Your data to see what it finds.')).toBeTruthy();
+});
+
+/** The bodies of POST .../files/:id/complete: `{ aiAuto: true }` lets TownwiseAI read the file on its own. */
+function completes(fake: DataFake): unknown[] {
+  return fake.files.calls.filter((call) => call.method === 'POST' && call.path.endsWith('/complete')).map((call) => call.body);
+}
+
+test('checked while TownwiseAI works on its own, each file completes with aiAuto true; a drop of several all finish', async () => {
+  const fake = setup(meOf(ACCESS.admin), true);
+  const box = await screen.findByRole('checkbox', { name: OPT_IN });
+  await waitFor(() => { expect((box as HTMLInputElement).checked).toBe(true); });
+  // Each finished file reloads the list; the queue keeps the others going through it.
+  await add(fake, ['a.pdf', 'b.pdf', 'c.pdf']);
+  expect(completes(fake)).toEqual([{ aiAuto: true }, { aiAuto: true }, { aiAuto: true }]);
+  expect(fake.files.calls.filter((call) => call.method === 'DELETE')).toEqual([]);
+});
+
+test('unchecked while TownwiseAI works on its own, each file completes without aiAuto, and the box stays unchecked after the list reloads', async () => {
+  const fake = setup(meOf(ACCESS.admin), true);
+  const box = await screen.findByRole('checkbox', { name: OPT_IN });
+  await waitFor(() => { expect((box as HTMLInputElement).checked).toBe(true); });
+  fireEvent.click(box);
+  expect((box as HTMLInputElement).checked).toBe(false);
+  const lists = fake.lists.length;
+  await add(fake, ['private.pdf']);
+  await waitFor(() => { expect(fake.lists.length).toBeGreaterThan(lists); });
+  await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+  expect(screen.getByRole<HTMLInputElement>('checkbox', { name: OPT_IN }).checked).toBe(false);
+  expect(creates(fake)).toEqual([{ name: 'private.pdf', sizeBytes: 4, purpose: 'reference' }]);
+  expect(completes(fake)).toEqual([{}]);
+  expect(fake.ai).toEqual([]);
+});
+
+test('unchecked while a file is still uploading, that file completes without aiAuto', async () => {
+  const fake = setup(meOf(ACCESS.admin), true);
+  const box = await screen.findByRole('checkbox', { name: OPT_IN });
+  await waitFor(() => { expect((box as HTMLInputElement).checked).toBe(true); });
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+  if (input === null) throw new Error('no file input');
+  fireEvent.change(input, { target: { files: [new File(['menu'], 'large.pdf')] } });
+  await waitFor(() => { expect(fake.files.puts).toHaveLength(1); });
+  fireEvent.click(box);
+  await act(async () => { fake.files.puts[0]?.ok(); await Promise.resolve(); });
+  await waitFor(() => { expect(completes(fake)).toEqual([{}]); });
+});
+
+test('with it off (or an API before it) the box starts unchecked, as D34 had it', async () => {
+  setup(meOf(ACCESS.admin), false);
+  const box = await screen.findByRole('checkbox', { name: OPT_IN });
+  expect((box as HTMLInputElement).checked).toBe(false);
+  expect(screen.queryByText(AUTO_HELP)).toBeNull();
+});
+
+describe('D59 slice 4: Paste text’s box while TownwiseAI works on its own', () => {
+  const PASTE_OPT_IN = 'Let TownwiseAI read this text and use what it finds';
+
+  async function paste(title: string): Promise<void> {
+    fireEvent.click(await screen.findByRole('button', { name: 'Paste text' }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: title } });
+    fireEvent.change(screen.getByLabelText('Text'), { target: { value: 'Private party on Dec 12.' } });
+  }
+
+  test('starts checked and sends aiAuto with the text, and says what it sends', async () => {
+    const fake = setup(meOf(ACCESS.admin), true);
+    await paste('Party');
+    const box = await screen.findByRole('checkbox', { name: PASTE_OPT_IN });
+    expect((box as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/TownwiseAI reads it on its own once you save it/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Saved Party.');
+    expect(fake.texts).toEqual([{ locationId: 'l1', body: { title: 'Party', text: 'Private party on Dec 12.', aiAuto: true } }]);
+  });
+
+  test('unchecked, the text is only kept: no aiAuto is sent', async () => {
+    const fake = setup(meOf(ACCESS.admin), true);
+    await paste('Kept');
+    fireEvent.click(await screen.findByRole('checkbox', { name: PASTE_OPT_IN }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Saved Kept.');
+    expect(fake.texts).toEqual([{ locationId: 'l1', body: { title: 'Kept', text: 'Private party on Dec 12.' } }]);
+  });
+
+  test('while TownwiseAI doesn’t work on its own here there is no box, and nothing asks for a read', async () => {
+    const fake = setup(meOf(ACCESS.admin), false);
+    await paste('Plain');
+    expect(screen.queryByRole('checkbox', { name: PASTE_OPT_IN })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Saved Plain.');
+    expect(fake.texts).toEqual([{ locationId: 'l1', body: { title: 'Plain', text: 'Private party on Dec 12.' } }]);
+  });
 });

@@ -77,7 +77,7 @@ const RUN = {
 test('U13B: a published run names its model, sales, dates and backtest, with no In progress tag', async () => {
   await show({ ...ABOUT, forecast: { run: RUN, live: { days: 9, inRange: 7, typicalErrorPct: 14.25, from: '2026-11-01', to: '2026-11-04' } } });
   expect(await screen.findByText('Forecast: Townwise demand model v9, trained on sales exports you sent Townwise from Jan 1, 2025 to Oct 21, 2026, made Nov 1, 2026. It saw no sales after Oct 21, 2026.')).toBeTruthy();
-  expect(screen.getByText('Each day and week is a range that about 8 in 10 days should land inside.')).toBeTruthy();
+  expect(screen.getByText('Each day and week of the first 3 months is a range that about 8 in 10 days should land inside; the outlook’s ranges are wider on purpose.')).toBeTruthy();
   expect(screen.getByText('Its ranges were widened after they ran narrow in backtests.')).toBeTruthy();
   expect(screen.getByText('In backtests from Jan 5, 2026 to Mar 15, 2026, a typical week was off by 9.5%, and 1 of 10 weeks missed by more than 20%.')).toBeTruthy();
   expect(screen.getByText('So far: 7 of 9 days inside the forecast range; typical miss 14.3%, from Nov 1, 2026 to Nov 4, 2026.')).toBeTruthy();

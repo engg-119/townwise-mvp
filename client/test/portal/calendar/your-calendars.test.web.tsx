@@ -18,8 +18,8 @@ import {
 import { townEvent } from '../analytics/fakes';
 import { CALENDARS_PATH, calendarFake, forecastDay, forecastOf, ownerCalendar, ownerEvent, type CalendarFake } from './fakes';
 
-/** The words on adding a file or a link (calendar-event-suggestions design decision 11). [CONFIRM: the add screens' words] */
-const WEEKLY_READING = 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of events on a calendar you add here, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.';
+/** The words on adding a file or a link (calendar-event-suggestions design decision 11). */
+const WEEKLY_READING = 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of events on a calendar you add here, with email addresses and phone numbers removed, to suggest notes for private events. Where TownwiseAI works on its own, it also reads the titles, dates and hours of every event in a calendar file when it is imported, past ones included, to label your bookings, and uses those labels for forecasts at once, with Undo. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading, or the sending of your calendars’ titles, on the TownwiseAI page.';
 
 // "Your calendars" on web (P28; owner-calendar's "The Calendar page shows and manages stored calendars", refine-calendar-
 // and-home design decision 1): the header row's last control, a button with the location's calendar count that opens a

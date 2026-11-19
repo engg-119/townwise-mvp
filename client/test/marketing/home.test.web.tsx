@@ -129,21 +129,20 @@ test('the first screen is the map story’s title with both actions; the lead fo
   expect(main.querySelector('section')).toBe(hero);
   const wrap = hero.firstElementChild;
   expect([...(wrap?.children ?? [])].map((child) => child.className)).toEqual(['twmap']);
-  // Step 0 of the story: the title, the subtitle (what we are building, not a claim that forecasts exist) and
-  // both actions.
+  // Step 0 of the story: the title, the subtitle and both actions.
   const head = hero.querySelector('.st-h > .hd');
   expect([...(head?.children ?? [])].map((child) => [child.tagName, child.textContent])).toEqual([
     ['H1', TITLE],
-    ['P', 'We’re building daily demand forecasts for restaurants and bars in college, ski and island towns. Now in early access.'],
+    ['P', 'Daily demand forecasts for restaurants and bars in college, ski and island towns. Now in early access.'],
     ['DIV', 'Request early accessSign in'],
   ]);
   // After the story: the eyebrow, the sub, both actions again and the status line.
   const lead = hero.querySelector('.hd2');
   expect([...(lead?.children ?? [])].map((child) => [child.tagName, child.textContent])).toEqual([
     ['P', 'Early access. Built at Dartmouth, testing in Hanover, NH.'],
-    ['P', 'We’re building forecasts of daily guests for restaurants and bars, up to three months ahead, from your town’s calendar, not the region’s.'],
+    ['P', 'Townwise forecasts daily guests for restaurants and bars, up to a year ahead, the first three months as a forecast and the rest as a wider outlook, from your town’s calendar, not the region’s.'],
     ['DIV', 'Request early accessSign in'],
-    ['P', 'In development. No forecasts are for sale yet.'],
+    ['P', 'Free in early access. Forecasts are live for early-access restaurants and still being tested.'],
   ]);
 
   const title = screen.getByRole('heading', { level: 1, name: TITLE });
@@ -229,7 +228,7 @@ test('How it works shows its four steps statically, with step 01’s public Hano
   expect(steps.map((step) => within(step).getByRole('heading', { level: 3 }).textContent)).toEqual([
     'Research the town', 'Build the forecast', 'Calibrate with your sales', 'Turn the forecast into orders',
   ]);
-  expect(steps.map((step) => step.querySelector('.step-bar')?.textContent)).toEqual(['01In progress', '02In progress', '03In progress', '04Planned']);
+  expect(steps.map((step) => step.querySelector('.step-bar')?.textContent)).toEqual(['01In progress', '02In progress', '03Live', '04Live']);
   for (const step of steps) expect(step.querySelector('.hv')?.getAttribute('aria-hidden')).toBe('true');
   const [first] = steps;
   if (first === undefined) throw new Error('no steps');
@@ -248,7 +247,7 @@ test('what is not built yet is described in the future tense', () => {
   expect(how.querySelector('.steps > li .step-body p:nth-of-type(2)')?.textContent)
     .toBe('Today: Hanover’s calendar is compiled from public sources, every date with a source. The agent that will do this research on its own is not built yet.');
   const faq = within(section('FAQ'));
-  expect(faq.getByText(/^If your system forecasts/).textContent).toContain('Townwise starts from your town: a research agent will find the local events that move demand, then your own sales history will calibrate the model to your business, and you will be able to tune it by talking to it.');
+  expect(faq.getByText(/^If your system forecasts/).textContent).toContain('A research agent that finds a new town’s events on its own is not built yet.');
   expect(document.body.textContent).not.toMatch(/no upload/i);
 });
 
@@ -267,14 +266,32 @@ test('steps 02 and 03 and the FAQ say what the portal does today: uploads, notes
   expect(faq.getByText(/^Your daily guest counts/).textContent)
     .toContain('Once you have access, you drop your files in the app, and we store them privately for your organization and read the date, guest count and net sales for each day. Or your browser can read a CSV and send us only those three values a day, without the file.');
   expect(faq.getByText(/^No\. Your sales data/).textContent)
-    .toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+    .toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants. It trains only your own location’s forecast model, and it is never used to train AI models such as TownwiseAI’s.');
   // D25: staff also see the figures by opening the organization as its admin, with a reason once anyone has joined.
   expect(faq.getByText(/^No\. Your sales data/).textContent)
     .toContain('only through a read-only view that is recorded and shown to your organization’s admins, or by opening your organization as its admin with your consent, which needs a reason once anyone from it has joined and is recorded and shown to your admins too.');
   expect(faq.getByText(/^Townwise does not charge/).textContent).toBe('Townwise does not charge for early access. Pricing is not set yet.');
-  expect(faq.getByText(/^Yes, in early access/).textContent).toBe('Yes, in early access, though the forecasts are still being tested. Townwise is a student project in active development. With early access you can add your locations, upload your sales history, add notes about unusual days and see your town’s public profile, if it is one of the twelve on the map. Once a location’s sales history spans 230 days, Townwise forecasts its daily guests, refits the forecast every week, and says whether its trained model or a simpler baseline made it.');
+  expect(faq.getByText(/^Yes, in early access/).textContent).toBe('Yes, in early access, though the forecasts are still being tested. Townwise is a student project in active development. With early access you can add your locations, upload your sales history, add notes about unusual days, import your calendars, ask TownwiseAI about your numbers, set up bar ordering and see your town’s public profile, if it is one of the twelve on the map. Once a location’s sales history spans 230 days, Townwise forecasts its daily guests, refits the forecast every week, and says whether its trained model or a simpler baseline made it.');
   expect(within(section('Tell us about your town.')).getByText(/^Townwise is in early access/).textContent)
     .toBe('Townwise is in early access. Sign in with Google and fill in a short form about your restaurant and your town. Someone on our team reviews each request by hand.');
+});
+
+test('the page says the same thing everywhere about what is live: no line calls the live product unavailable', () => {
+  renderHome();
+  const text = document.body.textContent;
+  expect(text).not.toMatch(/In development\.|not available to restaurants|No forecasts are for sale|We’re building/);
+  const product = section('Two horizons. A range. A reason.');
+  const features = [...product.querySelectorAll<HTMLElement>('.feat > li')];
+  expect(features.map((feature) => feature.querySelector('.fn')?.textContent)).toEqual([
+    'Three-month forecast', 'Year-ahead outlook', 'A range, not just a number', 'A reason for every swing', 'TownwiseAI', 'Your calendars', 'Bar ordering',
+  ]);
+  for (const feature of features) expect(feature.querySelector('.tag')?.className).toBe('tag tag-live');
+  // A forecast is guests only, so the illustration shows no sales slot.
+  expect(product.querySelector('.ill-row')?.textContent).not.toContain('sales');
+  const how = section('Local first. Then your own numbers.');
+  const fourth = how.querySelectorAll<HTMLElement>('.steps > li')[3];
+  expect(fourth?.querySelector('.step-body p:nth-of-type(2)')?.textContent)
+    .toBe('Today: a location that sets up ordering gets suggested orders for its bar items before each delivery, from the forecast and its item sales, each line with the reason behind it. TownwiseAI can read a supplier list or order guide to fill in the setup.');
 });
 
 test('the rendered text has no em or en dash and never says curve', () => {
@@ -283,7 +300,7 @@ test('the rendered text has no em or en dash and never says curve', () => {
   fireEvent.click(screen.getByRole('button', { name: /^Hanover, NH/ }));
   const text = document.body.textContent;
   const labels = [...document.querySelectorAll('[aria-label]')].map((element) => element.getAttribute('aria-label')).join(' ');
-  expect(text).toContain('In development. None of this is available to restaurants yet.');
+  expect(text).toContain('Live in early access. The forecasts are still being tested.');
   expect(text).toContain('Drivers');
   for (const shown of [text, labels]) {
     expect(shown).not.toMatch(/[\u2013\u2014]/);

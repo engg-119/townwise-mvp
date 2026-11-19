@@ -6,6 +6,7 @@ import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { Role } from '../access/resolve.ts';
+import { FILEABLE_FOLDERS, type FileableFolder } from '../data/folders.ts';
 import type { RuleSchedule } from './business-rules.ts';
 
 export const FILES_COLLECTION = 'tw_files';
@@ -19,6 +20,18 @@ export type FileStatus = (typeof FILE_STATUSES)[number];
 /** `history` is read for days of sales; `reference` is kept as it is (any file, or pasted text). */
 export const FILE_PURPOSES = ['history', 'reference'] as const;
 export type FilePurpose = (typeof FILE_PURPOSES)[number];
+
+/**
+ * D60: what importing a calendar file kept in Your data did. `added`: a file calendar was made from it (the calendar,
+ * which keeps the file's id, says which, while it exists). `refused`: no calendar was made, for `code`:
+ * `calendar_limit` (the location had 5), `too_large` (over 1 MB), `not_calendar` (an .ics or .ical file that is not
+ * one, or one with nothing to read) or `unavailable` (its original could not be read, or the add failed).
+ */
+export const CALENDAR_IMPORT_CODES = ['calendar_limit', 'too_large', 'not_calendar', 'unavailable'] as const;
+export type CalendarImportCode = (typeof CALENDAR_IMPORT_CODES)[number];
+export type CalendarImport =
+  | { readonly state: 'added'; readonly at: Date }
+  | { readonly state: 'refused'; readonly code: CalendarImportCode; readonly at: Date };
 
 /** One received chunk: its byte count and SHA-256 (hex). */
 export interface ChunkRecord { readonly bytes: number; readonly sha256: string }
@@ -108,6 +121,8 @@ export interface AiReadEvent {
   readonly effect: AiEventEffect;
   readonly expectedGuests: number | null;
   readonly detail: string;
+  /** D59: the model's confidence in this event; absent on an answer saved before it, which reads as the read's. */
+  readonly confidence?: 'high' | 'medium' | 'low';
 }
 
 /** A daily total the file states per day; `netSales` in dollars, as the file has it. */
@@ -166,9 +181,12 @@ export interface AiActionPlan {
 
 /** Why the read wrote no days. `already_had_days`: every verified day was already stored (AI days never replace one). */
 export type AiDaysReason =
-  | 'not_sales' | 'no_days' | 'file_wrote_days' | 'picture' | 'not_high_confidence' | 'days_not_verified' | 'already_had_days';
-/** Why the read kept no summary item. */
-export type AiItemReason = 'no_summary' | 'storage_full' | 'daily_upload_limit';
+  | 'not_sales' | 'no_days' | 'file_wrote_days' | 'picture' | 'not_high_confidence' | 'days_not_verified' | 'already_had_days'
+  // D59: this file's days were added once already (and undone since): TownwiseAI never adds them again. `adder_gone`: an
+  // automatic read whose adder had left by then applies nothing.
+  | 'duplicate' | 'adder_gone';
+/** Why the read kept no summary item (D59 `adder_gone`: as for days). */
+export type AiItemReason = 'no_summary' | 'storage_full' | 'daily_upload_limit' | 'duplicate' | 'adder_gone';
 /**
  * The model update after a read: `started` (with the calibration's id), `not_needed` (no note or day was written),
  * `not_admin` (the person who asked is not an org admin), or the lab's refusal (lab/service.ts StartRefusal, renamed),
@@ -176,7 +194,9 @@ export type AiItemReason = 'no_summary' | 'storage_full' | 'daily_upload_limit';
  */
 export type AiCalibrationStatus =
   | 'started' | 'not_needed' | 'not_admin' | 'lab_unavailable' | 'not_enough_history' | 'regime' | 'budget_spent'
-  | 'in_progress' | 'daily_limit' | 'org_not_active' | 'start_failed';
+  | 'in_progress' | 'daily_limit' | 'org_not_active' | 'start_failed'
+  // D59: an automatic read starts no calibration: what it changed on past days wants a refit, which the hourly pass makes.
+  | 'refit_wanted';
 export interface AiCalibration { readonly status: AiCalibrationStatus; readonly id: string | null }
 
 /** What a read's actions did, recorded once every write is done. */
@@ -187,7 +207,16 @@ export interface AiActionsOutcome {
    * past 31 closed days a read).
    */
   readonly notes: readonly string[];
-  readonly notesSkipped: { readonly duplicate: number; readonly cap: number; readonly invalid: number; readonly guard: number };
+  readonly notesSkipped: {
+    readonly duplicate: number; readonly cap: number; readonly invalid: number; readonly guard: number;
+    /** D59: events below the confidence bar (or in conflict) kept as no suggestion: ended already, or past the cap. */
+    readonly notKept?: number;
+  };
+  /**
+   * D59: while TownwiseAI works on its own, the events it was not sure of (or that conflict with a person's note or rule),
+   * stored as open note suggestions under their planned note ids. Absent on an outcome recorded before, or with it off.
+   */
+  readonly notesSuggested?: readonly string[];
   /** The upload it wrote days through, and the days that upload held once written; null and 0 with a reason otherwise. */
   readonly uploadId: string | null;
   readonly daysWritten: number;
@@ -244,11 +273,18 @@ export interface FileAiRead {
   readonly actions: AiReadActions | null;
   /** While an undo runs: it removes what the read made, then marks the read `undone`. */
   readonly undoing: boolean;
+  /**
+   * D59: queued on its own when the file was stored (openspec change auto-apply-agent-reads, design decision 1), with
+   * the file's adder as `requestedBy` (on whose behalf it reads), rather than pressed. False for a pressed read.
+   */
+  readonly auto: boolean;
+  /** D59: when an automatic read reserved its call, the day's count of automatic reads reads it; null otherwise. */
+  readonly chargedAt: Date | null;
 }
 
 /** As stored: `actions` and `notBefore` may be absent, and `undoing` is absent unless set. */
-type StoredAiRead = Omit<FileAiRead, 'actions' | 'undoing' | 'notBefore'> & {
-  actions?: AiReadActions | null; undoing?: boolean; notBefore?: Date | null;
+type StoredAiRead = Omit<FileAiRead, 'actions' | 'undoing' | 'notBefore' | 'auto' | 'chargedAt'> & {
+  actions?: AiReadActions | null; undoing?: boolean; notBefore?: Date | null; auto?: boolean; chargedAt?: Date | null;
 };
 
 interface FileFields {
@@ -303,8 +339,17 @@ interface FileFields {
   editedByStaff?: boolean;
   /** Reading with TownwiseAI (spec 11A.9); absent until asked for, never stored as null. */
   ai?: StoredAiRead;
+  /** D59: the person left the box checked as the upload finished, so TownwiseAI may read it on its own. Absent otherwise. */
+  aiAuto?: true;
   /** On the summary item a TownwiseAI read kept: the file it was read from. Absent otherwise. */
   source?: { via: 'ai_file'; fileId: Types.ObjectId };
+  /** D60: importing it as a calendar, once tried; absent for a file that is not a calendar file. */
+  calendarImport?: { state: 'added' | 'refused'; code?: CalendarImportCode; at: Date };
+  /**
+   * D61: the Your data folder it was filed in (data/folders.ts): `notes` for saved text (insertStored), or one set later
+   * by setFolder. Absent means filed by what Townwise knows of it.
+   */
+  folder?: FileableFolder;
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -350,11 +395,20 @@ function fileSchema(): Schema<FileFields> {
     editedBy: { type: String },
     editedByStaff: { type: Boolean },
     ai: { type: Schema.Types.Mixed },
+    aiAuto: { type: Boolean, enum: [true] },
     source: {
       type: new Schema({
         via: { type: String, required: true, enum: ['ai_file'] }, fileId: { type: Schema.Types.ObjectId, required: true },
       }, { _id: false, strict: 'throw' }),
     },
+    calendarImport: {
+      type: new Schema({
+        state: { type: String, required: true, enum: ['added', 'refused'] },
+        code: { type: String, enum: CALENDAR_IMPORT_CODES },
+        at: { type: Date, required: true },
+      }, { _id: false, strict: 'throw' }),
+    },
+    folder: { type: String, enum: FILEABLE_FOLDERS },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
@@ -431,6 +485,12 @@ export interface FileRecord {
   readonly ai: FileAiRead | null;
   /** A summary item TownwiseAI kept from a read: the file it was read from; null for anything else. */
   readonly source: AiSource | null;
+  /** D60: importing it as a calendar, once tried; null for a file that is not a calendar file. */
+  readonly calendarImport: CalendarImport | null;
+  /** D61: the Your data folder it was filed in, or null to file it by what Townwise knows of it (data/folders.ts). */
+  readonly folder: FileableFolder | null;
+  /** D59: kept from TownwiseAI's automatic reads: its upload did not finish with the box checked (`aiAuto: true`). */
+  readonly aiAutoOff: boolean;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -475,9 +535,21 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     editedAt: doc.editedAt ?? null,
     editedBy: doc.editedBy ?? null,
     editedByStaff: doc.editedByStaff === true,
-    ai: doc.ai === undefined ? null : { ...doc.ai, actions: doc.ai.actions ?? null, undoing: doc.ai.undoing === true, notBefore: doc.ai.notBefore ?? null },
+    ai: doc.ai === undefined ? null : {
+      ...doc.ai, actions: doc.ai.actions ?? null, undoing: doc.ai.undoing === true, notBefore: doc.ai.notBefore ?? null,
+      auto: doc.ai.auto === true, chargedAt: doc.ai.chargedAt ?? null,
+    },
     source: doc.source === undefined ? null : { via: 'ai_file', fileId: doc.source.fileId.toHexString() },
+    calendarImport: calendarImportOf(doc.calendarImport),
+    folder: doc.folder ?? null,
+    aiAutoOff: doc.aiAuto !== true,
   };
+}
+
+function calendarImportOf(stored: FileFields['calendarImport']): CalendarImport | null {
+  if (stored === undefined) return null;
+  if (stored.state === 'added') return { state: 'added', at: stored.at };
+  return { state: 'refused', code: stored.code ?? 'unavailable', at: stored.at };
 }
 
 export interface NewFile {
@@ -563,7 +635,8 @@ export interface FileStore {
   recordChunk(scope: OrgScope, fileId: string, index: number, chunk: ChunkRecord, head: string | null): Promise<FileRecord | null>;
   /** Compare-and-set from uploading: the session ends, the kind and fingerprint are set. Null when another call won. */
   finishUpload(
-    scope: OrgScope, fileId: string, input: { fingerprint: string; kind: FileKind; status: 'stored' | 'queued' | 'kept'; outcome?: string },
+    scope: OrgScope, fileId: string,
+    input: { fingerprint: string; kind: FileKind; status: 'stored' | 'queued' | 'kept'; outcome?: string; aiAuto?: boolean },
   ): Promise<FileRecord | null>;
   /**
    * A text reference item with its bytes already stored: kept, outcome `reference`, with no upload session. `'exists'`
@@ -576,12 +649,21 @@ export interface FileStore {
     openAsAdminGrantId?: string;
     /** A TownwiseAI read's summary item (spec 11A.9): the file it was read from. */
     source?: AiSource;
+    /** D59 slice 4: pasted text saved with the box checked, so TownwiseAI reads it on its own (files/ai-auto.ts). */
+    aiAuto?: boolean;
   }): Promise<FileRecord | 'exists'>;
   /**
    * Another live file of the location with this purpose and fingerprint: a copy kept for reference never blocks the same
    * bytes uploaded as sales history, nor the other way round.
    */
   duplicateOf(scope: OrgScope, locationId: string, purpose: FilePurpose, fingerprint: string, exceptId: string): Promise<string | null>;
+  /** D60: records what importing the file as a calendar did, replacing an earlier record. False when the file is gone. */
+  setCalendarImport(scope: OrgScope, fileId: string, record: CalendarImport): Promise<boolean>;
+  /**
+   * D61: files the item in a Your data folder (data/folders.ts), replacing an earlier one; null forgets it, so the item
+   * is filed by what Townwise knows of it again. False when the file is gone. The hook D59's agent files items with.
+   */
+  setFolder(scope: OrgScope, fileId: string, folder: FileableFolder | null): Promise<boolean>;
   /** Every stored file of the import becomes queued. Resolves the number changed. */
   queueStored(scope: OrgScope, importId: string): Promise<number>;
   /** Compare-and-set one file from `from` to `to`. */
@@ -652,6 +734,21 @@ export interface FileStore {
   requestAiRead(scope: OrgScope, locationId: string, fileId: string, input: {
     by: string; role: Role; byStaff: boolean; grantId: string | null; at: Date;
   }): Promise<FileRecord | null>;
+  /**
+   * D59: queues an automatic read (`auto`, as `input.by`, the file's adder) by compare-and-set, only on a file nobody
+   * asked TownwiseAI about yet (no `ai`), finished with its original, which wrote no days, is not a calendar export, a
+   * summary or item TownwiseAI kept, not turned off, and whose upload finished with its box checked. The record after, or
+   * null when it does not qualify.
+   */
+  requestAutoRead(scope: OrgScope, locationId: string, fileId: string, input: {
+    by: string; role: Role; byStaff: boolean; grantId: string | null; at: Date;
+  }): Promise<FileRecord | null>;
+  /** D59: under claim `attempt`, marks that the automatic read reserved its call at `at`. */
+  markAiCharged(scope: OrgScope, fileId: string, attempt: number, at: Date): Promise<boolean>;
+  /** D59: the organization's automatic reads that reserved a call at or after `since`, other than `exceptId`'s. */
+  countAutoReadsSince(scope: OrgScope, since: Date, exceptId?: string): Promise<number>;
+  /** D59: whether another file of the location with this fingerprint already had a finished TownwiseAI read (done or undone). */
+  hasReadTwin(scope: OrgScope, locationId: string, fingerprint: string, exceptId: string): Promise<boolean>;
   /** The reader's heartbeat: a later `leaseUntil` while the read is `reading` under claim `attempt`. False once it is not. */
   renewAiLease(scope: OrgScope, fileId: string, attempt: number, until: Date): Promise<boolean>;
   /**
@@ -674,7 +771,7 @@ export interface FileStore {
    * `notBefore`. False when not held.
    */
   releaseAiRead(scope: OrgScope, fileId: string, attempt: number, notBefore: Date): Promise<boolean>;
-  /** How many of the organization's reads are queued or reading (the 10 a time cap). */
+  /** How many of the organization's pressed reads are queued or reading (the 10 a time cap; D59: automatic reads are not counted). */
   aiReadsInFlight(scope: OrgScope): Promise<number>;
   /**
    * S2, before any action writes: compare-and-set the plan's ids on `ai.actions` (outcome null) while the read is held
@@ -820,6 +917,7 @@ export function createFileStore(connection: Connection): FileStore {
       carry('byStaff', from.byStaff);
       carry('openAsAdminGrantId', from.openAsAdminGrantId);
       carry('addedVia', from.addedVia);
+      carry('folder', from.folder);
       // An edit of a TownwiseAI read's summary item stays that read's, so undoing the read removes it too.
       carry('source', from.source === null ? null : { via: 'ai_file', fileId: oid(from.source.fileId) });
       carry('disabledAt', from.disabledAt);
@@ -868,7 +966,12 @@ export function createFileStore(connection: Connection): FileStore {
     async finishUpload(scope, fileId, input) {
       const doc = await File.findOneAndUpdate(
         { _id: oid(fileId), orgId: org(scope), status: 'uploading' },
-        { $set: { status: input.status, fingerprint: input.fingerprint, kind: input.kind, upload: null, ...(input.outcome === undefined ? {} : { outcome: input.outcome }) } },
+        {
+          $set: {
+            status: input.status, fingerprint: input.fingerprint, kind: input.kind, upload: null,
+            ...(input.outcome === undefined ? {} : { outcome: input.outcome }), ...(input.aiAuto === true ? { aiAuto: true } : {}),
+          },
+        },
         after,
       ).lean();
       return doc === null ? null : toFile(doc);
@@ -880,9 +983,11 @@ export function createFileStore(connection: Connection): FileStore {
           uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.uploadedAt, name: input.name,
           ...(input.openAsAdminGrantId === undefined ? {} : { byStaff: true, openAsAdminGrantId: input.openAsAdminGrantId }),
           kind: 'text', sizeBytes: input.sizeBytes, fingerprint: input.fingerprint, upload: null, status: 'kept', outcome: 'reference',
-          answers: {}, attempts: 0,
+          // D61: saved text (pasted, or kept by TownwiseAI) is filed in Notes and pasted text.
+          answers: {}, attempts: 0, folder: 'notes',
           ...(input.addedVia === null ? {} : { addedVia: input.addedVia }),
           ...(input.source === undefined ? {} : { source: { via: 'ai_file', fileId: oid(input.source.fileId) } }),
+          ...(input.aiAuto === true ? { aiAuto: true } : {}),
         });
         return toFile(doc.toObject());
       } catch (err) {
@@ -974,6 +1079,14 @@ export function createFileStore(connection: Connection): FileStore {
     async setUploadId(scope, fileId, uploadId) {
       await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { uploadId: oid(uploadId) } });
     },
+    async setCalendarImport(scope, fileId, record) {
+      const set = record.state === 'added' ? { state: 'added', at: record.at } : { state: 'refused', code: record.code, at: record.at };
+      return (await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { calendarImport: set } })).matchedCount === 1;
+    },
+    async setFolder(scope, fileId, folder) {
+      const update = folder === null ? { $unset: { folder: 1 } } : { $set: { folder } };
+      return (await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, update)).matchedCount === 1;
+    },
     async addModelCall(scope, fileId, costMicroUsd, saved) {
       const update: Record<string, unknown> = { $inc: { modelCalls: 1, costMicroUsd } };
       if (saved !== undefined) update.$set = { [`aiChoices.${saved.key}`]: saved.choice };
@@ -1015,6 +1128,39 @@ export function createFileStore(connection: Connection): FileStore {
       ).lean();
       return doc === null ? null : toFile(doc);
     },
+    async requestAutoRead(scope, locationId, fileId, input) {
+      const ai: StoredAiRead = {
+        status: 'queued', requestedBy: input.by, requestedByRole: input.role, requestedByStaff: input.byStaff,
+        requestedGrantId: input.grantId, requestedAt: input.at, attempts: 0, leaseUntil: null, notBefore: null, startedAt: null, finishedAt: null,
+        reason: null, partial: false, costMicroUsd: 0, result: null, actions: null, auto: true, chargedAt: null,
+      };
+      const doc = await File.findOneAndUpdate(
+        {
+          _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), status: trusted({ $in: AI_READABLE }), rawDeletedAt: null,
+          ai: trusted({ $exists: false }), aiAuto: true, disabledAt: null, addedVia: trusted({ $exists: false }),
+          source: trusted({ $exists: false }), uploadId: null, outcome: trusted({ $ne: 'calendar_export' }),
+        },
+        { $set: { ai } },
+        after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async markAiCharged(scope, fileId, attempt, at) {
+      return (await File.updateOne(heldAiRead(scope, fileId, attempt), { $set: { 'ai.chargedAt': at } })).matchedCount === 1;
+    },
+    countAutoReadsSince(scope, since, exceptId) {
+      return File.countDocuments({
+        orgId: org(scope), 'ai.auto': true, 'ai.chargedAt': trusted({ $gte: since }),
+        ...(exceptId === undefined ? {} : { _id: trusted({ $ne: oid(exceptId) }) }),
+      });
+    },
+    async hasReadTwin(scope, locationId, fingerprint, exceptId) {
+      const twin = await File.exists({
+        orgId: org(scope), locationId: oid(locationId), fingerprint, _id: trusted({ $ne: oid(exceptId) }),
+        status: trusted({ $ne: 'deleting' }), 'ai.status': trusted({ $in: ['done', 'undone'] }),
+      });
+      return twin !== null;
+    },
     async renewAiLease(scope, fileId, attempt, until) {
       const result = await File.updateOne(heldAiRead(scope, fileId, attempt), { $set: { 'ai.leaseUntil': until } });
       return result.matchedCount === 1;
@@ -1038,7 +1184,8 @@ export function createFileStore(connection: Connection): FileStore {
       return result.matchedCount === 1;
     },
     async aiReadsInFlight(scope) {
-      return File.countDocuments({ orgId: org(scope), 'ai.status': trusted({ $in: ['queued', 'reading'] }) });
+      // D59: automatic reads have their own daily cap, so a burst of them never fills the queue a press needs.
+      return File.countDocuments({ orgId: org(scope), 'ai.status': trusted({ $in: ['queued', 'reading'] }), 'ai.auto': trusted({ $ne: true }) });
     },
     async planAiActions(scope, fileId, attempt, plan) {
       const actions: AiReadActions = { plan, outcome: null };

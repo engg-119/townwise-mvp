@@ -44,6 +44,7 @@ function context(fakes: Fakes = {}): ToolContext {
   return {
     ctx: guarded as unknown as TownwiseContext,
     scope: { orgId: '000000000000000000000003' } as unknown as OrgScope,
+    conversationId: '0000000000000000000000c1',
     location: {
       id: '000000000000000000000001', name: 'Test Taproom', placeId: null, createdAt: new Date('2026-01-01T00:00:00.000Z'),
       town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' },
@@ -52,7 +53,7 @@ function context(fakes: Fakes = {}): ToolContext {
     timeZone: 'America/New_York',
     role: 'member',
     actor: { actorUserId: 'user-1', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-    turn: { readUntrusted: true, readWeb: fakes.readWeb ?? false, pictureBytes: 0 },
+    turn: { readUntrusted: true, readWeb: fakes.readWeb ?? false, readNotTyped: false, pictureBytes: 0 },
     files: { ...files, sent: fakes.sent ?? new Map<string, SentFile>([[REF, { text: TEXT, truncated: false }]]) },
   };
 }

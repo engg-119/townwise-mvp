@@ -122,6 +122,13 @@ function pageText(): string {
   return document.body.textContent;
 }
 
+/** Opens This week's Show the numbers, where the day-by-day strip or table sits behind the chart (owner request, 2026-11-18). */
+function openWeekNumbers(): HTMLElement {
+  const week = screen.getByRole('region', { name: 'This week in Hanover' });
+  fireEvent.click(within(week).getByRole('button', { name: /Show the numbers/ }));
+  return week;
+}
+
 test('the count of TownwiseAI’s questions includes its open weekly suggestions', async () => {
   const suggestion = {
     id: 's1', why: 'Thanksgiving is Thu, Nov 26.', calendar: [], createdAt: '2026-11-02T08:00:00.000Z', type: 'note',
@@ -166,8 +173,9 @@ test('the count of TownwiseAI’s questions includes its open suggested rules (D
 
 test('the last week chart prints its key and scale; the history heatmap is one picture with no focusable cell', async () => {
   await renderAt(portal(meOf(ACCESS.member)));
-  expect(screen.getByText('Scale 0 to 200 guests. Scale fitted to this location.')).toBeTruthy();
-  expect(screen.getByText('Same week last year')).toBeTruthy();
+  const lastWeek = screen.getByRole('region', { name: 'Last week' });
+  expect(within(lastWeek).getByText('Scale 0 to 200 guests. Scale fitted to this location.')).toBeTruthy();
+  expect(within(lastWeek).getByText('Same week last year')).toBeTruthy();
   const history = document.getElementById('home-history');
   if (history === null) throw new Error('no history card');
   const picture = within(history).getByRole('img');
@@ -205,6 +213,7 @@ test('the last week chart prints its key and scale; the history heatmap is one p
 test('honesty: with history ending before this week, no day of this week carries a figure, and nothing reads as a forecast', async () => {
   const setItem = jest.spyOn(Storage.prototype, 'setItem');
   await renderAt(portal(meOf(ACCESS.member), DAYS.filter((day) => day.date <= '2026-10-24')));
+  openWeekNumbers();
   for (const date of weekDates('2026-11-05')) {
     const cell = document.querySelector(`[data-testid="home-day-${date}"]`);
     if (cell === null) throw new Error(`no row for ${date}`);
@@ -221,6 +230,7 @@ test('honesty: with history ending before this week, no day of this week carries
 
 test('this week starts today, and none of its days carries a figure before its data is in', async () => {
   await renderAt(portal(meOf(ACCESS.member)));
+  openWeekNumbers();
   const strip = screen.getByRole('table', { name: 'This week, day by day' });
   const heads = within(strip).getAllByRole('columnheader').map((cell) => cell.textContent);
   expect(heads[0]).toMatch(/^Thu.*Nov 5.*Today/);
@@ -240,12 +250,18 @@ const NEAR_EMPTY = DAYS.map((day) => (day.date === '2026-11-03' ? { ...day, gues
 
 test('a near-empty day before today reads Likely closed (spec D32) in This month; This week starts today, without it', async () => {
   await renderAt(portal(meOf(ACCESS.member), NEAR_EMPTY));
+  // The days are behind Show the numbers while the chart shows, so open them: today's day is there, Tuesday's is not.
+  openWeekNumbers();
+  expect(screen.getByTestId('home-day-2026-11-05')).toBeTruthy();
   expect(screen.queryByTestId('home-day-2026-11-03')).toBeNull();
+  expect(screen.getByTestId('home-week-chart-2026-11-05')).toBeTruthy();
+  expect(screen.queryByTestId('home-week-chart-2026-11-03')).toBeNull();
   expect(cellOf('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. Likely closed (1 guest recorded).');
 });
 
 test('today’s partial upload is never likely closed (D32): only a day before the town’s today can be', async () => {
   await renderAt(portal(meOf(ACCESS.member), [...DAYS, day('2026-11-05', 1)]), 'This month in Hanover');
+  openWeekNumbers();
   expect(within(screen.getByTestId('home-day-2026-11-05')).queryByText(/Likely closed/)).toBeNull();
   expect(cellOf('2026-11-05').getAttribute('aria-label')).not.toMatch(/Likely closed/);
 });
@@ -281,6 +297,7 @@ test('at a glance: last year’s same week, last week against it, and the next e
 
 test('this week is a strip of seven days from 1024px, today’s column raised, last year as bars with the figures printed', async () => {
   await renderAt(portal(meOf(ACCESS.member)));
+  openWeekNumbers();
   const strip = screen.getByRole('table', { name: 'This week, day by day' });
   expect(within(strip).getAllByRole('columnheader')).toHaveLength(7);
   expect(within(strip).getAllByRole('rowheader').map((cell) => cell.textContent)).toEqual(['On the calendar', 'Last year', 'Two years ago']);
@@ -383,8 +400,10 @@ function cellOf(date: string): HTMLElement {
 
 test('with a published forecast, This week starts with each day’s Forecast, its figure bold (owner request)', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
+  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5~212forecast'); });
+  openWeekNumbers();
   const strip = screen.getByRole('table', { name: 'This week, day by day' });
-  await waitFor(() => { expect(within(strip).getAllByRole('rowheader')[0]?.textContent).toBe('Forecast'); });
+  expect(within(strip).getAllByRole('rowheader')[0]?.textContent).toBe('Forecast');
   // Thu, Nov 5 (today) to Wed, Nov 11: 212 a day, and Saturday the 7th with its private event.
   expect(within(strip).getAllByText(sentence('~212 guests, forecast, likely 180 to 240'))).toHaveLength(6);
   expect(within(strip).getByText(sentence('~282 guests, forecast, likely 250 to 310'))).toBeTruthy();
@@ -429,6 +448,7 @@ test('a stale run on Home (D52): the days after its forecast tier read Outlook i
   const detail = screen.getByRole('region', { name: 'Selected day' });
   expect(within(detail).getByText('Outlook')).toBeTruthy();
   expect(within(detail).getByText('About 212 guests, likely 150 to 290.')).toBeTruthy();
+  openWeekNumbers();
   const strip = screen.getByRole('table', { name: 'This week, day by day' });
   expect(within(strip).getAllByText(sentence('Outlook: ~212 guests, forecast, likely 150 to 290'))).toHaveLength(3);
   expect(within(strip).getAllByText(sentence('~212 guests, forecast, likely 180 to 240'))).toHaveLength(4);
@@ -681,8 +701,10 @@ test('Home reads its calendars’ events for Nov 1 to 30, under 92 days, and Thi
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, undefined, { [OWNER_EVENTS]: { events: [WINE_DINNER] } }));
   expect(lastFake?.paths).toContain(OWNER_EVENTS);
   expect(daysBetween('2026-11-01', '2026-11-30')).toBeLessThan(92);
-  const week = screen.getByRole('region', { name: 'This week in Hanover' });
-  expect(await within(week).findByText('Wine dinner')).toBeTruthy();
+  // The chart names it in Friday's column, and Show the numbers lists it in the day's row.
+  expect(await screen.findByRole('button', { name: /^Fri, Nov 6, 2026\. .*From your calendar: Wine dinner\.$/ })).toBeTruthy();
+  const week = openWeekNumbers();
+  expect(within(week).getByText('Wine dinner')).toBeTruthy();
 });
 
 test('a refused events read leaves Home showing, with no imported events', async () => {

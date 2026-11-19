@@ -468,7 +468,7 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
  * a buyout's other than 0 says how its party compares with Townwise's model, since its mark's direction must be in the
  * words too.
  */
-export function reasonOutcomeWords(outcome: string, guests: number | null, size = 0): string | null {
+export function reasonOutcomeWords(outcome: string, guests: number | null, size = 0, of: 'note' | 'rule' = 'rule'): string | null {
   switch (outcome) {
     case 'added': return `Adds ${plural(guests ?? 0, 'guest', 'guests')}`;
     case 'booked': return size === 0 ? 'Books the day' : `Books the day: about ${String(Math.abs(size))}% ${size > 0 ? 'more' : 'fewer'} guests than Townwise’s model`;
@@ -479,8 +479,9 @@ export function reasonOutcomeWords(outcome: string, guests: number | null, size 
     case 'day_closed': return 'The day is closed';
     case 'day_booked': return 'The day is booked';
     case 'past_day': return 'This day has passed';
-    // A rule's closure or buyout on a day a note decides: the note wins (D31).
-    case 'overridden': return 'A note on this day sets this rule aside';
+    // A rule's closure or buyout on a day a note decides: the note wins (D31). D59: a TownwiseAI note on a day a note your
+    // team made decides is set aside the same way.
+    case 'overridden': return of === 'note' ? 'A note your team made on this day sets this TownwiseAI note aside' : 'A note on this day sets this rule aside';
     default: return null;
   }
 }
@@ -618,7 +619,7 @@ function reasonLines(day: ForecastDay | null, past: boolean, notes: readonly Not
     const title = noteTitleOf(reason, notes);
     const label = title === null ? reason.label : `${reason.label}: ${title}`;
     const line = { key: `${String(index)}:${reason.kind}`, label, sources: reason.sources, ...markOf(size, applied === null) };
-    if (applied !== null) return { ...line, detail: reasonOutcomeWords(applied.outcome, applied.guests, size ?? 0) };
+    if (applied !== null) return { ...line, detail: reasonOutcomeWords(applied.outcome, applied.guests, size ?? 0, reason.note == null ? 'rule' : 'note') };
     if (effect !== null) return { ...line, detail: effectWords(reason.kind, effect) };
     return { ...line, detail: !past && AGAINST.has(reason.kind) ? NO_HISTORY : null };
   });
@@ -654,6 +655,15 @@ export function shortReasons(day: Pick<ForecastDay, 'reasons' | 'model'>, past: 
     if (effect === null) return { reason, line: reason.label, mark: null, grade: null };
     return { reason, line: `${reason.label}: ${shortEffect(effect)}`, ...markOf(size, true) };
   });
+}
+
+/**
+ * UI review 2026-11-19: on a closed day, without the run's own closure reason (“Closed”, no note), which only repeats the
+ * day's status; a closure note or rule still names itself. For the tooltip and Home's Why.
+ */
+export function besideClosed(day: Pick<ForecastDay, 'status'>, rows: readonly ShortReason[]): ShortReason[] {
+  if (day.status !== 'closed') return [...rows];
+  return rows.filter((row) => !(row.reason.kind === 'closure' && (row.reason.note ?? null) === null && row.line === row.reason.label));
 }
 
 /** The lines of shortReasons: “Saturday: usually more guests”, or a reason's label alone. */
@@ -825,7 +835,7 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
       if (day.noteGuests > 0) lines.push(`Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}`);
     }
   }
-  const reasons = day === null ? [] : shortReasons(day, date < input.today, TOOLTIP_REASONS);
+  const reasons = day === null ? [] : besideClosed(day, shortReasons(day, date < input.today, TOOLTIP_REASONS));
   const names: string[] = [];
   // A note or rule whose reason is shown is already named, whatever its words.
   const shownIds = new Set<string>();

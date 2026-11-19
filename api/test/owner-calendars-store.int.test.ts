@@ -113,7 +113,7 @@ describe('adding and listing', () => {
       id: expect.any(String) as string, locationId: t.locationId, kind: 'file', label: 'Bookings', host: null, eventCount: 3, skippedRepeating: 2,
       status: 'ok', lastSuccessAt: now, lastAttemptAt: now, nextRefreshAt: null, leaseUntil: null, consecutiveFailures: 0,
       lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now, format: 'ics',
-      bookings: { state: 'unsorted', sortedAt: null, confirmedAt: null, confirmedBy: null },
+      bookings: { state: 'unsorted', sortedAt: null, confirmedAt: null, confirmedBy: null }, fromFileId: null, autoSort: null,
     });
     // A link is fetched again 6 hours after it is added; a file never is.
     expect(link).toMatchObject({
@@ -490,6 +490,55 @@ describe('the limit', () => {
   });
 });
 
+describe('a stored file’s calendar (D60)', () => {
+  const fileCalendar = { kind: 'file', label: 'From Your data' } as const;
+  const addFromFile = (t: Tenant, fileId: string, title: string) => calendars.addFromFile(
+    t.scope, t.locationId, fileId, fileCalendar, parsed([event('e1', '2026-11-05', { title })]), { createdBy: 'user-0001', now: server.clock.now() },
+  );
+
+  it('keeps the file’s id, and a second add of the same file is file_imported with nothing stored', async () => {
+    const t = await tenant();
+    const fileId = new Types.ObjectId().toHexString();
+    const first = await addFromFile(t, fileId, 'First');
+    expect(first).toMatchObject({ kind: 'file', fromFileId: fileId });
+    expect(await addFromFile(t, fileId, 'Second')).toBe('file_imported');
+    expect(await calendars.list(t.scope, t.locationId)).toHaveLength(1);
+    expect(await count('tw_calendar_events', { orgId: new Types.ObjectId(t.orgId), title: 'Second' })).toBe(0);
+    // A plain add keeps no file.
+    expect(await addFile(t, 'Plain', [event('p', '2026-11-05')])).toMatchObject({ fromFileId: null });
+  });
+
+  it('two adds of one file racing past the check: the unique index takes one, and the other is file_imported', async () => {
+    const t = await tenant();
+    const fileId = new Types.ObjectId().toHexString();
+    const hold = holdCalls(server, 'create', 'TwCalendarSource');
+    let results: (OwnerCalendarRecord | 'calendar_limit' | 'file_imported')[];
+    try {
+      const racing = ['Racer A', 'Racer B'].map((title) => addFromFile(t, fileId, title));
+      // Both found no calendar of the file and are about to insert, into different free slots.
+      await hold.arrived(1);
+      await hold.arrived(2);
+      hold.open();
+      results = await Promise.all(racing);
+    } finally {
+      hold.restore();
+    }
+    expect(results.filter((result) => result === 'file_imported')).toHaveLength(1);
+    expect(await calendars.list(t.scope, t.locationId)).toHaveLength(1);
+    expect(await count('tw_calendar_events', { orgId: new Types.ObjectId(t.orgId) })).toBe(1);
+  });
+
+  it('a second calendar of one file is refused by the unique index even in another slot', async () => {
+    const t = await tenant();
+    const fileId = new Types.ObjectId().toHexString();
+    const first = await addFromFile(t, fileId, 'First');
+    if (typeof first === 'string') throw new Error(first);
+    const row = await server.connection.collection('tw_calendar_sources').findOne({ _id: new Types.ObjectId(first.id) });
+    await expect(server.connection.collection('tw_calendar_sources').insertOne({ ...row, _id: new Types.ObjectId(), slot: 4 }))
+      .rejects.toMatchObject({ code: 11000 });
+  });
+});
+
 describe('removal and isolation', () => {
   it('answers another organization’s or another location’s calendar like an unknown one, and changes nothing', async () => {
     const a = await tenant();
@@ -572,7 +621,7 @@ describe('Google calendars (connect-google-calendar)', () => {
     expect(google).toEqual({
       id: expect.any(String) as string, locationId: t.locationId, kind: 'google', label: 'Google calendar', host: null, eventCount: 1, skippedRepeating: 0,
       status: 'ok', lastSuccessAt: now, lastAttemptAt: now, nextRefreshAt: new Date(now.getTime() + REFRESH_INTERVAL_MS), leaseUntil: null,
-      consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now, format: null, bookings: null,
+      consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now, format: null, bookings: null, fromFileId: null, autoSort: null,
     });
     // The sixth calendar, a Google one, finds no slot.
     const before = await snapshotOf(t.orgId);

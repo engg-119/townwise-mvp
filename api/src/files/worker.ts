@@ -10,6 +10,7 @@ import type { Logger } from '@ckeith26/server-core';
 import type { Connection } from 'mongoose';
 
 import { scopeForClaimedImport, type OrgScope } from '../access/policy.ts';
+import { answerFromCalendars } from '../calendar/answers.ts';
 import { utcDay } from '../dates.ts';
 import { DELETED_PERSON } from '../people.ts';
 import { claimNextImport, type ClaimedImport } from '../stores/cross-tenant.ts';
@@ -17,6 +18,7 @@ import type { EntryCounts, FileProgress, FileRecord, FileResult } from '../store
 import type { ImportRecord } from '../stores/imports.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
+import { queueAutoRead } from './ai-auto.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { cleanCsv } from './clean.ts';
 import { purgeOriginal, RAW_DELETED } from './remove.ts';
@@ -49,6 +51,16 @@ export interface FileWorkerDeps {
   readonly extract?: ExtractModel | undefined;
   /** Its monthly spend limit per organization, in US dollars; 0 turns it off. */
   readonly filesMonthlyBudgetUsd?: number;
+  /**
+   * D59: TOWNWISE_AGENT_AUTO is true and TownwiseAI reads files in this process, so a file kept or failed with its
+   * original is queued for an automatic read (files/ai-auto.ts). Off when left out.
+   */
+  readonly autoRead?: boolean;
+  /**
+   * D59 slice 5: TOWNWISE_AGENT_AUTO, with which (and the organization's switch) a calendar's answers to the questions a
+   * file's days raise are saved (calendar/answers.ts). Off when left out.
+   */
+  readonly agentAuto?: boolean;
 }
 
 export interface FileWorker {
@@ -186,6 +198,8 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     }
     const counts = { inserted, replaced: replace ? matched : 0, kept: replace ? 0 : matched };
     await stores.uploads.finish(scope, uploadId, counts);
+    // D59: the days a file wrote change what the lab trains on.
+    await stores.locations.wantRefit(scope, file.locationId, now());
     const csv = cleanCsv(days);
     await blobs.writeClean(scope, { locationId: file.locationId, fileId: file.id }, csv);
     const result: FileResult = {
@@ -208,6 +222,9 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     await stores.imports.applied(scope, record.id);
     await stores.imports.addThroughput(scope, record.id, file.sizeBytes, readMs);
     await audit(scope, file, { uploadId, dayCount: days.length, ...counts, firstDate, lastDate });
+    // D59 slice 5: the location's calendars answer the sales history's suggestions these days make (it never throws).
+    const location = await stores.locations.find(scope, file.locationId);
+    if (location !== null) await answerFromCalendars({ stores, logger, now, agentAuto: deps.agentAuto ?? false }, scope, location);
     logger.info({
       orgId: scope.orgId, locationId: file.locationId, fileId: file.id, importId: record.id, dayCount: days.length, durationMs: readMs,
     }, 'townwise.file_read');
@@ -236,6 +253,9 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
       if (!settled && entries !== null) await stores.fileEntries.removeForFile(scope, file.id);
       if (status === 'kept') await stores.imports.addThroughput(scope, record.id, file.sizeBytes, now().getTime() - startedAt.getTime());
       logger.info({ fileId: file.id, kind: file.kind, outcome }, status === 'kept' ? 'townwise.file_kept' : 'townwise.file_failed');
+      // D59: a file Townwise did not read into days may be read by TownwiseAI on its own.
+      const finished = settled && deps.autoRead === true ? await stores.files.get(scope, file.locationId, file.id) : null;
+      if (finished !== null) await queueAutoRead({ stores, logger, now, on: true }, scope, finished);
       return false;
     };
     if (file.purgeRaw) {

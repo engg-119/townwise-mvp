@@ -66,6 +66,8 @@ export const READER_SYSTEM_PROMPT = [
   '  is "closed", "more", "fewer" or "unknown". A buyout or a private event that takes the whole restaurant (closed to',
   '  the public) is kind "private_event" with effect "closed"; a private party in part of the room is "private_event"',
   '  with "more". expectedGuests is a number only when the file states one, else null; detail is at most 280 characters.',
+  '  Each event has its own confidence: "high" only when the file states its date, kind and effect plainly; "medium"',
+  '  when mostly clear; "low" when unsure.',
   '- days: daily totals, only from a table or list in the file that states them per day, one entry per date, copying',
   '  each figure exactly as the file states it. guests is the day\'s guests or covers; netSales is the day\'s net sales',
   '  in dollars (after discounts, before tax and tips). Use null for a figure the file does not state for that day.',
@@ -102,6 +104,7 @@ export const readerAnswer = z.object({
     effect: z.enum(AI_EVENT_EFFECTS),
     expectedGuests: z.number().int().nullable(),
     detail: z.string().max(EVENT_DETAIL_CHARS),
+    confidence: z.enum(['high', 'medium', 'low']),
   })).max(EVENTS_MAX),
   days: z.array(z.object({
     date: z.iso.date(),
@@ -126,6 +129,8 @@ const eventEntry = z.strictObject({
   effect: z.enum(AI_EVENT_EFFECTS),
   expectedGuests: z.number().int().min(0).max(100_000).nullable(),
   detail: z.string().trim().max(EVENT_DETAIL_CHARS),
+  // D59: the event's own confidence; an answer without it reads as the read's (an unknown value too).
+  confidence: z.unknown().optional(),
 }).refine((event) => event.startDate <= event.endDate);
 
 /** A day with neither figure says nothing, so it is dropped too. */
@@ -168,6 +173,12 @@ function patternSchedule(raw: unknown, today: string): RuleSchedule | null {
   return readRuleSchedule({ ...closed, startDate: today, endDate: null, season: { repeat: 'yearly', from: startDate.slice(5), to: endDate.slice(5) } }, today);
 }
 
+/** D59: an event's confidence: its own, or the read's when it has none; `high` only when both are (design decision 7). */
+export function eventConfidence(event: Pick<AiReadEvent, 'confidence'>, read: Pick<AiReadResult, 'confidence'>): 'high' | 'medium' | 'low' {
+  const own = event.confidence ?? read.confidence;
+  return own === 'high' && read.confidence !== 'high' ? read.confidence : own;
+}
+
 /** The answer as readerResult keeps it; the reader adds which days the file's text bears out (AiReadResult). */
 export type AiAnswer = Omit<AiReadResult, 'daysBorneOut' | 'closedPatterns'> & { readonly closedPatterns: readonly RuleSchedule[] };
 
@@ -179,15 +190,21 @@ export type AiAnswer = Omit<AiReadResult, 'daysBorneOut' | 'closedPatterns'> & {
  * numbers in the summary, the facts and the events' titles and details are replaced (redacted). `eventCount` and
  * `dayCount` stay when the lists are cleared (once acted on, and when the original is deleted). D46: the closed patterns
  * that pass patternSchedule against the read's `today`, at most 5, as closure schedules; none when the answer has none.
+ * D59: each event keeps its own `confidence` when the answer gave a known one; absent, it reads as the read's
+ * (eventConfidence).
  */
 export function readerResult(raw: unknown, today: string): AiAnswer | null {
   if (!isRecord(raw)) return null;
   const kind: AiFileKind = oneOf(raw.kind, AI_FILE_KINDS, 'other');
   const confidence = oneOf(raw.confidence, ['high', 'medium', 'low'] as const, 'low');
   const summary = typeof raw.summary === 'string' ? redacted(raw.summary.trim(), SUMMARY_CHARS) : '';
-  const events: AiReadEvent[] = entries(raw.events, eventEntry, EVENTS_MAX).map((event) => ({
-    ...event, title: redacted(event.title, EVENT_TITLE_CHARS), detail: redacted(event.detail, EVENT_DETAIL_CHARS),
-  }));
+  const events: AiReadEvent[] = entries(raw.events, eventEntry, EVENTS_MAX).map(({ confidence: own, ...event }) => {
+    const rated = (['high', 'medium', 'low'] as const).find((level) => level === own) ?? null;
+    return {
+      ...event, title: redacted(event.title, EVENT_TITLE_CHARS), detail: redacted(event.detail, EVENT_DETAIL_CHARS),
+      ...(rated === null ? {} : { confidence: rated }),
+    };
+  });
   const seen = new Set<string>();
   const unique: AiReadDay[] = entries(raw.days, dayEntry, Number.MAX_SAFE_INTEGER).filter((day) => {
     if (seen.has(day.date)) return false;

@@ -1,10 +1,11 @@
-// The forecast lab's input (schema townwise.lab-input/2, D42): what the job fetches from the callback, built here from one
+// The forecast lab's input (schema townwise.lab-input/3, D42 and D52): what the job fetches from the callback, built here from one
 // location's stored days, its notes and scheduled business rules, the town calendar and the current published run. Outputs
 // only the facts the lab reads: guests per day, the term and week of term, town event groups, three flags from the notes
 // and rules, the town calendar's entries (id, group, kind, dates and confidence, which the baseline engine reads its
 // holidays and events from) and the current run's engine and recorded weekday bias. Never a note's detail, a rule's text, a calendar entry's title,
 // URL or source, or any name. labInputOf is pure; buildLabInput reads the stores under the calibration's scope. The lab
-// accepts version 2 only, so the two move together. Nothing here logs. D58 (learn-from-calendar-bookings): the flags
+// accepts version 3 only (D52: 400 future days and termsThrough), so the two move together. Nothing here logs. D58
+// (learn-from-calendar-bookings): the flags
 // also read the confirmed booking labels of the location's file calendars, on history days only, as dates and label
 // (never a title or uid), with no change to the schema, the lab or LAB_MODEL_VERSION.
 import { z } from 'zod';
@@ -14,7 +15,7 @@ import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
 import { closingRules, closureOf, isClosure, typicalByDate } from '../closed-days.ts';
 import { daysBetween, isoDate, utcDay } from '../dates.ts';
-import { flagsAfterData, scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
+import { flagsAfterData, ownerBeatsAgent, scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
 import { canonicalSha256, eachDay } from '../forecasts/file.ts';
 import { engineOf } from '../forecasts/reader.ts';
 import { termEntries } from '../people-in-town/term.ts';
@@ -25,17 +26,20 @@ import type { NoteRecord } from '../stores/notes.ts';
 import type { ConfirmedBooking } from '../stores/owner-calendars.ts';
 import type { SalesDay } from '../stores/sales-days.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
-import { townEvents } from '../town-calendar.ts';
+import { townCalendarCovers, townEvents } from '../town-calendar.ts';
 import { scorecardSchema, type Metrics } from './scorecard.ts';
 
-export const LAB_INPUT_SCHEMA = 'townwise.lab-input/2';
+export const LAB_INPUT_SCHEMA = 'townwise.lab-input/3';
 /**
  * The lab's model version (modeling/lab/townwise_lab/version.py's MODEL_VERSION; lab-contract.test.ts holds the two
  * equal). The weekly refresh's fingerprint includes it (D42), so a bump refits every location once.
  */
-export const LAB_MODEL_VERSION = 'v9';
-/** Days the lab forecasts after the last day with guests (the run's window). */
-export const HORIZON_DAYS = 182;
+export const LAB_MODEL_VERSION = 'v11';
+/**
+ * Days the input carries after the last day with guests (D52): the furthest a run reaches, its outlook capped at 400
+ * days after the last day of sales (the lab's forecast.HORIZON_DAYS).
+ */
+export const HORIZON_DAYS = 400;
 /** The event a calendar entry with no group stands for. */
 export const ONE_OFF = 'one_off';
 /** A calendar group, as a run file's reason refs allow it. */
@@ -102,6 +106,8 @@ export const labInputSchema = z.strictObject({
   today: isoDate,
   dataThrough: isoDate,
   horizonDays: z.literal(HORIZON_DAYS),
+  /** The last day of the town's last researched term entry, classes or finals, or null with none (D52). */
+  termsThrough: isoDate.nullable(),
   regimeStart: isoDate.nullable(),
   days: z.array(labDaySchema).min(1),
   calendar: z.array(calendarEntrySchema),
@@ -169,6 +175,16 @@ function termsOf(townId: string | null, dates: readonly string[]): Map<string, {
   return out;
 }
 
+/**
+ * The last day of the town's last researched term entry, classes or finals, over all its years, or null for a town with
+ * none (D52 decision 8): the model reads a day no term covers as a break, so its outlook stops there.
+ */
+export function termsThroughOf(townId: string | null): string | null {
+  const covers = townCalendarCovers(townId);
+  if (covers === null) return null;
+  return termEntries(townEvents(townId, covers)).reduce<string | null>((last, entry) => (last === null || entry.end > last ? entry.end : last), null);
+}
+
 /** The sorted town event groups covering each day; an event with no group is one_off. Holidays and terms are not events. */
 function eventsOf(townId: string | null, from: string, to: string): Map<string, string[]> {
   const groups = new Map<string, Set<string>>();
@@ -226,8 +242,8 @@ function isParty(note: Flagged): boolean {
 
 /**
  * The input for `calibration`, or null when the location has no day with guests by `today`. Days run from the first day
- * with guests to the last one on or before today (dataThrough) plus 182 days, with no gaps; guests are null after
- * dataThrough and on days with no row.
+ * with guests to the last one on or before today (dataThrough) plus 400 days (D52), with no gaps; guests are null after
+ * dataThrough and on days with no row. termsThrough is the town's last researched term day (termsThroughOf).
  * Notes, on history days (to dataThrough, for training): a private event sets privateEvent, and with effect closed also
  * booked (a buyout); any other closure note, or note with effect closed, sets closed. A counted party (a private event
  * with more guests and a guest count) is the exception: the forecast read adds its guests on every day it covers, so on
@@ -257,6 +273,9 @@ function isParty(note: Flagged): boolean {
  * the forecast as the linked note confirming made, which editing can undo. [CONFIRM: a confirmed buyout label books a past
  * day and a party label marks it a private event, unless a note on the day decides] [CONFIRM: labels never change a day's
  * closed or likely-closed status or its guests]
+ * Owner beats agent (D59): on any day, a note a person made that decides the day sets aside every TownwiseAI note
+ * covering it (forecasts/adjust.ts ownerBeatsAgent) before the flags are read. [CONFIRM: a note a person made beats a
+ * TownwiseAI note on the same day]
  */
 export function labInputOf(args: {
   calibration: Pick<CalibrationRecord, 'id' | 'regimeStart'>;
@@ -287,7 +306,8 @@ export function labInputOf(args: {
     const past = date < args.today;
     const row = rows.get(date);
     const typicalOn = typical.get(date) ?? null;
-    const notes: Flagged[] = args.notes.filter((note) => noteCovers(note, date));
+    // D59: a person's note that decides the day sets aside TownwiseAI's notes on it, as the forecast read does.
+    const notes: Flagged[] = ownerBeatsAgent(args.notes.filter((note) => noteCovers(note, date))).kept;
     const rules = schedules.filter((schedule) => noteCovers(schedule, date));
     // A rule's closure or buyout only where it holds (closed-days.ts); its other fields always count.
     const holding = closingRules(rules, notes, row, typicalOn, past);
@@ -319,6 +339,7 @@ export function labInputOf(args: {
     today: args.today,
     dataThrough: span.last,
     horizonDays: HORIZON_DAYS,
+    termsThrough: termsThroughOf(townId),
     regimeStart: args.calibration.regimeStart,
     days,
     calendar: calendarOf(townId, span.first, last),

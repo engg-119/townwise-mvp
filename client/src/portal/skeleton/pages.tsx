@@ -13,7 +13,6 @@ import { FIGURE_KEY, FORECAST_TAG, markedFigure } from '../calendar/model';
 import { noNumberLine } from '../estimates/format';
 import { BlockRow, GUTTER } from '../home/Block';
 import { MONTH_INTRO } from '../home/ThisMonth';
-import { BARS_FOOTNOTE } from '../home/ThisWeek';
 import { Actions } from '../ui/Button';
 import { Columns, Pair, Panel, Section, Stack } from '../ui/layout';
 import {
@@ -331,8 +330,6 @@ function SkeletonMonth(props: { cellTestID: string; cellHeight: number }): React
   );
 }
 
-/** This week's strip (home/ThisWeek.tsx): its 124px column of row labels. */
-const WEEK_CORNER = 124;
 
 /**
  * Home's month cells (home/MonthGrid): 96px tall once a cell, a seventh of the grid's column less its 3px gaps, is
@@ -416,11 +413,6 @@ const COVERAGE_WORDS = calendarCoverageLine({ town: PLACEHOLDER_TOWN, researched
 const WEEK_LINE_WORDS = 'On the calendar this week: Home football vs Brown (Saturday).';
 const WEEK_PERIOD_WORDS = 'Fall term finals. Term, Nov 20 to 25, 2026.';
 
-/** A day's forecast in This week's strip (analytics/week.ts forecastPhrase, an open day). */
-const STRIP_FORECAST_WORDS = `${markedFigure('110 guests', { kind: 'forecast' })}, ${FORECAST_TAG}, likely 90 to 130`;
-/** A day last year in the strip (ThisWeek.tsx PastCell): the day and its figure, then its change against the usual. */
-const STRIP_PAST_WORDS = ['Sat, Nov 22, 2025: 241 guests', '+4% vs usual'] as const;
-
 /** The month key's labels after its two figure samples (MonthKey.tsx, calendar/FigureKey.tsx). */
 const KEY_LABELS = [FIGURE_KEY.actual, FIGURE_KEY.forecast, 'Town event or holiday', 'Your note or rule', 'Your calendar', 'Today', 'This week', 'Selected day'];
 
@@ -447,43 +439,38 @@ export function WeekTileShapes(): React.JSX.Element {
 }
 
 /**
- * This week from 1024px (ThisWeek.tsx WeekStrip): the seven days' heads (today's with its Today line) over the rows a
- * location with history and a published forecast shows, each ruled and labeled in the 124px column: Forecast (its
- * figure and range, three mono lines in a seventh), On the calendar (an entry's title over its kind) and Last year
- * (the 40px bar zone over the day's figure and its usual).
+ * This week's chart (home/WeekChart.tsx): the 140px plot over the seven days' labels (a weekday over its date), then
+ * the key, the scale and the hint, 8px apart; beside it from 1024px, under it below, the chosen day (today at first):
+ * its h3, then Forecast, Why, On the calendar and Same weekday last year, and the link that opens it on the Calendar.
  */
-function WeekStripSkeleton(): React.JSX.Element {
-  const rows: { key: string; cell: React.ReactNode }[] = [
-    { key: 'forecast', cell: <SkeletonWords type="mono">{masked(STRIP_FORECAST_WORDS)}</SkeletonWords> },
-    { key: 'calendar', cell: <View><SkeletonText type="ui" lines={2} width="90%" lastWidth="60%" /><SkeletonText type="mono" width="50%" /></View> },
-    {
-      key: 'lastYear',
-      cell: (
-        <View style={styles.weekCellBody}>
-          <SkeletonBlock height={40} />
-          <View>{STRIP_PAST_WORDS.map((words) => <SkeletonWords key={words} type="mono">{masked(words)}</SkeletonWords>)}</View>
-        </View>
-      ),
-    },
-  ];
+function WeekChartSkeleton(): React.JSX.Element {
+  const { desktop } = useBreakpoint();
+  const part = (label: number, body: React.ReactNode): React.JSX.Element => (
+    <View style={styles.dayPart}><SkeletonText type="mono" width={label} />{body}</View>
+  );
   return (
-    <View style={styles.weekStrip}>
-      <View style={styles.weekRow}>
-        <View style={styles.weekCorner} />
-        {Array.from({ length: DAYS }, (_, day) => (
-          <View key={day} style={styles.weekCell}>
-            <SkeletonText type="ui" width={32} />
-            <SkeletonText type="mono" width={48} />
-            {day === 0 ? <SkeletonText type="mono" width={40} /> : null}
-          </View>
-        ))}
-      </View>
-      {rows.map((row) => (
-        <View key={row.key} style={[styles.weekRow, styles.weekRuled]}>
-          <View style={styles.weekCorner}><SkeletonText type="mono" width={80} /></View>
-          {Array.from({ length: DAYS }, (_, day) => <View key={day} style={styles.weekCell}>{row.cell}</View>)}
+    <View style={desktop ? styles.weekWide : styles.weekStack}>
+      <View style={styles.weekChartSide}>
+        <SkeletonChart height={140} />
+        <View style={styles.weekDays}>
+          {Array.from({ length: DAYS }, (_, day) => (
+            <View key={day} style={styles.weekDay}><SkeletonText type="mono" width={28} /><SkeletonText type="mono" width={40} /></View>
+          ))}
         </View>
-      ))}
+        <SkeletonText type="mono" width="70%" />
+        <SkeletonText type="mono" width="50%" />
+        <SkeletonText type="mono" width="45%" />
+      </View>
+      <View style={styles.weekPanelSide}>
+        <View style={styles.dayDetail}>
+          <SkeletonHeading width={160} />
+          {part(64, <SkeletonText width="80%" />)}
+          {part(32, <SkeletonText lines={2} lastWidth="70%" />)}
+          {part(112, <SkeletonText width="70%" />)}
+          {part(160, <SkeletonText type="mono" width="60%" />)}
+          <SkeletonButton link width={200} />
+        </View>
+      </View>
     </View>
   );
 }
@@ -610,7 +597,7 @@ function DayDetailSkeleton(): React.JSX.Element {
  * P11 Home, block for block as Home.tsx lays it out in its 12-column rows (home/Block.tsx), for a location with
  * history and a published forecast (the owner's choice, 2026-11-18): the lead line with Ask TownwiseAI; At a glance's
  * three tiles (the week's forecast, last week's figure, the next event's title); This week (its calendar line, the
- * strip from 1024px or the day table below it, the footnotes and Show the numbers); This month's grid with the key,
+ * chart beside its chosen day from 1024px or over it below, the footnotes and Show the numbers); This month's grid with the key,
  * Open the calendar and the month's check line, beside the selected day; Last week on a line of its own (as with last
  * week's forecast; on web the chart with its day labels, legend and scale); On the calendar beside Who's in town (its
  * people's groups, then the county's jobs); Past years beside Bar order (which checks the next order
@@ -652,14 +639,9 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
             <SkeletonWords type="small">{masked(WEEK_LINE_WORDS)}</SkeletonWords>
             <View style={styles.weekPeriod}><SkeletonWords type="small">{masked(WEEK_PERIOD_WORDS)}</SkeletonWords><ChipSkeleton /></View>
           </View>
-          {desktop ? <WeekStripSkeleton /> : (
-            // A day's weekday and date; its forecast; an entry's title over its kind; last year's figure over its change. The
-            // rows are 64px from 641px, as tall as a day's head with a two-line cell beside it (today's, with Today, is 70).
-            <SkeletonTable columns={[{ flex: 0.8, lines: 2 }, { flex: 1.4 }, { flex: 2, lines: 2 }, { flex: 1.6, lines: 2 }]} rows={DAYS} rowHeight={64} />
-          )}
+          <WeekChartSkeleton />
           <View style={styles.footnotes}>
             <SkeletonWords type="mono">{LAST_YEAR_FOOTNOTE}</SkeletonWords>
-            {desktop ? <SkeletonWords type="mono">{BARS_FOOTNOTE}</SkeletonWords> : null}
             <SkeletonWords type="mono">{masked(COVERAGE_WORDS)}</SkeletonWords>
           </View>
           <SkeletonButton link width={150} />
@@ -780,16 +762,20 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
  * is, the Month and Week switch's 130px and the "Your calendars" button's 170px, as the row's own items, so it wraps
  * where the page's does: one line at 1024px, two at 375px; the button's panel is closed on load), the filters' legend over four chips where the page puts
  * them for the width (heading the grid's column from 641px, so from 1024px the panel beside it starts level with the
- * legend; after the grid below), then the month's grid, always six weeks of seven days, each cell as tall as the
- * loaded grid's (grid.ts cellSize), with the day panel beside it from 1024px and under it below.
+ * legend; after the grid below; the fifth, “Forecast chart”, D64), in the month view the forecast chart above the
+ * grid, shown by default (D64: its plot and date row, 144px, then its key and scale lines), then the month's grid,
+ * always six weeks of seven days, each cell as tall as the loaded grid's (grid.ts cellSize), with the day panel beside
+ * it from 1024px and under it below. The week view (`view` 'week') draws its chart inside its days, which are at least
+ * as tall as the grid, so its skeleton is the grid with the chart's key and scale lines under it (D64).
  */
-export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
+export function CalendarSkeleton(props: LabelProps & { view?: 'month' | 'week' }): React.JSX.Element {
+  const week = props.view === 'week';
   const { desktop, phone, width } = useBreakpoint();
   const filters = (
     <View testID="skeleton-calendar-filters" style={styles.calendarFilters}>
       <SkeletonText type="ui" width={140} />
       <View style={styles.chips}>
-        {[88, 96, 80, 104].map((chip) => <SkeletonButton key={chip} width={chip} />)}
+        {[88, 96, 80, 104, 120].map((chip) => <SkeletonButton key={chip} width={chip} />)}
       </View>
     </View>
   );
@@ -813,7 +799,20 @@ export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
         <View style={desktop ? styles.split : styles.stacked}>
           <View style={[styles.calendarColumn, desktop ? styles.wide : null]}>
             {phone ? null : filters}
+            {week ? null : (
+              <View testID="skeleton-calendar-chart" style={styles.calendarChart}>
+                <SkeletonBlock height={144} />
+                <SkeletonText type="mono" width={320} />
+                <SkeletonText type="mono" width={180} />
+              </View>
+            )}
             <SkeletonMonth cellTestID="skeleton-calendar-cell" cellHeight={cellSize(width).height} />
+            {week ? (
+              <View testID="skeleton-calendar-week-key" style={styles.calendarChart}>
+                <SkeletonText type="mono" width={320} />
+                <SkeletonText type="mono" width={180} />
+              </View>
+            ) : null}
           </View>
           {phone ? filters : null}
           <View testID="skeleton-calendar-panel" style={desktop ? styles.narrow : null}>
@@ -1058,12 +1057,13 @@ const styles = StyleSheet.create({
   // An event's title in `h3` (22/28) at every width.
   tileTitle: { height: theme.type.h3.lineHeight, justifyContent: 'center' },
   tileTitleBar: { height: theme.type.h3.fontSize, width: '70%', backgroundColor: c.raised },
-  weekStrip: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: c.border },
-  weekRow: { flexDirection: 'row', alignItems: 'stretch' },
-  weekRuled: { borderTopWidth: 1, borderTopColor: c.border },
-  weekCorner: { width: WEEK_CORNER, paddingVertical: theme.space[3], paddingRight: theme.space[3] },
-  weekCell: { flex: 1, minWidth: 0, paddingVertical: theme.space[3], paddingHorizontal: theme.space[2], borderLeftWidth: 1, borderLeftColor: c.border },
-  weekCellBody: { gap: theme.space[2] },
+  // This week's chart beside its chosen day from 1024px, 3 to 2 (WeekChart.tsx), and over it below.
+  weekWide: { flexDirection: 'row', alignItems: 'flex-start', columnGap: theme.space.gutter },
+  weekStack: { gap: theme.space[5] },
+  weekChartSide: { flex: 3, minWidth: 0, gap: theme.space[2] },
+  weekPanelSide: { flex: 2, minWidth: 0 },
+  weekDays: { flexDirection: 'row' },
+  weekDay: { flex: 1, minWidth: 0, alignItems: 'center', gap: 2 },
   footnotes: { gap: 8 },
   // Side by side from a 720px content column (416 + 24 + 280): the grid grows 3 to the detail's 2 (ThisMonth.tsx).
   gridSide: { flexGrow: 3, flexShrink: 1, flexBasis: 416, minWidth: 0, gap: theme.space[3] },
@@ -1104,6 +1104,8 @@ const styles = StyleSheet.create({
   calendarLabel: { width: 216 },
   calendarLabelPhone: { flexShrink: 1, minWidth: 0 },
   calendarFilters: { gap: theme.space[2] },
+  // The month's forecast chart (D64, calendar/MonthChart.tsx): its plot and date row, then the key and the scale.
+  calendarChart: { gap: theme.space[2] },
   calendarColumn: { gap: theme.space[4] },
   chips: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[2], rowGap: theme.space[2] },
   stacked: { gap: theme.space[8] },

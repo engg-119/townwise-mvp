@@ -6,6 +6,7 @@ import { dayMonth, lastWeekForecastCell, lastWeekForecastOnly, lastWeekPhrases, 
 import { metricNumber, metricText, shortDate, signedPercent, type Metric } from '../analytics/words';
 import { ShowNumbers, UploadAction } from '../locations/parts';
 import { calendarHref } from '../routing';
+import { Skeleton, SkeletonChart, SkeletonText } from '../skeleton';
 import { Actions } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
 import { PhraseParts } from '../ui/PhraseParts';
@@ -70,9 +71,21 @@ export function LastWeek(props: {
   metric: Metric;
   locationId: string;
   readOnlyId: string | null;
+  /** Last week's forecast read is still out (UI review 2026-11-19): the card waits rather than say the history ends. */
+  loading?: boolean;
 }): React.JSX.Element {
   const { comparison, metric } = props;
   const router = useRouter();
+  if (props.loading === true) {
+    return (
+      <Block label="Last week" eyebrow="Last week" title="Against the same week last year">
+        <Skeleton name="last-week" label="Loading last week">
+          <SkeletonChart height={140} />
+          <SkeletonText lines={2} lastWidth="70%" />
+        </Skeleton>
+      </Block>
+    );
+  }
   const part = comparison.forecast;
   const range = comparison.state === 'no_history' || comparison.state === 'uploads_off' ? null : `${dayMonth(comparison.from)} to ${dayMonth(comparison.to)}`;
   const stored = comparison.state === 'compared' || comparison.state === 'no_last_year' || comparison.state === 'no_overlap' ? comparison.days : null;

@@ -22,6 +22,7 @@ import {
 } from '../src/lab/schedule.ts';
 import { finishCalibration, launch, SYSTEM_REQUESTER, type StartRequest } from '../src/lab/service.ts';
 import { removeLocation } from '../src/handlers/locations.ts';
+import { countRefitStartsSince } from '../src/stores/cross-tenant.ts';
 import { parseIcs } from '../src/calendar/ics.ts';
 import type { AgentPanel } from '../src/handlers/agent.ts';
 import {
@@ -688,7 +689,7 @@ describe('weekly suggestions', () => {
     await pass({ chat: answering([JULY_4]) });
     const line = logLines(server).filter((each) => each.msg === 'townwise.weekly_suggestions_pass').at(-1);
     const keys = Object.keys(line ?? {}).filter((key) => !['level', 'time', 'pid', 'hostname', 'msg'].includes(key)).sort();
-    expect(keys).toEqual(['budget', 'failed', 'ms', 'none', 'ownerEvents', 'passes', 'state', 'suggested']);
+    expect(keys).toEqual(['applied', 'budget', 'early', 'failed', 'ms', 'none', 'ownerEvents', 'passes', 'state', 'suggested']);
     const textOf = JSON.stringify(logLines(server));
     for (const absent of [p.orgId, p.locationId, JULY_4.why]) expect(JSON.stringify(line)).not.toContain(absent);
     expect(textOf).not.toContain(JULY_4.why);
@@ -808,6 +809,60 @@ describe('weekly suggestions', () => {
     });
     expect((await pass({ chat: answering() })).suggestions).toMatchObject({ failed: 0 });
     expect(await passRow(p)).toMatchObject({ status: 'running', reservedMicroUsd: SUGGESTIONS_RESERVE_MICRO_USD });
+  });
+
+  describe('a pass a calendar refresh brought forward (D59 slice 3)', () => {
+    async function mark(p: Place): Promise<void> {
+      await server.ctx.stores.locations.wantEarlyPass(p.scope, p.locationId, server.clock.now());
+    }
+
+    async function earlyPassOf(p: Place): Promise<unknown> {
+      return (await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(p.locationId) }))?.earlyPass;
+    }
+
+    it('runs the location’s pass early, keyed by the town’s day, at most once a day, after a pass that already read the change', async () => {
+      const p = await place();
+      // Monday: the week's pass runs after the mark, so it read the change and the mark goes.
+      await mark(p);
+      expect((await pass({ chat: answering([]) })).suggestions).toMatchObject({ early: 0 });
+      expect(await passRow(p)).toMatchObject({ status: 'none' });
+      expect(await earlyPassOf(p)).toEqual({});
+
+      // Wednesday 08:00 in Hanover: a refresh marks it, and the pass runs it early as Wednesday's.
+      server.clock.advance(2 * DAY);
+      await mark(p);
+      expect((await pass({ chat: answering([{ ...JULY_4, confidence: 'medium' }]) })).suggestions).toMatchObject({ early: 1, passes: 1, suggested: 1 });
+      expect(await passRow(p, '2026-06-03')).toMatchObject({ status: 'suggested', suggested: 1 });
+      expect(await earlyPassOf(p)).toEqual({});
+
+      // Another refresh that day waits for tomorrow: no call, and the mark stays.
+      server.clock.advance(HOUR);
+      await mark(p);
+      expect((await pass({ chat: answering() })).suggestions).toMatchObject({ early: 0 });
+      expect(await server.connection.collection('tw_suggestion_passes').countDocuments({ locationId: new Types.ObjectId(p.locationId) })).toBe(2);
+      expect(await earlyPassOf(p)).toEqual({ wantedAt: server.clock.now() });
+
+      // Thursday: it runs.
+      server.clock.advance(DAY);
+      expect((await pass({ chat: answering([]) })).suggestions).toMatchObject({ early: 1 });
+      expect(await passRow(p, '2026-06-04')).toMatchObject({ status: 'none' });
+      expect(await earlyPassOf(p)).toEqual({});
+    });
+
+    it('with TOWNWISE_AGENT_AUTO false, or TownwiseAI’s own work or the calendar titles switch off, clears the mark and makes no call', async () => {
+      for (const off of ['env', 'agentAuto', 'titles'] as const) {
+        const p = await place();
+        await pass({ chat: answering([]) });
+        server.clock.advance(DAY);
+        if (off === 'agentAuto') await server.ctx.stores.orgs.setAgentAuto(p.scope, { on: false, at: server.clock.now(), by: 'admin-0000' });
+        else if (off === 'titles') await server.ctx.stores.orgs.setCalendarTitlesToAi(p.scope, { on: false, at: server.clock.now(), by: 'admin-0000' });
+        await mark(p);
+        expect((await pass({ chat: answering(), ...(off === 'env' ? { config: { agentAuto: false } } : {}) })).suggestions).toMatchObject({ early: 0 });
+        expect(await passRow(p, '2026-06-02')).toBeNull();
+        expect(await earlyPassOf(p)).toEqual({});
+        server.clock.advance(-DAY);
+      }
+    });
   });
 
   describe('a large request', () => {
@@ -1095,5 +1150,162 @@ describe('weekly suggestions', () => {
         await removeStaffFactor(server);
       }
     });
+
+    it('D59 slice 3: saves a spotted buyout it is sure of as TownwiseAI’s note linked to the event, with no title anywhere it keeps', async () => {
+      const p = await place();
+      const calendarId = await calendarOf(p, [
+        { uid: 'buyout-0001@bookings.example.test', title: 'Qxzv buyout, 60 guests', day: '20260613' },
+        { uid: 'party-0002@bookings.example.test', title: 'Qxzv party, 12 guests', day: '20260620' },
+      ], { label: 'Front desk' });
+      const spot = (ref: string, date: string, over: Record<string, unknown>) => ({
+        ...JULY_4, type: 'event', kind: 'private_event', startDate: date, endDate: date, eventRef: ref, why: '', calendarIds: [], ...over,
+      });
+      const model = answering([
+        spot('e1', '2026-06-13', { effect: 'closed', expectedGuests: 60, confidence: 'high' }),
+        spot('e2', '2026-06-20', { effect: 'unknown', expectedGuests: 12, confidence: 'high' }),
+      ]);
+      expect((await pass({ chat: model })).suggestions).toMatchObject({ applied: 1, suggested: 1, ownerEvents: 2 });
+      const notes = await server.connection.collection('tw_notes').find({ locationId: new Types.ObjectId(p.locationId) }).toArray();
+      expect(notes).toEqual([expect.objectContaining({
+        createdBy: 'townwise_ai', kind: 'private_event', effect: 'closed', expectedGuests: 60, startDate: '2026-06-13', title: null, detail: null,
+        startTime: '18:00', endTime: '22:00', fromEvent: expect.objectContaining({ uid: 'buyout-0001@bookings.example.test', calendarId: new Types.ObjectId(calendarId) }) as unknown,
+      })]);
+      const rows = await suggestions(p);
+      expect(rows.map((row) => [row.type, row.status]).sort()).toEqual([['event', 'accepted'], ['event', 'open']]);
+      expect(String(rows.find((row) => row.status === 'accepted')?._id)).toBe(String(notes[0]?._id));
+      const ledger = await server.connection.collection('tw_agent_changes').find({ locationId: new Types.ObjectId(p.locationId) }).toArray();
+      expect(ledger).toEqual([expect.objectContaining({ action: 'note.add', sourceKind: 'weekly', why: null, noteKind: 'private_event' })]);
+      expect(passLine()).toMatchObject({ applied: 1 });
+      expect(JSON.stringify([rows, ledger, logLines(server), await auditEvents(server)])).not.toContain('Qxzv');
+    });
+  });
+});
+
+// ---- D59: refits after training changes -----------------------------------------------------------------------------
+
+describe('refits after training changes (D59)', () => {
+  /** Monday's refresh starts the location and its job finishes, so it has a reference calibration and a week row. */
+  async function settled(): Promise<Place> {
+    const p = await place();
+    expect(await pass()).toMatchObject({ started: 1 });
+    const [job] = jobs();
+    await finishJob(job?.calibrationId ?? '');
+    start = runner.jobs.length;
+    return p;
+  }
+
+  /** A person's closure on a history day (what the lab reads changes), and the mark it wants, at the clock's now. */
+  async function changed(p: Place, date: string): Promise<void> {
+    await server.ctx.stores.notes.create(p.scope, p.locationId, {
+      kind: 'closure', startDate: date, endDate: date, weekdays: null, effect: 'closed', expectedGuests: null, detail: null, title: null,
+      startTime: null, endTime: null,
+    }, { createdBy: 'person', now: server.clock.now() });
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now());
+  }
+
+  async function refitOf(p: Place): Promise<{ wantedAt: Date | null; startedAt: Date | null }> {
+    return server.ctx.stores.locations.refitState(p.scope, p.locationId);
+  }
+
+  it('a burst of changes starts one refit as the system, at the first pass 15 quiet minutes after the last of them', async () => {
+    const p = await settled();
+    for (const date of ['2026-05-10', '2026-05-11', '2026-05-12']) {
+      await changed(p, date);
+      server.clock.advance(5 * MINUTE);
+    }
+    // The last change was 5 minutes ago: not quiet yet.
+    expect((await pass()).refits).toEqual({ started: 0, cleared: 0, held: 0, failed: 0 });
+    server.clock.advance(11 * MINUTE);
+    const result = await pass();
+    expect(result.refits).toEqual({ started: 1, cleared: 0, held: 0, failed: 0 });
+    expect(jobs()).toHaveLength(1);
+    expect(await calibration(jobs()[0]?.calibrationId ?? '')).toMatchObject({ requestedBy: SYSTEM_REQUESTER, chargedMicroUsd: 0 });
+    expect(await refitOf(p)).toEqual({ wantedAt: null, startedAt: server.clock.now() });
+    expect(logLines(server).filter((line) => line.msg === 'townwise.refit_pass').at(-1)).toMatchObject({ started: 1 });
+    // Nothing more is wanted: the next pass starts nothing.
+    expect((await pass()).refits.started).toBe(0);
+  });
+
+  it('the weekly cap counts every refit start, not one per location and not a refusal, and Monday’s pass counts them too', async () => {
+    const { locations } = server.ctx.stores;
+    const now = server.clock.now();
+    const p = await place();
+    // Three refits on three days this past week at one location, and a refusal at another.
+    for (const daysAgo of [3, 2, 1]) expect(await locations.markRefitStarted(p.scope, p.locationId, new Date(now.getTime() - daysAgo * DAY), true)).toBe(true);
+    const q = await place();
+    expect(await locations.markRefitStarted(q.scope, q.locationId, now, false)).toBe(true);
+    expect(await countRefitStartsSince(server.connection, new Date(now.getTime() - 7 * DAY))).toBe(3);
+    // A cap of 4: the three refits leave room for one of Monday's two starts.
+    expect(await pass({ config: { weeklyForecastCap: 4 } })).toMatchObject({ started: 1, capped: 1 });
+    expect(jobs()).toHaveLength(1);
+  });
+
+  it('a mark whose lab input did not change is cleared, with no start', async () => {
+    const p = await settled();
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now());
+    server.clock.advance(16 * MINUTE);
+    expect((await pass()).refits).toEqual({ started: 0, cleared: 1, held: 0, failed: 0 });
+    expect(jobs()).toHaveLength(0);
+    expect((await refitOf(p)).wantedAt).toBeNull();
+  });
+
+  it('a location refits at most once a day: a change after a refit keeps its mark until a day after that start', async () => {
+    const p = await settled();
+    await changed(p, '2026-05-10');
+    server.clock.advance(16 * MINUTE);
+    expect((await pass()).refits.started).toBe(1);
+    await finishJob(jobs()[0]?.calibrationId ?? '');
+    const startedAt = server.clock.now();
+    server.clock.advance(2 * HOUR);
+    await changed(p, '2026-05-11');
+    server.clock.advance(HOUR);
+    expect((await pass()).refits.started).toBe(0);
+    expect((await refitOf(p)).wantedAt).not.toBeNull();
+    server.clock.advance(startedAt.getTime() + DAY - server.clock.now().getTime() + MINUTE);
+    expect((await pass()).refits.started).toBe(1);
+    expect(jobs()).toHaveLength(2);
+  });
+
+  it('a location with a live calibration, or past the live cap, keeps its mark for a later pass', async () => {
+    const p = await settled();
+    await changed(p, '2026-05-10');
+    server.clock.advance(16 * MINUTE);
+    const person = await personStart(p);
+    expect((await pass()).refits).toMatchObject({ started: 0, held: 1 });
+    expect((await refitOf(p)).wantedAt).not.toBeNull();
+    await finishJob(person.id);
+    // Three other locations' Monday starts are live: the cap of 3 holds this one too.
+    for (let i = 0; i < SCHEDULE_LIVE_CAP; i += 1) await place();
+    start = runner.jobs.length;
+    const result = await pass();
+    expect(result).toMatchObject({ started: SCHEDULE_LIVE_CAP });
+    expect(result.refits).toMatchObject({ started: 0, held: 1 });
+    expect((await refitOf(p)).wantedAt).not.toBeNull();
+  });
+
+  it('a change landing while the refit starts keeps its newer mark', async () => {
+    const p = await settled();
+    await changed(p, '2026-05-10');
+    server.clock.advance(16 * MINUTE);
+    const newer = new Date(server.clock.now().getTime() + 1000);
+    runner.onStart = async () => { await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, newer); };
+    expect((await pass()).refits.started).toBe(1);
+    expect(await refitOf(p)).toEqual({ wantedAt: newer, startedAt: server.clock.now() });
+  });
+
+  it('starts no refit while TOWNWISE_WEEKLY_FORECASTS is false or the schedule is paused, and keeps the mark', async () => {
+    const p = await settled();
+    await changed(p, '2026-05-10');
+    server.clock.advance(16 * MINUTE);
+    expect((await pass({ config: { weeklyForecasts: false } })).refits.started).toBe(0);
+    await server.ctx.stores.forecastSchedule.setPaused({ at: server.clock.now(), by: 'staff-0000', email: 'staff@townwise.test' }, server.clock.now());
+    try {
+      expect((await pass()).refits.started).toBe(0);
+    } finally {
+      await server.ctx.stores.forecastSchedule.setPaused(null, server.clock.now());
+    }
+    expect(jobs()).toHaveLength(0);
+    expect((await refitOf(p)).wantedAt).not.toBeNull();
+    expect((await pass()).refits.started).toBe(1);
   });
 });

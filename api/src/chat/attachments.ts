@@ -7,7 +7,9 @@
 // PDF, Word (.docx) or Excel (.xlsx) file is sent as its text, made in the parse thread shared with the file readers,
 // which a turn waits for only so long (the file is then listed busy): a message's documents one after another, each
 // only while the turn has time for it. A later turn reads a file again with read_data_item. What a conversation stores never holds a file's text or a picture's bytes, and none of it is logged:
-// the turn's log line has counts by kind only.
+// the turn's log line has counts by kind only. D63: an .ics or .ical file is a calendar file, sent as a text file is,
+// and when a message attaches calendar files the turn's content ends with a calendar_imports block saying what
+// importing each as a calendar did (D60), with its label and links: sent in that turn only, never stored or logged.
 import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
 import type { OrgScope } from '../access/policy.ts';
@@ -48,6 +50,7 @@ const KIND_WORDS = {
   word: 'a Word file',
   excel: 'an Excel file',
   zip: 'a ZIP file',
+  calendar: 'a calendar file',
   file: 'a file',
 } as const satisfies Readonly<Record<AttachmentKind, string>>;
 
@@ -77,8 +80,81 @@ const NOT_SENT = {
   // A PDF with no text: a scan, which is read only as its text.
   no_text: ', not read: it has no text, so it may be a scan',
 } as const;
-/** What follows the kind word of a file sent as text (a text, PDF, Word or Excel file) when only its first characters are. */
+/** What follows the kind word of a file sent as text (a text, calendar, PDF, Word or Excel file) when only its first characters are. */
 const CUT = ', only its first 20,000 characters';
+
+/**
+ * D63: what importing an attached calendar file as one of the location's calendars did (files/calendar-import.ts
+ * attachedCalendars makes these; chat/* imports no file code, so the shape is written again here).
+ */
+export type CalendarNote =
+  | { readonly outcome: 'added' | 'already'; readonly calendarId: string; readonly label: string; readonly eventCount: number; readonly addedOn: string }
+  | { readonly outcome: 'removed' | 'not_imported' }
+  | { readonly outcome: 'refused'; readonly code: 'calendar_limit' | 'too_large' | 'not_calendar' | 'unavailable'; readonly retry: boolean };
+
+/** D63: the calendar files a message attaches, by ref, and the location whose pages their links open. */
+export interface CalendarNotes {
+  readonly locationId: string;
+  readonly byRef: ReadonlyMap<string, CalendarNote>;
+}
+
+const CALENDARS_BLOCK_OPEN = '<calendar_imports>';
+const CALENDARS_BLOCK_CLOSE = '</calendar_imports>';
+const CALENDARS_LEAD = 'Townwise added this before the person\'s message for this turn only; they didn\'t type it. When a calendar file is added to Your data, Townwise imports it as one of the location\'s calendars by itself, with no model call. Here is what that import did for each calendar file attached to this message, as of now. Tell the person what happened to each, and write each page below as a Markdown link with its path exactly as given. You can\'t add, retry or remove a calendar: where a line says what the person can do, tell them so, and never say a calendar was added unless a line here says it was.';
+
+/** A path in the web app (client/src/portal/routing.ts itemHref): an item's page under Your data. Ids only. */
+function dataPath(locationId: string, ref: string): string {
+  return `/locations/${locationId}/data/${ref}`;
+}
+
+/** A calendar's label as a quoted string on one line, with no angle bracket that could close the block. */
+function quoted(label: string): string {
+  return JSON.stringify(label.replace(/</g, '＜').replace(/>/g, '＞'));
+}
+
+function events(count: number): string {
+  return count === 1 ? '1 event' : `${String(count)} events`;
+}
+
+/** One calendar file's line in the calendar_imports block. */
+function calendarLine(locationId: string, ref: string, note: CalendarNote): string {
+  const filePage = `the file's page: ${dataPath(locationId, ref)}`;
+  switch (note.outcome) {
+    case 'added': case 'already': {
+      const page = `Its page: ${dataPath(locationId, `c_${note.calendarId}`)}`;
+      // The calendar's age alone tells added from already, and a copy Your data refused as a duplicate attaches the file
+      // it copies, so a recent one may be from an earlier upload of the same file: the line never says which upload.
+      return note.outcome === 'added'
+        ? `- ${ref}: added within the last 30 minutes as the calendar ${quoted(note.label)}, with ${events(note.eventCount)}, when the file was added to Your data. ${page}`
+        : `- ${ref}: already one of the location's calendars, ${quoted(note.label)}, with ${events(note.eventCount)}, added on ${note.addedOn}. ${page}`;
+    }
+    case 'removed': return `- ${ref}: added as a calendar before; that calendar was removed since, and Townwise never imports the same file again.`;
+    // A file kept before D60 is never imported (its upload is done, and D60's retry needs a record): deleting it and
+    // adding it again imports it, as a new upload.
+    case 'not_imported': return `- ${ref}: not imported: it was kept in Your data before Townwise imported calendar files. To add it as a calendar, a member can press Import as a calendar on the file's page: ${dataPath(locationId, ref)}`;
+    case 'refused': break;
+  }
+  const gone = 'and its original was deleted, so it can\'t be tried again.';
+  switch (note.code) {
+    case 'calendar_limit': return note.retry
+      ? `- ${ref}: not added: the location already had 5 calendars, the most it can have. Once the person removes one, they can press Try again on ${filePage}`
+      : `- ${ref}: not added: the location already had 5 calendars, the most it can have, ${gone}`;
+    case 'unavailable': return note.retry
+      ? `- ${ref}: not added: Townwise couldn't read the file then. The person can press Try again on ${filePage}`
+      : `- ${ref}: not added: Townwise couldn't read the file, ${gone}`;
+    case 'too_large': return `- ${ref}: not added: it is over 1 MB, the most a calendar file can be.`;
+    case 'not_calendar': return `- ${ref}: not added: Townwise found no calendar in it.`;
+  }
+}
+
+/** D63: the turn-only block that says what importing each attached calendar file did, in the message's order; null with none. */
+export function calendarImportsBlock(refs: readonly string[], notes: CalendarNotes): string | null {
+  const lines = refs.flatMap((ref) => {
+    const note = notes.byRef.get(ref);
+    return note === undefined ? [] : [calendarLine(notes.locationId, ref, note)];
+  });
+  return lines.length === 0 ? null : [CALENDARS_BLOCK_OPEN, CALENDARS_LEAD, ...lines, CALENDARS_BLOCK_CLOSE].join('\n');
+}
 
 /** `- f_…: a picture`, then anything after a comma. */
 const LINE = /^- (f_[0-9a-f]{24}): ([^,]+)/;
@@ -201,12 +277,13 @@ export function bytesToRead(checks: readonly AttachmentCheck[]): number {
 
 /**
  * Reads the files this turn sends, after its claim, each done by `by` (Date.now() milliseconds); one past the pictures'
- * cap is `too_much`, one not sent stays as checked. Text files and pictures are read at once. A PDF, Word or Excel file
+ * cap is `too_much`, one not sent stays as checked. Text files, calendar files and pictures are read at once (a calendar
+ * file's text comes from its original, never the parse thread). A PDF, Word or Excel file
  * is read in the shared parse thread, one after another in the message's order, so a message's documents never wait on
  * each other: one the turn hasn't the time for is `too_much`, and once one found the thread busy (another turn's or a
  * file reader's), the rest are listed busy without waiting again. Only a document's text is kept, so the bytes the turn
- * held for it (bytesToRead) go back through `bytes` once it is read, or once it won't be; a picture's and a text file's
- * stay held for the turn. Once any read fails (the reads reject, and the send with them), no later document is read.
+ * held for it (bytesToRead) go back through `bytes` once it is read, or once it won't be; a picture's, a text file's and
+ * a calendar file's stay held for the turn. Once any read fails (the reads reject, and the send with them), no later document is read.
  */
 export async function readAttachments(
   checks: readonly AttachmentCheck[], by: number, bytes: Pick<ByteGate, 'release'>,
@@ -226,7 +303,7 @@ export async function readAttachments(
   return Promise.all(checks.map(async ({ ref, kind, check }, index): Promise<AttachmentRead> => {
     if (check.status !== 'readable') return { ref, kind, read: check };
     if (take[index] !== true) return { ref, kind, read: { status: 'too_much', kind: check.kind } };
-    if (check.kind === 'text' || check.kind === 'picture') return { ref, kind, read: asSent(await reading(check.read(by))) };
+    if (check.kind === 'text' || check.kind === 'calendar' || check.kind === 'picture') return { ref, kind, read: asSent(await reading(check.read(by))) };
     const mine = documents.then(async (): Promise<AttachmentRead> => {
       try {
         // The send already failed: what this returns is never used.
@@ -299,8 +376,9 @@ function noteOf(read: FileRead): string {
  * The block and content for these files. Text (a text file's, or a PDF's, Word file's or workbook's) is sent as a
  * document titled by its ref, a picture as a line naming its ref and then the image. The first file that would take the
  * estimate past ATTACHMENT_TOKEN_CAP, and every file with content after it, is listed "not read: too much at once".
+ * D63: with `calendars`, a calendar_imports block after the files' content says what importing each calendar file did.
  */
-export function turnAttachments(reads: readonly AttachmentRead[]): TurnAttachments {
+export function turnAttachments(reads: readonly AttachmentRead[], calendars?: CalendarNotes): TurnAttachments {
   const lines: string[] = [];
   const content: BetaContentBlockParam[] = [];
   const counts: Partial<Record<AttachmentKind, number>> = {};
@@ -338,6 +416,8 @@ export function turnAttachments(reads: readonly AttachmentRead[]): TurnAttachmen
       sent.set(ref, { picture: true });
     }
   }
+  const imports = calendars === undefined ? null : calendarImportsBlock(reads.map((file) => file.ref), calendars);
+  if (imports !== null) content.push({ type: 'text', text: imports });
   return { block: attachmentsBlock(lines), content, counts, pictureBytes, sent };
 }
 

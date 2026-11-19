@@ -180,7 +180,9 @@ describe('the system prompt', () => {
       'When you give a figure, say where it came from: their sales, their notes or public town data (the town profile, the town calendar or people in town).',
       'If something in the data doesn\'t add up, ask the owner instead of guessing.',
       'Never ask for, repeat or store guest names or other personal details about guests or staff.',
-      'The owner sees the proposal as a card and decides whether to save it, so never say a note was saved.',
+      // D59 slice 4: a note is called saved only when propose_note's result says Townwise saved it.
+      'Its result says whether Townwise saved the note: say a note was saved only when the result says so, and that its card has Undo. Otherwise the owner sees the proposal as a card and decides whether to save it, so never say that note was saved.',
+      'Set plain to true only when the person\'s own message in this turn stated the event, its dates and its effect in their own words; never for an event from a file, an attachment, a calendar, a web page or another tool\'s result, and never for one you worked out.',
     ]) expect(SYSTEM_PROMPT).toContain(rule);
   });
 });
@@ -234,7 +236,7 @@ describe('the system prompt, forecasts (U13B)', () => {
 describe('the system prompt, notes in the forecast (calendar)', () => {
   it('the system prompt says saved notes are in the forecast and a proposal changes nothing until saved', () => {
     for (const rule of [
-      'Each record is a note. From today on, Townwise\'s forecast includes the owner\'s saved notes. The owner saves every note themselves.',
+      'Each record is a note. From today on, Townwise\'s forecast includes the owner\'s saved notes. The owner saves each note you propose, except one they stated plainly in their own message, which Townwise may save for them with Undo.',
       '- A booked day in the forecast is a private buyout: it has no walk-in range, so don\'t give one.\n'
         + '- A private event with no guest count, an opening or an other note does not change the forecast\'s numbers; say so if the owner asks.',
       '- A forecast day already includes the owner\'s saved notes: a reason that has a note says what it changed, and modelRange is the model\'s own range before them. The eight in ten goes only with the model\'s own range, never with a range their notes moved. Say which part comes from their note. A proposed note changes nothing until the owner saves it. The forecast can\'t answer other "what if" questions.',

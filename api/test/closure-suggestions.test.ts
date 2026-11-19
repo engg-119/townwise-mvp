@@ -1,9 +1,9 @@
 // Suggested closure rules (openspec change suggest-closure-rules, D46), without Docker: the closure key a suggestion is
 // deduped on, the words Townwise writes for it from its schedule, and when a location's rules already make one
-// pointless. Every date is synthetic.
+// pointless; and (D59 slice 3) when the sales history is sure of a closed weekday. Every date is synthetic.
 import { describe, expect, it } from 'vitest';
 
-import { closureKeyOf, closureRuleText, isSuggestable } from '../src/agent/closure-suggestions.ts';
+import { closureKeyOf, closureRuleText, isSuggestable, salesEvidenceSure } from '../src/agent/closure-suggestions.ts';
 import type { RuleSchedule } from '../src/stores/business-rules.ts';
 
 const MONDAYS: RuleSchedule = {
@@ -81,5 +81,14 @@ describe('isSuggestable', () => {
   it('not when a rule with a schedule has its words in any case; a rule with the words and no schedule does not block it', () => {
     expect(isSuggestable(MONDAYS, { rules: [rule('closed on mondays', { ...WINTER })] })).toBe(false);
     expect(isSuggestable(MONDAYS, { rules: [rule('Closed on Mondays', null)] })).toBe(true);
+  });
+});
+
+describe('salesEvidenceSure (D59 slice 3)', () => {
+  it('is sure only with at least 8 counted days, at least 90% of them with no sales', () => {
+    expect(salesEvidenceSure({ noSalesCount: 8, weekdayCount: 8 })).toBe(true);
+    expect(salesEvidenceSure({ noSalesCount: 9, weekdayCount: 10 })).toBe(true);
+    expect(salesEvidenceSure({ noSalesCount: 7, weekdayCount: 7 })).toBe(false);
+    expect(salesEvidenceSure({ noSalesCount: 17, weekdayCount: 20 })).toBe(false);
   });
 });

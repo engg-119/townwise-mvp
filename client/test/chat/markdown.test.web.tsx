@@ -28,6 +28,16 @@ it('opens http(s) links in a new tab with noopener, the host after each, and dra
   expect(screen.getByText(/\[worse\]\(javascript:alert\(1\)\)/)).toBeTruthy();
 });
 
+it('opens a Your data item\'s page in the app, not a new tab, with "(Your data)" after it (D63)', async () => {
+  const href = `/locations/${'a'.repeat(24)}/data/c_${'b'.repeat(24)}`;
+  show(`Added [Bookings](${href}).`);
+  const link = await screen.findByRole('link');
+  expect(link.getAttribute('href')).toBe(href);
+  expect(link.getAttribute('target')).toBeNull();
+  expect(link.textContent).toBe('Bookings');
+  expect(link.parentElement?.textContent).toContain('Added Bookings (Your data).');
+});
+
 it('puts a table in a focusable region named Table that scrolls inside itself', async () => {
   show('| Day | Note |\n|---|---|\n| Mon | Closed |');
   const region = await screen.findByRole('region', { name: 'Table' });

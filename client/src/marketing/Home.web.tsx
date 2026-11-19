@@ -12,13 +12,15 @@ import { useReveal, type RevealView } from './useReveal.web';
 // fades in without moving.
 const SECTION_VIEW: RevealView = { threshold: 0, ratio: 0, rootMargin: '0px 0px -12% 0px', showWhenReduced: false };
 
-const FEATURES: readonly { name: string; text: string; planned: boolean }[] = [
-  { name: '7-day forecast', text: 'Daily guests for the week ahead, for this week’s orders.', planned: false },
-  { name: '28-day forecast', text: 'Daily guests four weeks out, for bigger orders and for planning around the weekends that matter.', planned: false },
-  { name: 'A range, not just a number', text: 'Every day gets a low and a high. We check our models on how often the real day lands inside the 80% range.', planned: false },
-  { name: 'A reason for every swing', text: 'Each forecast says what is driving it, for example “Commencement weekend”, “Finals week” or “Term ends Friday”.', planned: false },
-  { name: 'Next twelve months', text: 'A year-ahead view for the season.', planned: true },
-  { name: 'Inventory recommendations', text: 'Reorder points and order quantities.', planned: true },
+// Everything listed here is live in early access. A feature that is not built does not go in this list.
+const FEATURES: readonly { name: string; text: string }[] = [
+  { name: 'Three-month forecast', text: 'Daily guests for the next 91 days, refit every week from your sales, your notes and the town calendar.' },
+  { name: 'Year-ahead outlook', text: 'Past the first three months, a wider outlook out to a year, for planning the season.' },
+  { name: 'A range, not just a number', text: 'Every day gets a low and a high. A new forecast publishes only when its weekly 80% ranges held up on your own past weeks.' },
+  { name: 'A reason for every swing', text: 'Each day names what is driving it: a term ending, a town event, a holiday, or a closure or private event you noted.' },
+  { name: 'TownwiseAI', text: 'An AI assistant that reads your sales, forecast and town calendar, answers your questions, and proposes notes you approve before they change anything.' },
+  { name: 'Your calendars', text: 'Import a calendar file or connect Google Calendar, and TownwiseAI spots private bookings for you to add to the forecast.' },
+  { name: 'Bar ordering', text: 'Suggested orders for your bar items, from the forecast and your item sales, each line with its reason.' },
 ];
 
 const KINDS: readonly { kind: TownKind; title: string; text: string }[] = [
@@ -49,12 +51,12 @@ function Lead(): React.JSX.Element {
   return (
     <div ref={ref} className={className} onFocus={revealNow}>
       <p className="eyebrow">Early access. Built at Dartmouth, testing in Hanover, NH.</p>
-      <p className="sub">We’re building forecasts of daily guests for restaurants and bars, up to three months ahead, from your town’s calendar, not the region’s.</p>
+      <p className="sub">Townwise forecasts daily guests for restaurants and bars, up to a year ahead, the first three months as a forecast and the rest as a wider outlook, from your town’s calendar, not the region’s.</p>
       <div className="cta-row">
         <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a>
         <a className="btn-o" href={SIGN_IN_HREF}>Sign in</a>
       </div>
-      <p className="eyebrow status">In development. No forecasts are for sale yet.</p>
+      <p className="eyebrow status">Free in early access. Forecasts are live for early-access restaurants and still being tested.</p>
     </div>
   );
 }
@@ -78,7 +80,7 @@ export default function Home(): React.JSX.Element {
         <span className="ln"><span onAnimationEnd={() => { setRisen(true); }}><span className="w">Your town</span> <span className="w">has its own.</span></span></span>
       </h1>
       <p className={subIn ? 'hsub is-in' : 'hsub'} onAnimationEnd={() => { setSubIn(false); }}>
-        We’re building daily demand forecasts for restaurants and bars in college, ski and island towns. <span className="hsub-2">Now in early access.</span>
+        Daily demand forecasts for restaurants and bars in college, ski and island towns. <span className="hsub-2">Now in early access.</span>
       </p>
       <div className="cta-row">
         <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a>
@@ -117,7 +119,7 @@ export default function Home(): React.JSX.Element {
           <p className="eyebrow c-l">What you get</p>
           <div className="c-r lead-l">
             <h2 id={h('product')} className="h2">Two horizons. A range. A reason.</h2>
-            <p className="eyebrow">In development. None of this is available to restaurants yet.</p>
+            <p className="eyebrow">Live in early access. The forecasts are still being tested.</p>
           </div>
           <div className="c-r">
             <ul className="feat">
@@ -125,7 +127,7 @@ export default function Home(): React.JSX.Element {
                 <li key={feature.name}>
                   <span className="fn">{feature.name}</span>
                   <span className="fd">{feature.text}</span>
-                  {feature.planned ? <span className="tag tag-plan">Planned</span> : <span className="tag tag-prog">In progress</span>}
+                  <span className="tag tag-live">Live</span>
                 </li>
               ))}
             </ul>
@@ -135,7 +137,6 @@ export default function Home(): React.JSX.Element {
                 <span><span className="slot">{'{weekday}'}</span><span className="slot">{'{date}'}</span></span>
                 <span><span className="slot">{'{guests}'}</span>guests</span>
                 <span>range<span className="slot">{'{low}'}</span>to<span className="slot">{'{high}'}</span></span>
-                <span><span className="slot">{'{sales}'}</span>sales</span>
                 <span><span className="slot">{'{reason}'}</span></span>
               </p>
             </div>
@@ -182,7 +183,7 @@ export default function Home(): React.JSX.Element {
           <div className="faq c-r">
             <div className="faq-i">
               <h3 className="h3">How is this different from my point-of-sale system’s forecast?</h3>
-              <p>If your system forecasts from regional demand patterns, it sees the region, not your town. Townwise starts from your town: a research agent will find the local events that move demand, then your own sales history will calibrate the model to your business, and you will be able to tune it by talking to it. The question we are testing is whether that local model beats a general one, especially where sales history is thin.</p>
+              <p>If your system forecasts from regional demand patterns, it sees the region, not your town. Townwise starts from your town’s calendar of terms, events and holidays, calibrates the model to your business with your own sales history, and lets you tune it with notes about closures and private events, which TownwiseAI can draft for you to approve. A research agent that finds a new town’s events on its own is not built yet. The question we are testing is whether that local model beats a general one, especially where sales history is thin.</p>
             </div>
             <div className="faq-i">
               <h3 className="h3">What data do I need to give you?</h3>
@@ -190,7 +191,7 @@ export default function Home(): React.JSX.Element {
             </div>
             <div className="faq-i">
               <h3 className="h3">Is my sales data shared, or used to train forecasts for other restaurants?</h3>
-              <p>No. Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models. In the app, the people on your organization’s team can see it. Townwise staff can see the figures only through a read-only view that is recorded and shown to your organization’s admins, or by opening your organization as its admin with your consent, which needs a reason once anyone from it has joined and is recorded and shown to your admins too. The <a href="/privacy">Privacy notice</a> has the details.</p>
+              <p>No. Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants. It trains only your own location’s forecast model, and it is never used to train AI models such as TownwiseAI’s. In the app, the people on your organization’s team can see it. Townwise staff can see the figures only through a read-only view that is recorded and shown to your organization’s admins, or by opening your organization as its admin with your consent, which needs a reason once anyone from it has joined and is recorded and shown to your admins too. The <a href="/privacy">Privacy notice</a> has the details.</p>
             </div>
             <div className="faq-i">
               <h3 className="h3">Which towns do you cover?</h3>
@@ -206,8 +207,7 @@ export default function Home(): React.JSX.Element {
             </div>
             <div className="faq-i">
               <h3 className="h3">Is Townwise ready to use today?</h3>
-              {/* [CONFIRM: wording, awaiting the owner] Forecasts publish by default and refit weekly (autonomous-forecasts, D42). */}
-              <p>Yes, in early access, though the forecasts are still being tested. Townwise is a student project in active development. With early access you can add your locations, upload your sales history, add notes about unusual days and see your town’s public profile, if it is one of the twelve on the map. Once a location’s sales history spans 230 days, Townwise forecasts its daily guests, refits the forecast every week, and says whether its trained model or a simpler baseline made it.</p>
+              <p>Yes, in early access, though the forecasts are still being tested. Townwise is a student project in active development. With early access you can add your locations, upload your sales history, add notes about unusual days, import your calendars, ask TownwiseAI about your numbers, set up bar ordering and see your town’s public profile, if it is one of the twelve on the map. Once a location’s sales history spans 230 days, Townwise forecasts its daily guests, refits the forecast every week, and says whether its trained model or a simpler baseline made it.</p>
             </div>
           </div>
         </Section>

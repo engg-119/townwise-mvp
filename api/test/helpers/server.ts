@@ -25,6 +25,7 @@ import { createTurnRunner, type TurnRunner } from '../../src/chat/turn-runner.ts
 import { configSchema as townwiseSchema } from '../../src/config.ts';
 import { createAiReadActions } from '../../src/files/ai-actions.ts';
 import { createAiReader, type AiReader, type AiReaderDeps, type OnAiRead } from '../../src/files/ai-reader.ts';
+import { createCalendarSorts } from '../../src/calendar/auto-sort.ts';
 import type { FileBlobs } from '../../src/files/blobs.ts';
 import type { FileReaderModel } from '../../src/files/extract/reader.ts';
 import type { AiTextInput, AiTextOutcome } from '../../src/files/parse/ai-text.ts';
@@ -84,9 +85,35 @@ const envSchema = z.object({
   ...serverSchema.shape, ...mongoSchema.shape, ...redisSchema.shape, ...authSchema.shape, ...townwiseSchema.shape,
 });
 
+/**
+ * Integration files run side by side (vitest.config.ts), each in a worker slot vitest numbers 1 to maxWorkers in
+ * VITEST_POOL_ID, and a slot runs one file at a time. A server drops its database and flushes its Valkey db at start, so
+ * each slot has its own of both: the Mongo database `townwise-test-<slot>` and Valkey db <slot> (Valkey has 16, 0 to 15;
+ * the global setup's probe uses 0).
+ */
+export function testWorker(): number {
+  const slot = Number(process.env.VITEST_POOL_ID);
+  if (!Number.isInteger(slot) || slot < 1 || slot > 15) {
+    throw new Error(`VITEST_POOL_ID is ${String(process.env.VITEST_POOL_ID)}: each worker needs its own Valkey db from 1 to 15, so keep maxWorkers at 15 or under`);
+  }
+  return slot;
+}
+
+/** This worker's Mongo database (testWorker). */
+export function testDatabase(): string {
+  return `townwise-test-${String(testWorker())}`;
+}
+
+/** This worker's Valkey db on the test Valkey (testWorker). */
+export function testRedisUrl(): string {
+  const url = new URL(inject('redisUrl'));
+  url.pathname = `/${String(testWorker())}`;
+  return url.toString();
+}
+
 function testMongoUri(): string {
   const url = new URL(inject('mongoUri'));
-  url.pathname = '/townwise-test';
+  url.pathname = `/${testDatabase()}`;
   url.searchParams.set('directConnection', 'true');
   url.searchParams.set('monitorCommands', 'true');
   return url.toString();
@@ -103,7 +130,8 @@ function createClock(): TestClock {
 }
 
 /**
- * Drops the database and flushes Valkey (which also resets the kit's magic-link send limits), unless `keepData`.
+ * Drops this worker's database and flushes its Valkey db (which also resets the kit's magic-link send limits), unless
+ * `keepData`.
  * Two instances against one database (resumable-chat-turns: the turn on one, its reader on the other) take the same
  * auth keys: `sharedAuthKeys()` for the first's env, and the same env with `keepData` for the second.
  */
@@ -180,7 +208,7 @@ export async function startTownwiseServer(opts?: {
     AUTH_JWT_KEYS: `k1:${randomBytes(32).toString('base64')}`,
     AUTH_ENCRYPTION_KEYS: `e1:${randomBytes(32).toString('base64')}`,
     MONGODB_URI: testMongoUri(),
-    REDIS_URL: inject('redisUrl'),
+    REDIS_URL: testRedisUrl(),
     REDIS_KEY_PREFIX: 'townwise-test:',
     TOWNWISE_SUPERADMIN_EMAILS: STAFF_EMAIL,
     ...opts?.env,
@@ -224,7 +252,8 @@ export async function startTownwiseServer(opts?: {
     const files = opts?.files;
     const reader = files === undefined || opts?.reader === undefined ? null : createFileWorker({
       connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
-      replicaId: 'test-reader', pollMs: 60_000, ...opts.reader,
+      replicaId: 'test-reader', pollMs: 60_000, autoRead: config.TOWNWISE_AGENT_AUTO && opts.aiReader !== undefined,
+      agentAuto: config.TOWNWISE_AGENT_AUTO, ...opts.reader,
     });
     const turnRunner = createTurnRunner({ stores: createTownwiseStores(mongo.connection), logger, now: clock.now });
     const baseDeps = {
@@ -241,9 +270,11 @@ export async function startTownwiseServer(opts?: {
         : OFF_ACTIVITY,
     };
     const { aroundOnRead = (actions: OnAiRead) => actions, ...readerOpts } = opts?.aiReader ?? { model: undefined };
+    const aiContext = createTownwiseContext(baseDeps);
     const aiReader = files === undefined || readerOpts.model === undefined ? null : createAiReader({
       connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
-      pollMs: 60_000, filesMonthlyBudgetUsd: 5, onRead: aroundOnRead(createAiReadActions(createTownwiseContext(baseDeps))), ...readerOpts,
+      pollMs: 60_000, filesMonthlyBudgetUsd: 5, onRead: aroundOnRead(createAiReadActions(aiContext)),
+      agentAuto: config.TOWNWISE_AGENT_AUTO, sorts: createCalendarSorts(aiContext), ...readerOpts,
       model: readerOpts.model,
     });
     const deps = { ...baseDeps, aiReader: aiReader ?? undefined };

@@ -3,12 +3,14 @@
 // for one bad entry.
 import { describe, expect, it } from 'vitest';
 
+import { autoReadable } from '../../src/files/ai-auto.ts';
 import { retryDelayMs } from '../../src/files/ai-reader.ts';
 import { pictureType } from '../../src/files/extract/input.ts';
 import { readerCeilingMicroUsd, readerRequest } from '../../src/files/extract/reader.ts';
 import {
-  DAYS_MAX, EVENTS_MAX, FACTS_MAX, READER_MAX_TOKENS, READER_MODEL, READER_SYSTEM_PROMPT, readerResult, redacted,
+  DAYS_MAX, eventConfidence, EVENTS_MAX, FACTS_MAX, READER_MAX_TOKENS, READER_MODEL, READER_SYSTEM_PROMPT, readerAnswer, readerResult, redacted,
 } from '../../src/files/extract/reader-prompt.ts';
+import type { FileRecord } from '../../src/stores/files.ts';
 
 const CONTEXT = { today: '2026-06-01', timeZone: 'America/New_York' };
 
@@ -229,5 +231,53 @@ describe('closed patterns (D46)', () => {
     expect(read(answer({ closedPatterns: many }))?.closedPatterns).toHaveLength(5);
     expect(read(answer())?.closedPatterns).toEqual([]);
     expect(read(answer({ closedPatterns: 'Mondays' }))?.closedPatterns).toEqual([]);
+  });
+});
+
+describe('each event’s confidence (D59)', () => {
+  it('the schema and the prompt ask for each event’s own confidence', () => {
+    expect(READER_SYSTEM_PROMPT).toContain('Each event has its own confidence: "high" only when the file states its date, kind and effect plainly');
+    expect(readerAnswer.shape.events.element.shape.confidence.options).toEqual(['high', 'medium', 'low']);
+  });
+
+  it('keeps an event’s own known confidence, and leaves it out when absent or unknown, so it reads as the read’s', () => {
+    const events = read(answer({ events: [{ ...EVENT, confidence: 'medium' }, EVENT, { ...EVENT, confidence: 'certain' }] }))?.events;
+    expect(events).toEqual([{ ...EVENT, confidence: 'medium' }, EVENT, EVENT]);
+  });
+
+  it('an event is high only when it and the whole read are', () => {
+    expect(eventConfidence({ confidence: 'high' }, { confidence: 'high' })).toBe('high');
+    expect(eventConfidence({}, { confidence: 'high' })).toBe('high');
+    expect(eventConfidence({ confidence: 'medium' }, { confidence: 'high' })).toBe('medium');
+    expect(eventConfidence({ confidence: 'high' }, { confidence: 'medium' })).toBe('medium');
+    expect(eventConfidence({ confidence: 'low' }, { confidence: 'medium' })).toBe('low');
+    expect(eventConfidence({}, { confidence: 'low' })).toBe('low');
+  });
+});
+
+describe('which stored files TownwiseAI reads on its own (D59)', () => {
+  const kept = {
+    name: 'menu.pdf', status: 'kept', rawDeletedAt: null, disabledAt: null, ai: null, aiAutoOff: false, uploadId: null, result: null,
+    outcome: 'reference', addedVia: null, source: null, purgeRaw: false,
+  } as unknown as FileRecord;
+
+  it('a finished file with its original, never asked about, that wrote no days', () => {
+    expect(autoReadable(kept)).toBe(true);
+    for (const status of ['read', 'failed'] as const) expect(autoReadable({ ...kept, status })).toBe(true);
+  });
+
+  it('never a file still uploading or reading, one read into days, a calendar export, one whose box was unchecked, one turned off, or TownwiseAI’s own', () => {
+    const refused: Partial<FileRecord>[] = [
+      { status: 'uploading' }, { status: 'reading' }, { status: 'queued' }, { rawDeletedAt: new Date() }, { uploadId: 'u'.repeat(24) },
+      { result: { dayCount: 400 } as FileRecord['result'] }, { outcome: 'calendar_export' }, { aiAutoOff: true }, { addedVia: 'townwise_ai' },
+      { source: { via: 'ai_file', fileId: 'f'.repeat(24) } }, { purgeRaw: true }, { ai: { status: 'skipped' } as FileRecord['ai'] },
+      { disabledAt: new Date() },
+    ];
+    for (const over of refused) expect(autoReadable({ ...kept, ...over })).toBe(false);
+  });
+
+  it('never a calendar file, which Your data imports as a calendar (D60) and TownwiseAI sorts instead (D59 slice 2)', () => {
+    for (const name of ['bookings.ics', 'Master.ICAL', 'folder/events.ics']) expect(autoReadable({ ...kept, name })).toBe(false);
+    expect(autoReadable({ ...kept, name: 'events.ics.pdf' })).toBe(true);
   });
 });

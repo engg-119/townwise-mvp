@@ -44,7 +44,7 @@ describe('config', () => {
     const budget = {
       TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081',
       FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
-      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true,
     };
     expect(() => resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget })).toThrow(ConfigError);
     expect(resolveTownwiseConfig({ NODE_ENV: 'development', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget }).superadminEmails.size).toBe(0);
@@ -56,7 +56,7 @@ describe('config', () => {
     const base = {
       TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081',
       FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
-      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true,
     };
     const twoStep = (nodeEnv: 'development' | 'test' | 'production', value?: string): boolean => resolveTownwiseConfig({
       NODE_ENV: nodeEnv, ...base, TOWNWISE_STAFF_TWO_STEP: loadEnv(configSchema, { TOWNWISE_STAFF_TWO_STEP: value }).TOWNWISE_STAFF_TWO_STEP,
@@ -92,7 +92,7 @@ describe('config', () => {
     const base = {
       NODE_ENV: 'production' as const, TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
       TOWNWISE_WEB_URL: 'http://localhost:8081', FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined,
-      TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true,
+      TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true,
     };
     expect(resolveTownwiseConfig({ ...base, TOWNWISE_CHAT_WEB_SEARCH: webSearch('true') }).chatWebSearch).toBe(true);
     expect(resolveTownwiseConfig({ ...base, TOWNWISE_CHAT_WEB_SEARCH: webSearch(undefined) }).chatWebSearch).toBe(false);
@@ -119,6 +119,24 @@ describe('config', () => {
     expect(weekly({ TOWNWISE_WEEKLY_SUGGESTIONS: '' }).weeklySuggestions).toBe(true);
     expect(weekly({ TOWNWISE_WEEKLY_SUGGESTIONS: 'false' }).weeklySuggestions).toBe(false);
     expect(() => weekly({ TOWNWISE_WEEKLY_SUGGESTIONS: 'sometimes' })).toThrow(ConfigError);
+  });
+
+  it('TownwiseAI works on its own by default (D59), and the switch refuses anything but true or false', () => {
+    const resolved = (env: Record<string, string | undefined>) => {
+      const parsed = loadEnv(configSchema, { TOWNWISE_SUPERADMIN_EMAILS: 'staff@townwise.test', ...env });
+      return resolveTownwiseConfig({ NODE_ENV: 'development', ...parsed });
+    };
+    expect(resolved({}).agentAuto).toBe(true);
+    expect(resolved({ TOWNWISE_AGENT_AUTO: '' }).agentAuto).toBe(true);
+    expect(resolved({ TOWNWISE_AGENT_AUTO: 'false' }).agentAuto).toBe(false);
+    expect(() => resolved({ TOWNWISE_AGENT_AUTO: 'sometimes' })).toThrow(ConfigError);
+  });
+
+  it('production turns TownwiseAI working on its own on, as the owner chose on 2026-11-19 (D59)', () => {
+    const env = readFileSync(new URL('../production.env', import.meta.url), 'utf8');
+    expect(env).toMatch(/^TOWNWISE_AGENT_AUTO=true$/m);
+    const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+    expect(example).toMatch(/^TOWNWISE_AGENT_AUTO=true$/m);
   });
 
   it('the API starts no weekly refresh (D42): main.ts never imports the schedule or the worker, which runs on its own', () => {
@@ -231,7 +249,7 @@ describe('config', () => {
     expect(() => resolveTownwiseConfig({
       NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
       TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
-      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true,
     })).toThrow(ConfigError);
     expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
   });

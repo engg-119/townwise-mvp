@@ -5,7 +5,7 @@ import type { FileKind } from '../../files/api';
 import { formatSize, uploadError } from '../../files/copy';
 import type { ViewerErrorReason } from '../../viewer/errors';
 import { VIEW_LIMITS } from '../../viewer/limits';
-import type { DataItem } from '../api';
+import type { DataItem, DataItemCalendar } from '../api';
 import { DATA, dataError, daysLine, kindLabel, stateLine, VIA_LINE } from '../copy';
 
 // Every word of an item's page (P27, D28). Like Your data's list, a figure prints only as a count, a size or a date
@@ -22,6 +22,8 @@ export const ITEM = {
   calendarGone: 'This calendar isn’t here anymore. It may have been removed.',
   /** Under a calendar's status: Refresh and Remove live in the Calendar's Your calendars. */
   manageCalendars: 'Manage it on the Calendar',
+  /** D61: on a calendar imported from a file kept in Your data, the link to that file's own page. */
+  calendarFile: 'Open the file it came from',
   /** Under a calendar export's status (D58, kept `calendar_export`): its events are imported in Your calendars. */
   importCalendar: 'Open Your calendars on the Calendar',
   show: 'Show',
@@ -46,6 +48,8 @@ export const ITEM = {
   sheets: 'Sheets',
   pdfLine: 'A PDF opens in a new tab, in your browser’s own PDF viewer.',
   openPdf: 'Open PDF',
+  /** UI review 2026-11-19: a calendar file's viewer (an .ics or .ical file, drawn by no viewer). */
+  calendarFileView: 'Townwise doesn’t show a calendar file here: its events show on the Calendar once it’s one of your calendars.',
   /** Added after a line that shows no content, when the person may download the original. */
   download: 'Use Download original to open it on your computer.',
 } as const;
@@ -246,4 +250,39 @@ export function replaceRetryable(error: unknown): boolean {
 /** An edit stored as its own item that can't take the item's place (another edit came first, or it can't now). */
 export function keptLine(error: unknown): string {
   return hasCode(error, 409, 'item_changed') ? EDIT.itemChanged : `${editError(error)} ${EDIT.keptAsNew}`;
+}
+
+/**
+ * D60: under the status of a calendar file kept in Your data, what importing it as a calendar did. [CONFIRM: the words
+ * for a calendar file imported from Your data]
+ */
+export const CALENDAR_IMPORT = {
+  open: 'Open the calendar',
+  retry: 'Try again',
+  retrying: 'Trying again…',
+  // UI review 2026-11-19: a calendar file kept before D60 imported calendar files. [CONFIRM: the words and the action for
+  // a calendar file kept before calendar files were imported]
+  unimported: 'This calendar file was kept before Townwise added calendar files to your calendars, so it isn’t one of them. Import it as a calendar, or delete it if it’s already one of your calendars.',
+  unimportedGone: 'This calendar file was kept before Townwise added calendar files to your calendars, and its original was deleted, so it can’t be imported.',
+  importOld: 'Import as a calendar',
+  importingOld: 'Importing…',
+  /** Beside a calendar file on Add a file while its item is read, and when that read fails. */
+  checking: 'Added. Checking whether it was added to your calendars…',
+  unknown: 'Added. Open it on Your data to see whether it was added to your calendars.',
+} as const;
+
+const CALENDAR_REFUSALS: Readonly<Record<string, string>> = {
+  calendar_limit: 'Not added to your calendars: this location already has 5 calendars. Remove one on the Calendar, then try again.',
+  too_large: 'Not added to your calendars: this file is over 1 MB. Export a shorter range of your calendar, then add that file.',
+  not_calendar: 'Not added to your calendars: Townwise can’t read this file as a calendar. Add an .ics file, or a CSV with event_id, title, start_at and end_at columns.',
+  unavailable: 'Not added to your calendars: Townwise couldn’t read this file just now.',
+};
+
+/** The line for `calendar`: added as {label} with its events, removed since, or refused and why. */
+export function calendarImportLine(calendar: DataItemCalendar): string {
+  switch (calendar.status) {
+    case 'added': return `Added to your calendars as ${calendar.label}: ${plural(calendar.eventCount, 'event', 'events')}.`;
+    case 'removed': return 'Added to your calendars once; that calendar was removed since. Removing a calendar keeps this file, and Townwise doesn’t add it again.';
+    case 'refused': return CALENDAR_REFUSALS[calendar.reason] ?? 'Not added to your calendars.';
+  }
 }

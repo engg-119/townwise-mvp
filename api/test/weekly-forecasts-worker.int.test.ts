@@ -14,7 +14,7 @@ import { runWeeklyForecastsWorker, WORKER_TICK_MS } from '../src/workers/weekly-
 import { message, scriptedModel, text } from './helpers/chat-model.ts';
 import { addLocation, createOrg } from './helpers/fixtures.ts';
 import { fakeLabRunner, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
-import { startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
+import { startTownwiseServer, testDatabase, type TownwiseTestServer } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
 let runner: FakeLabRunner;
@@ -36,7 +36,7 @@ beforeEach(async () => {
 /** The test server's database, which the worker connects to on its own. */
 function mongoUri(): string {
   const url = new URL(inject('mongoUri'));
-  url.pathname = '/townwise-test';
+  url.pathname = `/${testDatabase()}`;
   url.searchParams.set('directConnection', 'true');
   return url.toString();
 }

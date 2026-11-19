@@ -76,6 +76,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
     await stores.agentAnswers.removeForOrg(scope);
     await stores.agentSuggestions.removeForOrg(scope);
+    // D59: the ledger of TownwiseAI's changes.
+    await stores.agentChanges.removeForOrg(scope);
     // Orders: edits, rules, setups, item sales and counts are the locations', so they go with the organization.
     await stores.orders.removeForOrg(scope);
     await stores.orderSetups.removeForOrg(scope);
@@ -118,6 +120,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     // D42: a weekly pass already past its candidates can still write a week row, and its suggestions.
     await stores.forecastWeeks.removeForOrg(scope);
     await stores.agentSuggestions.removeForOrg(scope);
+    // D59: an automatic read already past its organization check can still write a change.
+    await stores.agentChanges.removeForOrg(scope);
     // U13B: a staff forecast import already past its organization check can still write a run and rows.
     await stores.forecasts.removeForOrg(scope);
     return { deletedDays: firstDays + lateDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents };

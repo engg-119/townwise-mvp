@@ -33,6 +33,8 @@ Object.defineProperty(document.documentElement, 'clientWidth', { configurable: t
 const urls = { made: [] as string[], types: [] as string[], revoked: [] as string[] };
 
 beforeEach(() => {
+  // D61: Your data's rows read as one table, Newest first, remembered for the person signed in.
+  window.localStorage.setItem('townwise.dataView.u1', 'newest');
   urls.made.length = 0;
   urls.types.length = 0;
   urls.revoked.length = 0;
@@ -51,6 +53,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   jest.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 /** A ref the routing allows: `u_` or `f_` and 24 hex digits. */
@@ -434,6 +437,141 @@ describe('what shows nothing says why', () => {
     setup([noRaw(storedFile(other, { name: 'Text', outcome: 'no_header' }))], other);
     expect(await screen.findByText('On · Kept, not used: it has no header row.')).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Open Your calendars on the Calendar' })).toBeNull();
+  });
+
+  test('a calendar file imported as a calendar says so with its events and opens the calendar’s page (D60)', async () => {
+    const ref = refOf('f', 40);
+    setup([storedFile(ref, {
+      kind: 'other', name: 'Bookings.ics', calendar: { status: 'added', calendarId: '0123456789abcdef01234567', label: 'Bookings', eventCount: 12 },
+    })], ref);
+    expect(await screen.findByText('Added to your calendars as Bookings: 12 events.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open the calendar' }).getAttribute('href')).toBe('/locations/l1/data/c_0123456789abcdef01234567');
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    cleanup();
+    // One event, and a calendar removed since: the file stays, and nothing offers to add it again.
+    const one = refOf('f', 41);
+    setup([storedFile(one, { kind: 'other', name: 'One.ics', calendar: { status: 'added', calendarId: 'c1', label: 'One', eventCount: 1 } })], one);
+    expect(await screen.findByText('Added to your calendars as One: 1 event.')).toBeTruthy();
+    cleanup();
+    const gone = refOf('f', 42);
+    setup([storedFile(gone, { kind: 'other', name: 'Gone.ics', calendar: { status: 'removed' } })], gone);
+    expect(await screen.findByText('Added to your calendars once; that calendar was removed since. Removing a calendar keeps this file, and Townwise doesn’t add it again.')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Open the calendar' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    cleanup();
+    // Any other file says nothing of calendars.
+    const plain = refOf('f', 43);
+    setup([storedFile(plain, { kind: 'other', name: 'Notes.txt', calendar: null })], plain);
+    expect(await screen.findByText('Notes.txt')).toBeTruthy();
+    expect(screen.queryByText(/your calendars/)).toBeNull();
+  });
+
+  test('a refused calendar file says why; Try again shows only for a fixable cause and shows what the retry answered (D60)', async () => {
+    const ref = refOf('f', 44);
+    setup([storedFile(ref, { kind: 'other', name: 'Broken.ics', calendar: { status: 'refused', reason: 'not_calendar', retry: false } })], ref);
+    expect(await screen.findByText(
+      'Not added to your calendars: Townwise can’t read this file as a calendar. Add an .ics file, or a CSV with event_id, title, start_at and end_at columns.',
+    )).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    cleanup();
+    const big = refOf('f', 45);
+    setup([storedFile(big, { kind: 'other', name: 'Big.ics', calendar: { status: 'refused', reason: 'too_large', retry: false } })], big);
+    expect(await screen.findByText('Not added to your calendars: this file is over 1 MB. Export a shorter range of your calendar, then add that file.')).toBeTruthy();
+    cleanup();
+    const full = refOf('f', 46);
+    const { fake } = setup([storedFile(full, { kind: 'other', name: 'Late.ics', calendar: { status: 'refused', reason: 'calendar_limit', retry: true } })], full);
+    expect(await screen.findByText('Not added to your calendars: this location already has 5 calendars. Remove one on the Calendar, then try again.')).toBeTruthy();
+    const added = storedFile(full, { kind: 'other', name: 'Late.ics', calendar: { status: 'added', calendarId: 'c9', label: 'Late', eventCount: 3 } });
+    // As the API does, the retry's outcome stays: the page's read after it finds the item added.
+    fake.answers['POST calendar'] = () => {
+      fake.items = [added];
+      return { item: added };
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Added to your calendars as Late: 3 events.')).toBeTruthy();
+    await waitFor(() => { expect(fake.paths.filter((path) => path.endsWith(`/data/${full}`)).length).toBeGreaterThan(1); });
+    expect(screen.getByText('Added to your calendars as Late: 3 events.')).toBeTruthy();
+    expect(screen.queryByText(/^Not added to your calendars/)).toBeNull();
+    expect(fake.calendarRetries).toEqual([full]);
+    // A failed request says why and keeps the line.
+    cleanup();
+    const failing = setup([storedFile(full, { kind: 'other', name: 'Late.ics', calendar: { status: 'refused', reason: 'unavailable', retry: true } })], full);
+    failing.fake.answers['POST calendar'] = () => refusal(503, 'unavailable');
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Townwise isn’t responding. Try again in a minute.')).toBeTruthy();
+    expect(screen.getByText('Not added to your calendars: Townwise couldn’t read this file just now.')).toBeTruthy();
+  });
+
+  // UI review 2026-11-19: a calendar file's page talks about its import, never that TownwiseAI can't read it or that
+  // Townwise can't show it.
+  test('a calendar file’s TownwiseAI section and viewer never say it can’t be read or shown', async () => {
+    const ref = refOf('f', 48);
+    setup([storedFile(ref, {
+      kind: 'other', name: 'Bookings.ics', canAiRead: true,
+      calendar: { status: 'added', calendarId: '0123456789abcdef01234567', label: 'Bookings', eventCount: 12 },
+    })], ref);
+    expect(await screen.findByText('Added to your calendars as Bookings: 12 events.')).toBeTruthy();
+    expect(await screen.findByText(
+      'Townwise doesn’t show a calendar file here: its events show on the Calendar once it’s one of your calendars. Use Download original to open it on your computer.',
+    )).toBeTruthy();
+    expect(screen.queryByText(/can’t read this file/)).toBeNull();
+    expect(screen.queryByText(/can’t show this kind of file/)).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'TownwiseAI' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Let TownwiseAI read this file' })).toBeNull();
+    cleanup();
+    // Refused for a fixable cause: the same, with Try again.
+    const full = refOf('f', 49);
+    setup([storedFile(full, { kind: 'other', name: 'Late.ics', canAiRead: true, calendar: { status: 'refused', reason: 'calendar_limit', retry: true } })], full);
+    expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(screen.queryByText(/can’t read this file/)).toBeNull();
+    expect(screen.queryByText(/can’t show this kind of file/)).toBeNull();
+  });
+
+  test('an .ics file that is no calendar keeps the general words', async () => {
+    const ref = refOf('f', 50);
+    setup([storedFile(ref, { kind: 'other', name: 'Broken.ics', canAiRead: true, calendar: { status: 'refused', reason: 'not_calendar', retry: false } })], ref);
+    expect(await screen.findByText('TownwiseAI reads PDFs, pictures, Excel and Word files, CSV and text files, and ZIPs of them, so it can’t read this file.')).toBeTruthy();
+    expect(await screen.findByText('Townwise can’t show this kind of file here. Use Download original to open it on your computer.')).toBeTruthy();
+  });
+
+  test('a calendar file kept before calendar files were imported says so, and Import as a calendar adds it', async () => {
+    const ref = refOf('f', 51);
+    const { fake } = setup([storedFile(ref, { kind: 'other', name: 'Old bookings.ics', canAiRead: true, calendar: null })], ref);
+    expect(await screen.findByText(
+      'This calendar file was kept before Townwise added calendar files to your calendars, so it isn’t one of them. Import it as a calendar, or delete it if it’s already one of your calendars.',
+    )).toBeTruthy();
+    expect(screen.queryByText(/can’t read this file/)).toBeNull();
+    const added = storedFile(ref, { kind: 'other', name: 'Old bookings.ics', calendar: { status: 'added', calendarId: 'c7', label: 'Old bookings', eventCount: 4 } });
+    fake.answers['POST calendar'] = () => {
+      fake.items = [added];
+      return { item: added };
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Import as a calendar' }));
+    expect(await screen.findByText('Added to your calendars as Old bookings: 4 events.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Import as a calendar' })).toBeNull();
+    expect(fake.calendarRetries).toEqual([ref]);
+    cleanup();
+    // Its original deleted: nothing to import, and it says so.
+    const gone = refOf('f', 52);
+    const old = storedFile(gone, { kind: 'other', name: 'Old.ics', calendar: null });
+    setup([{ ...old, file: old.file === null ? null : { ...old.file, rawAvailable: false } }], gone);
+    expect(await screen.findByText(
+      'This calendar file was kept before Townwise added calendar files to your calendars, and its original was deleted, so it can’t be imported.',
+    )).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Import as a calendar' })).toBeNull();
+  });
+
+  test('under view-as Try again stays in place, disabled, described by the read-only line (D60)', async () => {
+    const ref = refOf('f', 47);
+    const { fake } = setup(
+      [storedFile(ref, { kind: 'other', name: null, calendar: { status: 'refused', reason: 'calendar_limit', retry: true } })], ref, { me: viewAsMe(ACCESS.admin) },
+    );
+    const button = await screen.findByRole('button', { name: 'Try again' });
+    expect(button.getAttribute('aria-disabled') === 'true' || (button as HTMLButtonElement).disabled).toBe(true);
+    const described = (button.getAttribute('aria-describedby') ?? '').split(' ');
+    expect(described).toContain('item-ro');
+    fireEvent.click(button);
+    expect(fake.calendarRetries).toEqual([]);
   });
 
   test('an item that is gone says it may have been deleted or replaced by an edit, with the way back', async () => {

@@ -300,3 +300,23 @@ it('reads a turn back with a GET after a cursor, each event with its number, and
     { method: 'POST', path: `${BASE}/c1/turns/turn-0001/stop`, body: {} },
   ]);
 });
+
+it('D59 slice 4: reads a proposal TownwiseAI saved itself, streamed with `saved` and stored with `auto`; an older answer has neither', async () => {
+  const note = {
+    kind: 'private_event', startDate: '2026-12-20', endDate: '2026-12-20', weekdays: null, effect: 'more_guests', expectedGuests: 40, detail: null,
+    title: 'Dinner',
+  } as const;
+  expect(chatEventOf(sse('proposal', { id: 'p1', proposal: note, saved: { noteId: 'n1', changeId: 'ch1' } })))
+    .toMatchObject({ type: 'proposal', id: 'p1', saved: { noteId: 'n1', changeId: 'ch1' } });
+  expect(chatEventOf(sse('proposal', { id: 'p1', proposal: note }))).not.toHaveProperty('saved');
+
+  const api = fakeChatApi();
+  const auto = { changeId: 'ch1', status: 'undone', undoable: false } as const;
+  const shown = { ...note, id: 'p1', status: 'saved', noteId: 'n1' } as const;
+  const [asked, replied] = CONVERSATION.messages;
+  const withPart = (proposal: unknown): unknown => ({ ...CONVERSATION, messages: [asked, { ...replied, proposals: [], parts: [{ type: 'proposal', proposal }] }] });
+  api.conversation = withPart({ ...shown, auto });
+  expect((await loadConversation(api, 'l1', 'c1')).messages[1]?.parts).toEqual([{ type: 'proposal', proposal: { ...shown, auto } }]);
+  api.conversation = withPart(shown);
+  expect((await loadConversation(api, 'l1', 'c1')).messages[1]?.parts).toEqual([{ type: 'proposal', proposal: shown }]);
+});

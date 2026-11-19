@@ -150,7 +150,7 @@ const ICS = [
 ].join('\r\n');
 
 // The list here answers without `google` (Google calendars off), so the help names none.
-const HELP = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or a calendar CSV with event_id, title, start_at and end_at columns, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. From a CSV, Townwise keeps each event’s title, dates and hours and never reads its other columns. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.';
+const HELP = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or a calendar CSV with event_id, title, start_at and end_at columns, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. From a CSV, Townwise keeps each event’s title, dates and hours and never reads its other columns. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings, and when a calendar file is sorted: by an org admin’s Sort with TownwiseAI, or on its own when the file is imported where TownwiseAI works on its own. Events change the forecast through notes made from them, and through a calendar file’s buyout and party labels once they are used for forecasts. To update a file, remove it and import the new export.';
 const TOO_LARGE = 'This file is over 1 MB. Export a shorter range of your calendar, or a CSV with fewer columns.';
 const NOT_CALENDAR = 'That isn’t a calendar. Import an .ics file, or a CSV with event_id, title, start_at and end_at columns.';
 const CALENDAR_LIMIT = 'This location has 5 calendars, the most it can hold. Remove one to add another.';
@@ -295,13 +295,16 @@ test('the forecast read covers exactly the shown grid (one request of at most 42
   expect(cell('2026-11-11').getAttribute('aria-selected')).toBe('true');
   expect(within(panel()).getByRole('heading', { name: 'Today, Wed, Nov 11' })).toBeTruthy();
   expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST]);
-  // Sales days only for the grid's past part, and the 8 weeks before it that likely closed reads (spec D32).
-  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toEqual([`${PATH}/sales/days?from=2026-08-31&to=2026-11-10`]);
+  // Sales days only for the grid's past part, and the 8 weeks before it that likely closed reads (spec D32), and the
+  // chart's same weekdays last year, 364 days before the grid's (D64).
+  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toEqual([
+    `${PATH}/sales/days?from=2026-08-31&to=2026-11-10`, `${PATH}/sales/days?from=2025-10-27&to=2025-12-07`,
+  ]);
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   expect(await screen.findByRole('grid', { name: 'December 2026' })).toBeTruthy();
   expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-11-30&to=2027-01-10`]);
-  // A grid after today has no past part to read.
-  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toHaveLength(1);
+  // A grid after today has no past part to read; only its same weekdays last year (D64).
+  expect(fake.paths.filter((path) => path.includes('/sales/days?')).slice(2)).toEqual([`${PATH}/sales/days?from=2025-12-01&to=2026-01-11`]);
   expect(screen.getByText('December 2026')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Today' }));
   expect(await screen.findByRole('grid', { name: 'November 2026' })).toBeTruthy();
@@ -961,6 +964,19 @@ test('an outlook day (D52): its cell shows its figure marked Outlook, its toolti
   // At phone width the cell keeps its figure.
   setWidth(375);
   expect(cell('2026-11-20').textContent).toContain('212');
+});
+
+test('in the week view the key line follows the 7 days in view, not the outlook days rendered beside them (D64)', async () => {
+  const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': novemberWithOutlook() } });
+  // Nov 11 to 17 in view; the strip renders on to Dec 1, the outlook days from the 20th among them, read and drawn.
+  await renderAt('/locations/l1/calendar?day=2026-11-11&view=week', api, 'Nov 11 to 17, 2026');
+  expect(cell('2026-11-21').getAttribute('aria-label')).toMatch(/^Sat, Nov 21, 2026\. Outlook: 212 guests/);
+  expect(cell('2026-11-21').hasAttribute('data-view')).toBe(false);
+  expect(screen.queryByText(OUTLOOK_KEY)).toBeNull();
+  // Next week brings Nov 18 to 24 into view, the 20th to the 24th outlook days.
+  fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
+  expect(await screen.findByRole('grid', { name: 'Nov 18 to 24, 2026' })).toBeTruthy();
+  expect(await screen.findByText(OUTLOOK_KEY)).toBeTruthy();
 });
 
 test('no key line while no shown day is an outlook day', async () => {

@@ -1,0 +1,179 @@
+import { Link } from 'expo-router';
+import { useMemo, useState } from 'react';
+import { Platform, Pressable, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+
+import { theme } from '../../theme';
+import { dayMonth, thisDayPhrase } from '../analytics/week';
+import { metricNumber, shortDate, WEEKDAY_NAMES, weekdayOf, type Metric } from '../analytics/words';
+import { dayView, FIGURE_KEY, type CalendarInput } from '../calendar/model';
+import { ForecastPlot, PlotKey } from '../chart/ForecastPlot';
+import { useBreakpoint } from '../hooks';
+import { calendarHref } from '../routing';
+import { webAria } from '../ui/aria';
+import { PhraseParts } from '../ui/PhraseParts';
+import { Heading, Mono, Small } from '../ui/text';
+import { CalendarPart, forecastDayLines, forecastPartLabel, Part, WHY_LINES, WhyPart, whyRows } from './DayDetail';
+import { PastCell } from './PastCell';
+import type { ChartDay, WeekChart as Model } from './weekChartData';
+
+// This week's chart (spec P11, owner request 2026-11-18), on web and native alike (react-native-svg, as TownwiseAI's
+// icons draw): This week's seven days from today, each a column. The published forecast's middle is a hollow `mint`
+// point on a dashed `mint` line, its range (low to high, as the words give it) a `raised` band with 1px `line` edges;
+// a stored figure (only today can have one) is a solid `mint` point beside it, the actual; the same weekday last year
+// is a faint 1px `line` line with small dots. A closed or booked day says so in words in its column (“Closed”,
+// “Booked” and a buyout's party), and a day the run gives no figure says “No forecast”, a gap in the line; with
+// nothing published no column says anything. Shapes and dashes tell the series apart as well as color, and the key
+// names only what is drawn. The scale is printed. The drawing is aria-hidden: each day's column is a button whose name
+// says everything the column shows and the day's calendar in words, and Show the numbers (ThisWeek.tsx) gives the
+// table. A tap, a click, Enter or Space chooses a day (focus alone does not, so Tab passes the later days and reaches
+// the panel with the chosen day still in it), and the panel beside or under the chart shows the chosen day (today at
+// first): its forecast and range, its actual, Why and On the calendar in This month's day detail's words
+// (DayDetail.tsx), the same weekday last year, and a link that opens the day on the Calendar. The chosen column is lit;
+// a mouse or pen over another (web; never touch) lights that one instead and leaves the panel alone, so the pointer
+// never shows content it can't reach and never hides a keyboard choice (WCAG 1.4.13). The drawing and its key are
+// chart/ForecastPlot.tsx's, which the Calendar's charts share (D64). Under each column its weekday and date; on a phone
+// the date's month stands over its day number, since “Nov 19” fills a seventh of 390px and the dates ran together.
+// The chart and the panel share a row 3 to 2 only from 1024px; stacked, each is as tall as what it holds (a flex
+// share there split the stack's height 3 to 2, leaving a gap under the chart and the panel spilling past its box).
+
+const C = theme.color;
+const HEIGHT = 140;
+/** The plot's width until it is measured; the viewBox follows the measured width, so points stay round. */
+const START_WIDTH = 320;
+export const WEEK_PANEL_ID = 'home-week-day';
+
+/** The key, naming only what is drawn; aria-hidden, since each day's name says the same. */
+function Key(props: { model: Model; metric: Metric }): React.JSX.Element | null {
+  return <PlotKey drawn={props.model.drawn} actual={props.metric === 'guests' ? FIGURE_KEY.actual : 'Actual net sales'} testID="home-week-chart-key" />;
+}
+
+/** The chosen day: its forecast, actual, Why, calendar and last year, and its link to the Calendar. */
+function DayPanel(props: {
+  day: ChartDay; input: CalendarInput; metric: Metric; history: boolean; published: boolean; locationId: string;
+}): React.JSX.Element {
+  const { day, input, metric, history, locationId } = props;
+  const view = useMemo(() => dayView(day.date, input), [day.date, input]);
+  const why = day.forecast === null ? [] : whyRows(day.forecast, WHY_LINES);
+  const lines = day.forecast === null ? [] : forecastDayLines(day.forecast);
+  return (
+    <View role="region" aria-label="This week’s chosen day" nativeID={WEEK_PANEL_ID} style={styles.panel}>
+      <Heading level={3}>{day.isToday ? `Today, ${shortDate(day.date)}` : shortDate(day.date)}</Heading>
+      {props.published ? (
+        <Part label={forecastPartLabel(day.forecast)}>
+          {(lines.length === 0 ? ['No forecast figure for this day.'] : lines).map((line) => <Small key={line} white>{line}</Small>)}
+        </Part>
+      ) : null}
+      {day.actual === null ? null : (
+        <Part label="Actual"><Mono tone="white"><PhraseParts phrase={thisDayPhrase(day.row, metric)} /></Mono></Part>
+      )}
+      <WhyPart why={why} notes={view.notes} />
+      <CalendarPart events={day.row.events} why={why} view={view} locationId={locationId} />
+      {history ? <Part label="Same weekday last year"><PastCell day={day.row.lastYear} metric={metric} /></Part> : null}
+      <Link href={calendarHref(locationId, day.date)} style={styles.link}>Open this day on the Calendar</Link>
+    </View>
+  );
+}
+
+/** A column's date: “Nov 19”, or on a phone “Nov” over “19”, so each day's date stands apart. */
+function DateLine(props: { date: string; stacked: boolean }): React.JSX.Element {
+  const words = dayMonth(props.date);
+  return (
+    <View testID={`home-week-chart-date-${props.date}`} style={styles.dateStack}>
+      {(props.stacked ? words.split(' ') : [words]).map((line) => <Mono key={line} tone="text3" style={styles.center}>{line}</Mono>)}
+    </View>
+  );
+}
+
+export function WeekChart(props: {
+  model: Model; input: CalendarInput; metric: Metric; history: boolean; published: boolean; locationId: string;
+}): React.JSX.Element {
+  const { model, metric } = props;
+  const { desktop, phone } = useBreakpoint();
+  const [width, setWidth] = useState(START_WIDTH);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const first = model.days[0];
+  const chosenDate = chosen ?? first?.date ?? null;
+  const shown = model.days.find((day) => day.date === chosenDate);
+  const active = model.days.findIndex((day) => day.date === (hovered ?? chosenDate));
+  const noun = metric === 'guests' ? ' guests' : '';
+  const onLayout = (event: LayoutChangeEvent): void => {
+    const next = Math.round(event.nativeEvent.layout.width);
+    if (next > 0) setWidth((prev) => (prev === next ? prev : next));
+  };
+  return (
+    <View style={desktop ? styles.wide : styles.stack}>
+      <View style={desktop ? [styles.chartSide, styles.chartWide] : styles.chartSide}>
+        <View style={styles.chart} onLayout={onLayout}>
+          <View style={styles.plot}><ForecastPlot days={model.days} top={model.top} width={width} height={HEIGHT} lit={active < 0 ? null : active} /></View>
+          <View role="group" aria-label="This week’s days" style={styles.days}>
+            {model.days.map((day) => {
+              const isChosen = day.date === chosenDate;
+              return (
+                <Pressable
+                  key={day.date}
+                  testID={`home-week-chart-${day.date}`}
+                  role="button"
+                  accessibilityLabel={day.label}
+                  accessibilityState={{ selected: isChosen }}
+                  {...webAria({ 'aria-pressed': isChosen, 'aria-controls': WEEK_PANEL_ID })}
+                  onPress={() => { setChosen(day.date); }}
+                  onHoverIn={() => { setHovered(day.date); }}
+                  onHoverOut={() => { setHovered((prev) => (prev === day.date ? null : prev)); }}
+                  style={styles.slot}
+                >
+                  <View style={styles.zone}>
+                    {day.status?.map((words) => <Mono key={words} tone="text2" style={phone ? [styles.status, styles.statusPhone] : styles.status}>{words}</Mono>)}
+                  </View>
+                  <View style={styles.dayLabel}>
+                    <View style={styles.weekday}>
+                      {day.isToday ? <View style={styles.square} /> : null}
+                      <Mono tone={isChosen ? 'white' : 'text3'}>{(WEEKDAY_NAMES[weekdayOf(day.date)] ?? '').slice(0, 3)}</Mono>
+                    </View>
+                    <DateLine date={day.date} stacked={phone} />
+                    <View style={[styles.mark, isChosen ? styles.markOn : null]} />
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+        <Key model={model} metric={metric} />
+        <Mono tone="text3">{`Scale 0 to ${metricNumber(model.top, metric)}${noun}. Scale fitted to this location.`}</Mono>
+        <Mono tone="text3">{Platform.OS === 'web' ? 'Choose a day to see it in full.' : 'Tap a day to see it in full.'}</Mono>
+      </View>
+      {shown === undefined ? null : (
+        <View style={desktop ? [styles.panelSide, styles.panelWide] : styles.panelSide}>
+          <DayPanel day={shown} input={props.input} metric={metric} history={props.history} published={props.published} locationId={props.locationId} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wide: { flexDirection: 'row', alignItems: 'flex-start', columnGap: theme.space.gutter },
+  stack: { gap: theme.space[5] },
+  chartSide: { minWidth: 0, gap: theme.space[2] },
+  chartWide: { flex: 3 },
+  panelSide: { minWidth: 0 },
+  panelWide: { flex: 2 },
+  chart: { position: 'relative' },
+  plot: { position: 'absolute', top: 0, left: 0, right: 0, height: HEIGHT },
+  days: { flexDirection: 'row' },
+  slot: { flex: 1, minWidth: 0 },
+  zone: { height: HEIGHT, justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 6, paddingHorizontal: 2 },
+  status: { textAlign: 'center' },
+  // A phone's column is about 44px at 375: “forecast”, 8 letters of 0.6em less 0.5px each, fits it at 10px.
+  statusPhone: { fontSize: 10, lineHeight: 12, letterSpacing: -0.5 },
+  dayLabel: { alignItems: 'center', paddingTop: theme.space[2], gap: 2 },
+  weekday: { flexDirection: 'row', alignItems: 'center', columnGap: 4 },
+  square: { width: 6, height: 6, backgroundColor: C.mint },
+  center: { textAlign: 'center' },
+  dateStack: { alignItems: 'center' },
+  mark: { width: 16, height: 2, marginTop: 2 },
+  markOn: { backgroundColor: C.mint },
+  panel: { gap: theme.space[4], minWidth: 0 },
+  link: { ...theme.type.mono, color: C.text2, paddingVertical: 14, textDecorationLine: 'underline', textDecorationColor: C.line },
+});
+

@@ -104,6 +104,11 @@ export const ACTION_GROUP: Readonly<Record<AuditAction, ActionGroup | null>> = {
   'agent.question_answered': 'townwiseAi',
   'org.weekly_suggestions_changed': 'team',
   'org.calendar_titles_ai_changed': 'team',
+  // D59: the switch is the team's; a change TownwiseAI saved on its own is nobody's action, an undo is a person's.
+  'org.agent_auto_switched': 'team',
+  'agent.change_applied': null,
+  'agent.calendar_answered': null,
+  'agent.change_undone': 'townwiseAi',
   'agent.suggestion_accepted': 'townwiseAi',
   'agent.suggestion_dismissed': 'townwiseAi',
   'order.setup_saved': 'orders',

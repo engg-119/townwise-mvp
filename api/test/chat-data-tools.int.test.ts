@@ -113,7 +113,7 @@ describe('with stored files on', () => {
     // A PDF no message on the path attached is not read (D36).
     const notReadable = {
       available: false,
-      reason: 'TownwiseAI can read text items added for reference, and a picture, PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
+      reason: 'TownwiseAI can read text items added for reference, and a picture, calendar (.ics), PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
     };
     expect(await refused(`f_${historyCsvId}`)).toEqual(notReadable);
     expect(await refused(`f_${pdfId}`)).toEqual(notReadable);

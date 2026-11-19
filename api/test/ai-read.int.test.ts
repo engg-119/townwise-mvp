@@ -394,7 +394,8 @@ describe('POST /api/org/locations/:locationId/data/:ref/ai', () => {
       await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: team.admin.userId, orgId: team.orgId });
       expect(await errorOf(await ask(staff, l1, `f_${fresh}`))).toEqual({ status: 403, error: 'view_as_read_only' });
       const item = await itemOf(staff, l1, `f_${fileId}`);
-      expect(item).toMatchObject({ canAiRead: false, ai: { status: 'done', kind: 'calendar', summary: null, facts: null } });
+      // D61: the read's kind files it, under view-as too.
+      expect(item).toMatchObject({ canAiRead: false, ai: { status: 'done', kind: 'calendar', summary: null, facts: null }, folder: 'calendars' });
       expect((await itemOf(staff, l1, `f_${fresh}`)).canAiRead).toBe(false);
       expect((await itemOf(team.admin, l1, `f_${fileId}`)).ai).toMatchObject({ summary: 'A list of June events.', facts: ['Three events in June'] });
     });

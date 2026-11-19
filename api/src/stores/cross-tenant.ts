@@ -1,7 +1,7 @@
 // Operations keyed by a person, or spanning organizations (spec 6.10 rule 8). The list is closed:
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
 // deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, the TownwiseAI reader's
-// claimNextAiRead, the daily file sweep's claimFileSweep, finishFileSweep, sweepCandidates, removeOldUploadDays and
+// claimNextAiRead and (D59) claimNextCalendarSort, the daily file sweep's claimFileSweep, finishFileSweep, sweepCandidates, removeOldUploadDays and
 // existingFileIds, the calendar refresh loop's claimDueCalendar and claimDueGoogleConnection, Google access's
 // hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
 // 10 and 11), the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
@@ -22,6 +22,7 @@ import { trusted, Types, type Connection } from 'mongoose';
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
 import { activityDayModel } from './activity-days.ts';
+import { agentChangeModel } from './agent-changes.ts';
 import { agentSuggestionModel, suggestionPassModel } from './agent-suggestions.ts';
 import { auditEventModel, type AuditAction } from './audit-events.ts';
 import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
@@ -349,7 +350,12 @@ export async function deletePersonRecords(
   await orgModel(connection).updateMany({ 'weeklySuggestions.by': userId }, { $set: { 'weeklySuggestions.by': null } });
   // And who last switched sending calendar event titles to TownwiseAI (calendar-event-suggestions). Not counted.
   await orgModel(connection).updateMany({ 'calendarTitlesToAi.by': userId }, { $set: { 'calendarTitlesToAi.by': null } });
+  // D59: who last switched TownwiseAI working on its own; the switch stays. Not counted.
+  await orgModel(connection).updateMany({ 'agentAuto.by': userId }, { $set: { 'agentAuto.by': null } });
   await agentSuggestionModel(connection).updateMany({ decidedBy: userId }, { $set: { decidedBy: null } });
+  // D59: the person TownwiseAI made a change for, and who undid or adopted one; the changes stay. Not counted.
+  await agentChangeModel(connection).updateMany({ onBehalfOf: userId }, { $set: { onBehalfOf: null } });
+  await agentChangeModel(connection).updateMany({ statusBy: userId }, { $set: { statusBy: null } });
   // D58: the org admin who confirmed a file calendar's bookings; the confirmation stays. Not counted.
   await calendarSourceModel(connection).updateMany({ 'bookings.confirmedBy': userId }, { $set: { 'bookings.confirmedBy': null } });
   // D42: the staff member who paused the weekly refresh, on its one schedule document; the pause stays. Not counted.
@@ -430,17 +436,14 @@ export interface ClaimedAiRead {
  * `queued` (and past its `notBefore`, when an attempt put it back), or `reading` under a lease that ran out (its replica
  * stopped), leaving out a suspended organization's (they wait until it is active again), files being deleted, and every
  * read of an organization that has one `reading` under a live lease, so one organization never holds two replicas'
- * readers at once. The claim sets `reading`, the lease for `leaseMs`, the start, and counts the attempt.
+ * readers at once (D59: nor while one of its calendars is being sorted under a live lease). The claim sets `reading`,
+ * the lease for `leaseMs`, the start, and counts the attempt.
  */
 export async function claimNextAiRead(
   connection: Connection, input: { readonly now: Date; readonly leaseMs: number },
 ): Promise<ClaimedAiRead | null> {
   const File = fileModel(connection);
-  const [held, busy] = await Promise.all([
-    orgModel(connection).find({ status: trusted({ $ne: 'active' }) }, { _id: 1 }).lean(),
-    File.distinct('orgId', { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $gte: input.now }) }),
-  ]);
-  const skipped = [...held.map((org) => org._id), ...busy];
+  const skipped = await busyAiOrgs(connection, input.now);
   const doc = await File.findOneAndUpdate(
     {
       $or: [
@@ -454,10 +457,60 @@ export async function claimNextAiRead(
       $set: { 'ai.status': 'reading', 'ai.leaseUntil': new Date(input.now.getTime() + input.leaseMs), 'ai.startedAt': input.now },
       $inc: { 'ai.attempts': 1 },
     },
-    { sort: { 'ai.requestedAt': 1, _id: 1 }, returnDocument: 'after' },
+    // D59: a pressed read (no `ai.auto`, which sorts first) before automatic ones, so a burst never makes a press wait.
+    { sort: { 'ai.auto': 1, 'ai.requestedAt': 1, _id: 1 }, returnDocument: 'after' },
   ).lean();
   if (doc?.ai === undefined) return null;
   return { id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), attempt: doc.ai.attempts };
+}
+
+/**
+ * The organizations the TownwiseAI reader's loop leaves alone now: a suspended one, and one with a file read or (D59) a
+ * calendar sort under a live lease, so an organization holds one of its jobs at a time.
+ */
+async function busyAiOrgs(connection: Connection, now: Date): Promise<Types.ObjectId[]> {
+  const [held, reading, sorting] = await Promise.all([
+    orgModel(connection).find({ status: trusted({ $ne: 'active' }) }, { _id: 1 }).lean(),
+    fileModel(connection).distinct('orgId', { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $gte: now }) }),
+    calendarSourceModel(connection).distinct('orgId', { 'autoSort.status': 'sorting', 'autoSort.leaseUntil': trusted({ $gte: now }) }),
+  ]);
+  return [...held.map((org) => org._id), ...reading, ...sorting];
+}
+
+/**
+ * D59: a file calendar's automatic sort the TownwiseAI reader's loop claimed. Only access/policy.ts's
+ * scopeForClaimedCalendarSort turns it into an OrgScope. `attempt` is the claim's token, as a read's.
+ */
+export interface ClaimedCalendarSort {
+  readonly calendarId: string;
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly attempt: number;
+}
+
+/**
+ * D59 (openspec change auto-apply-agent-reads design decision 3): the TownwiseAI reader's loop claims a file calendar's
+ * automatic sort as it claims a read: the one queued first that is past its `notBefore`, or `sorting` under a lease that
+ * ran out, leaving out the organizations busyAiOrgs names. The claim sets `sorting` and the lease, and counts the attempt.
+ */
+export async function claimNextCalendarSort(
+  connection: Connection, input: { readonly now: Date; readonly leaseMs: number },
+): Promise<ClaimedCalendarSort | null> {
+  const skipped = await busyAiOrgs(connection, input.now);
+  const doc = await calendarSourceModel(connection).findOneAndUpdate(
+    {
+      kind: 'file',
+      $or: [
+        { 'autoSort.status': 'queued', 'autoSort.notBefore': trusted({ $not: { $gt: input.now } }) },
+        { 'autoSort.status': 'sorting', 'autoSort.leaseUntil': trusted({ $lt: input.now }) },
+      ],
+      ...(skipped.length === 0 ? {} : { orgId: trusted({ $nin: skipped }) }),
+    },
+    { $set: { 'autoSort.status': 'sorting', 'autoSort.leaseUntil': new Date(input.now.getTime() + input.leaseMs) }, $inc: { 'autoSort.attempts': 1 } },
+    { sort: { 'autoSort.queuedAt': 1, _id: 1 }, returnDocument: 'after' },
+  ).lean();
+  if (doc?.autoSort === undefined) return null;
+  return { calendarId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), attempt: doc.autoSort.attempts };
 }
 
 const SWEEP_ID = 'sweeper';
@@ -737,6 +790,48 @@ export async function weeklyCandidates(connection: Connection): Promise<WeeklyCa
   return docs.map((doc) => ({ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString() }));
 }
 
+/** D59: a location a training change marked as wanting a refit, and the mark the pass read (its clear compares it). */
+export interface RefitCandidate {
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly wantedAt: Date;
+}
+
+/**
+ * D59 (openspec change auto-apply-agent-reads, design decision 12): the hourly pass's refit candidates, across
+ * organizations: every location of an active organization whose forecasts are on (as weeklyCandidates) whose mark is
+ * at least as old as `quietBefore` (15 quiet minutes) and which had no refit start after `startedBefore` (24 hours).
+ * Ids and the mark only, oldest mark first; scoped by access/policy.ts's scopeForWeeklyRefresh.
+ */
+export async function refitCandidates(connection: Connection, input: { quietBefore: Date; startedBefore: Date }): Promise<RefitCandidate[]> {
+  const orgs = await orgModel(connection).find(
+    { status: 'active', $or: [{ forecasts: trusted({ $exists: false }) }, { forecasts: null }, { 'forecasts.on': true }] },
+    { _id: 1 },
+  ).lean();
+  if (orgs.length === 0) return [];
+  const docs = await locationModel(connection).find({
+    orgId: trusted({ $in: orgs.map((org) => org._id) }), 'refit.wantedAt': trusted({ $lte: input.quietBefore }),
+    $or: [{ 'refit.startedAt': trusted({ $exists: false }) }, { 'refit.startedAt': trusted({ $lte: input.startedBefore }) }],
+  }, { _id: 1, orgId: 1, refit: 1 }).sort({ 'refit.wantedAt': 1, _id: 1 }).lean();
+  return docs.flatMap((doc) => {
+    const wantedAt = doc.refit?.wantedAt;
+    return wantedAt === undefined ? [] : [{ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString(), wantedAt }];
+  });
+}
+
+/**
+ * D59: how many refits the hourly pass started at or after `since`, across organizations (the weekly cap counts them):
+ * every start each location kept, not its refusals.
+ */
+export async function countRefitStartsSince(connection: Connection, since: Date): Promise<number> {
+  const [total] = await locationModel(connection).aggregate<{ starts: number }>([
+    { $match: { 'refit.starts': trusted({ $gte: since }) } },
+    { $project: { n: { $size: { $filter: { input: '$refit.starts', as: 'at', cond: { $gte: ['$$at', since] } } } } } },
+    { $group: { _id: null, starts: { $sum: '$n' } } },
+  ]);
+  return total?.starts ?? 0;
+}
+
 /**
  * The weekly suggestions' candidates (openspec change weekly-forecast-suggestions), across organizations: every location
  * of an active organization whose weekly suggestions are on, an organization with no `weeklySuggestions` field counting
@@ -752,6 +847,26 @@ export async function suggestionCandidates(connection: Connection): Promise<Week
   const docs = await locationModel(connection).find({ orgId: trusted({ $in: orgs.map((org) => org._id) }) }, { _id: 1, orgId: 1 })
     .sort({ createdAt: 1, _id: 1 }).lean();
   return docs.map((doc) => ({ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString() }));
+}
+
+/**
+ * D59 slice 3: the locations whose weekly pass a calendar refresh brought forward (stores/locations.ts `earlyPass`),
+ * among the weekly suggestions' candidates (an active organization with its weekly suggestions on), with the mark the
+ * pass read (its clear compares it). Ids and the mark only, oldest mark first; scoped by scopeForWeeklyRefresh.
+ */
+export async function earlyPassCandidates(connection: Connection): Promise<RefitCandidate[]> {
+  const orgs = await orgModel(connection).find(
+    { status: 'active', $or: [{ weeklySuggestions: trusted({ $exists: false }) }, { weeklySuggestions: null }, { 'weeklySuggestions.on': true }] },
+    { _id: 1 },
+  ).lean();
+  if (orgs.length === 0) return [];
+  const docs = await locationModel(connection).find(
+    { orgId: trusted({ $in: orgs.map((org) => org._id) }), 'earlyPass.wantedAt': trusted({ $type: 'date' }) }, { _id: 1, orgId: 1, earlyPass: 1 },
+  ).sort({ 'earlyPass.wantedAt': 1, _id: 1 }).lean();
+  return docs.flatMap((doc) => {
+    const wantedAt = doc.earlyPass?.wantedAt;
+    return wantedAt === undefined ? [] : [{ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString(), wantedAt }];
+  });
 }
 
 /** A live calibration the weekly refresh started, in any organization (ids and when it was asked for). */

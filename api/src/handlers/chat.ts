@@ -10,12 +10,14 @@ import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+import { targetStates, undoable } from '../agent/changes.ts';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import {
   ANSWER_TIME_MS, ATTACHMENT_BYTES_IN_FLIGHT, ATTACHMENT_REF, attachedOnPath, attachedTo, bytesToRead, checkAttachments, createByteGate, expandedMessage,
-  MAX_ATTACHMENTS, readAttachments, refusalOf, turnAttachments, type Attached, type AttachmentRefusal, type TurnAttachments,
+  MAX_ATTACHMENTS, readAttachments, refusalOf, turnAttachments, type Attached, type AttachmentCheck, type AttachmentRefusal, type CalendarNotes,
+  type TurnAttachments,
 } from '../chat/attachments.ts';
 import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
 import { type RunningTurn, type StreamEvent, type TurnAbortReason, type TurnEnding } from '../chat/turn-runner.ts';
@@ -26,6 +28,7 @@ import {
   type ShownProposal,
 } from '../chat/view.ts';
 import { loadDataItem, parseRef } from '../data/library.ts';
+import { attachedCalendars, type AttachedCalendar } from '../files/calendar-import.ts';
 import { scheduleSummary } from '../forecasts/reasons.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
@@ -227,17 +230,34 @@ async function conversationView(
   path: readonly ChatNode[], live: ChatTurnRecord | null,
 ): Promise<ConversationView> {
   const liveFiles = live?.message?.attachments ?? [];
-  const [rows, notes, files] = await Promise.all([
+  const [rows, notes, files, changes] = await Promise.all([
     ctx.stores.chatProposals.list(caller.scope, conversation.id),
     ctx.stores.notes.list(caller.scope, location.id),
     attachedFiles(ctx, caller, location.id, [...new Set([...attachedOnPath(path), ...liveFiles.map((file) => file.ref)])]),
+    // D59 slice 4: the notes TownwiseAI saved itself in this conversation, for their cards' Undo.
+    ctx.stores.agentChanges.listBySource(caller.scope, location.id, { kind: 'chat', id: conversation.id }),
   ]);
   const fileOf = (ref: string): AttachmentFile => files.get(ref) ?? { name: null, state: 'gone' };
   const byId = new Map(rows.map((row) => [row.proposalId, row]));
+  const states = await targetStates(ctx, caller.scope, location.id, changes);
+  const changeById = new Map(changes.map((change) => [change.id, change]));
   const stateOf = (proposal: ShownProposal): ProposalState => {
     const row = byId.get(proposal.id);
     // A save that has not finished reads as open: pressing Save again finishes the same note.
-    if (row !== undefined) return row.status === 'saving' ? OPEN : { status: row.status, noteId: row.status === 'saved' ? row.noteId : null };
+    if (row !== undefined) {
+      if (row.status === 'saving') return OPEN;
+      const state = { status: row.status, noteId: row.status === 'saved' ? row.noteId : null };
+      const change = row.changeId === null ? undefined : changeById.get(row.changeId);
+      if (change === undefined) return state;
+      // An applied row whose note someone edited or deleted on Notes since: the card says so (its Undo is gone).
+      const target = states.get(change.id)?.state;
+      return {
+        ...state, auto: {
+          changeId: change.id, status: change.status, undoable: undoable(caller, change, states),
+          ...(target === 'changed' || target === 'gone' ? { target } : {}),
+        },
+      };
+    }
     // A proposal added with the notes route (the Add note button before proposals were recorded) reads as saved when a
     // note the author wrote at this location says exactly the same, so it is not offered twice. Only the author could
     // press Add note in their own conversation, so a colleague's note never counts.
@@ -412,6 +432,18 @@ function attachmentRefused(refusal: AttachmentRefusal): AppError {
   }
 }
 
+/**
+ * D63: the calendar files whose import the turn tells the model, by ref: only those the caller attaches as they are now
+ * (a regenerate's file the caller may no longer attach, or one gone from Your data, is left out).
+ */
+function calendarNotes(locationId: string, checks: readonly AttachmentCheck[], found: ReadonlyMap<string, AttachedCalendar>): CalendarNotes {
+  const byRef = new Map(checks.flatMap(({ ref, check }) => {
+    const note = found.get(ref.slice(2));
+    return note === undefined || !('kind' in check) ? [] : [[ref, note] as const];
+  }));
+  return { locationId, byRef };
+}
+
 /** The files a regenerate's message (the person's node `nodeId`) carries, from its stored attachments block. */
 function attachedToNode(nodes: readonly ChatNode[], nodeId: string): Attached[] {
   const stored = nodes.find((node) => node.id === nodeId)?.messages[0];
@@ -455,10 +487,12 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   if (!('replyTo' in body) && files.length > 0 && !ctx.items.on) throw filesUnavailable();
   // Before any claim, so a store failure has nothing to release. A regenerate resends its stored message as it was,
   // its files checked again as they are now. Only each file's record and first bytes are read here.
-  const [rules, toolLocation, checks] = await Promise.all([
+  // D63: and what importing each attached calendar file did, from its record and the location's calendars.
+  const [rules, toolLocation, checks, calendarFiles] = await Promise.all([
     'replyTo' in body ? [] : ctx.stores.businessRules.list(scope, location.id),
     locationForTools(ctx, scope, location),
     files.length === 0 ? [] : checkAttachments(ctx.items, scope, location.id, { userId: caller.userId, role: caller.role }, files),
+    files.length === 0 || !ctx.items.on ? new Map<string, AttachedCalendar>() : attachedCalendars(ctx, scope, location.id, files.map((file) => file.ref.slice(2)), timeZone),
   ]);
   // A send refuses a file that isn't on Your data here, a sales file, one not kept yet, or one the caller may not
   // attach; one turned off, or whose original is gone, is listed as not read instead. A regenerate refuses none: its
@@ -538,7 +572,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   // D36: the files' bytes, read only now that the turn holds its claims. A failure gives everything back before the stream.
   let attached: TurnAttachments | null = null;
   try {
-    if (checks.length > 0) attached = turnAttachments(await readAttachments(checks, filesBy, turnBytes));
+    if (checks.length > 0) attached = turnAttachments(await readAttachments(checks, filesBy, turnBytes), calendarNotes(location.id, checks, calendarFiles));
   } catch (err) {
     await releaseClaims();
     throw err;
@@ -579,10 +613,10 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
         model,
         // U13A: today is the town's local date, so an evening turn is not already tomorrow.
         tools: {
-          ctx, scope, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller),
+          ctx, scope, conversationId, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller),
           // read_data_item sets readUntrusted too, once it hands back an item's text or a picture; runTurn sets both for
-          // web pages.
-          turn: { readUntrusted: (attached?.content.length ?? 0) > 0, readWeb: false, pictureBytes: attached?.pictureBytes ?? 0 },
+          // web pages. get_owner_calendar, list_notes and get_day set readNotTyped (D59 slice 4).
+          turn: { readUntrusted: (attached?.content.length ?? 0) > 0, readWeb: false, readNotTyped: false, pictureBytes: attached?.pictureBytes ?? 0 },
           files: { attached: attachedRefs, by: filesBy, bytes: turnBytes, sent: new Map(attached?.sent) },
         },
         history: modelHistory,

@@ -53,8 +53,9 @@ export const AUDIT_DETAIL_KEYS = {
   'rule.updated': ['locationId', 'scheduled'],
   'rule.deleted': ['locationId'],
   // Owner calendars (openspec change connect-owner-calendar, design decision 10): ids, the kind ('file', 'link' or
-  // 'google'), the event count and the status code only. Never the calendar's label, host or address, or an event's title.
-  'owner_calendar.added': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
+  // 'google'), the event count and the status code only, and (D59) on an add from a calendar file kept in Your data, the
+  // stored file's id. Never the calendar's label, host or address, or an event's title.
+  'owner_calendar.added': ['locationId', 'calendarId', 'kind', 'eventCount', 'status', 'fileId'],
   'owner_calendar.removed': ['locationId', 'calendarId', 'kind', 'eventCount'],
   'owner_calendar.refreshed': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
   // Booking labels (D58, learn-from-calendar-bookings design decision 14): counts and the label set, never an event's uid,
@@ -83,6 +84,13 @@ export const AUDIT_DETAIL_KEYS = {
   // Sending the calendars' event titles to TownwiseAI's weekly call (calendar-event-suggestions): the switch's state only.
   // A decided suggestion's `type` above is also `event`, `move` or `remove`; never a title, uid or date of an owner event.
   'org.calendar_titles_ai_changed': ['on'],
+  // D59, TownwiseAI working on its own: the org admin's switch, and each change it saved or someone undid, by its typed
+  // action and source kind. Never a title, a why, a file name, a date or a figure.
+  'org.agent_auto_switched': ['on'],
+  'agent.change_applied': ['locationId', 'action', 'sourceKind'],
+  'agent.change_undone': ['locationId', 'action', 'sourceKind'],
+  // D59 slice 5: a run in which the location's calendars answered open suggestions, by count. Never a title, uid or date.
+  'agent.calendar_answered': ['locationId', 'count'],
   // Orders: ids, dates, counts and a card's kind (change, rule or setup), never an item or supplier name, a servings
   // figure, a quantity, or the owner's reason or situation. A setup card (D56) is only ever dismissed: nothing saves
   // from it, so it never writes order.card_saved.

@@ -283,6 +283,8 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.agentAnswers.removeForLocation(scope, locationId);
   // Its weekly suggestions and their pass rows.
   await ctx.stores.agentSuggestions.removeForLocation(scope, locationId);
+  // D59: the ledger of TownwiseAI's changes there.
+  await ctx.stores.agentChanges.removeForLocation(scope, locationId);
   // An empty import left open goes too.
   await ctx.stores.imports.removeForLocation(scope, locationId);
   // The forecast lab: calibrations go first, so a running job's callback closes before its run could be written.

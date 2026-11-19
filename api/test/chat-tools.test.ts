@@ -164,12 +164,57 @@ describe('the views on a tool call’s card', () => {
     const note = {
       kind: 'private_event', startDate: '2026-06-20', endDate: '2026-06-20', weekdays: null, effect: 'closed', expectedGuests: 70, detail: null,
     };
-    expect(tool.parse({ ...note, title: 'Alumni weekend dinner' }, today)).toMatchObject({ title: 'Alumni weekend dinner' });
-    expect(tool.parse({ ...note, title: null }, today)).toMatchObject({ title: null });
+    expect(tool.parse({ ...note, title: 'Alumni weekend dinner' }, today)).toMatchObject({ note: { title: 'Alumni weekend dinner' } });
+    expect(tool.parse({ ...note, title: null }, today)).toMatchObject({ note: { title: null } });
     // A call stored before titles reads as untitled.
-    expect(tool.parse(note, today)).toMatchObject({ title: null });
+    expect(tool.parse(note, today)).toMatchObject({ note: { title: null } });
     expect(tool.parse({ ...note, title: 'x'.repeat(121) }, today)).toBeNull();
     expect(tool.parse({ ...note, title: 'Alumni\ndinner' }, today)).toBeNull();
+  });
+
+  it('D59 slice 4: propose_note takes `plain`, required; absent or anything but true reads as false (the card)', () => {
+    const tool = toolNamed('propose_note');
+    if (tool === undefined) throw new Error('no propose_note');
+    const schema = tool.definition.input_schema as { properties: Record<string, { type?: unknown }>; required: string[] };
+    expect(schema.properties.plain?.type).toBe('boolean');
+    expect(schema.required).toContain('plain');
+    expect(tool.definition.description).toContain('Set plain to true only when the person’s own message in this turn stated this event');
+    const note = {
+      kind: 'private_event', startDate: '2026-06-20', endDate: '2026-06-20', weekdays: null, effect: 'more_guests', expectedGuests: 70,
+      detail: null, title: 'Alumni dinner',
+    };
+    expect(tool.parse({ ...note, plain: true }, today)).toMatchObject({ plain: true, note: { title: 'Alumni dinner' } });
+    for (const plain of [false, 'true', 1, null, undefined]) expect(tool.parse({ ...note, plain }, today)).toMatchObject({ plain: false });
+    // The note itself never carries the mark: it is not a note field.
+    expect((tool.parse({ ...note, plain: true }, today) as { note: Record<string, unknown> }).note).not.toHaveProperty('plain');
+  });
+
+  it('D59 slice 4: a plain note is only proposed, with nothing read or written, once the turn has read a file, a picture or a web page, or for staff open as admin', async () => {
+    const tool = toolNamed('propose_note');
+    if (tool === undefined) throw new Error('no propose_note');
+    // Any store or switch read throws: these refusals come first.
+    const untouchable = new Proxy({}, { get: () => { throw new Error('read a store'); } });
+    const base = {
+      ctx: { stores: untouchable, config: untouchable, now: () => new Date('2026-06-01T12:00:00.000Z') } as unknown as TownwiseContext,
+      scope: { orgId: '000000000000000000000003' } as unknown as OrgScope, conversationId: '0000000000000000000000c1',
+      location: { id: '000000000000000000000004' }, today, timeZone: 'America/New_York', role: 'member',
+      files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() },
+    };
+    const member = { actorUserId: 'u1', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null };
+    const contexts = [
+      { ...base, actor: member, turn: { readUntrusted: true, readWeb: false, pictureBytes: 0 } },
+      { ...base, actor: member, turn: { readUntrusted: true, readWeb: true, pictureBytes: 0 } },
+      { ...base, actor: { ...member, actorRole: 'superadmin', viewAsGrantId: 'g1' }, turn: { readUntrusted: false, readWeb: false, readNotTyped: false, pictureBytes: 0 } },
+    ] as unknown as ToolContext[];
+    const input = tool.parse({
+      kind: 'closure', startDate: '2026-06-20', endDate: '2026-06-20', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
+      title: null, plain: true,
+    }, today);
+    for (const tc of contexts) {
+      const run = await tool.run(tc, input, 'toolu_1');
+      expect(run.content).toBe('Shown to the owner as a proposal. They decide whether to add it.');
+      expect(run.saved).toBeUndefined();
+    }
   });
 
   it('a result that is an error, unreadable or for an unknown tool has no view', () => {
@@ -214,7 +259,7 @@ describe('get_day', () => {
   function note(fields: Partial<NoteRecord>): NoteRecord {
     return {
       id: '000000000000000000000002', kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null,
-      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail', title: null, startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false, source: null, fromEvent: null,
+      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail', title: null, startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false, source: null, fromEvent: null, agent: null,
       createdAt: new Date('2026-11-01T00:00:00Z'), updatedAt: new Date('2026-11-01T00:00:00Z'), ...fields,
     };
   }
@@ -254,6 +299,7 @@ describe('get_day', () => {
     const tc: ToolContext = {
       ctx: { stores } as unknown as TownwiseContext,
       scope: { orgId: '000000000000000000000003' } as unknown as OrgScope,
+      conversationId: '0000000000000000000000c1',
       location: {
         id: '000000000000000000000001', name: 'Test Taproom', placeId: null, createdAt: new Date('2026-01-01T00:00:00Z'),
         town: { townId: opts.townId === undefined ? 'hanover-nh' : opts.townId, name: 'Hanover', state: 'NH' },
@@ -262,7 +308,7 @@ describe('get_day', () => {
       timeZone: 'America/New_York',
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-      turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
+      turn: { readUntrusted: false, readWeb: false, readNotTyped: false, pictureBytes: 0 },
       files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() },
     };
     return { tc, byIds, ranges };
@@ -283,6 +329,25 @@ describe('get_day', () => {
     for (const bad of [{ date: '2009-12-31' }, { date: '2027-12-11' }, { date: '2026-02-30' }, { date: '11/21/2026' }, {}, { date: 20261121 }]) {
       expect(inputViewOf('get_day', bad, TODAY)).toBeNull();
     }
+  });
+
+  it('marks the turn as having read words nobody typed when a covering note was written from a file or a calendar (D59 slice 4)', async () => {
+    const mine = context({ notes: [note({})] });
+    await run({ date: '2026-11-21' }, mine.tc);
+    expect(mine.tc.turn.readNotTyped).toBe(false);
+    const link = {
+      calendarId: 'a'.repeat(24), uid: 'uid-1', startDate: '2026-11-21', endDate: '2026-11-21', startTime: null, endTime: null, linkedAt: new Date(),
+    };
+    const written: Partial<NoteRecord>[] = [{ createdBy: 'townwise_ai' }, { source: { via: 'ai_file', fileId: 'f'.repeat(24) } }, { fromEvent: link }];
+    for (const fields of written) {
+      const { tc } = context({ notes: [note(fields)] });
+      await run({ date: '2026-11-21' }, tc);
+      expect(tc.turn.readNotTyped).toBe(true);
+    }
+    // A note on another day is not listed, so it marks nothing.
+    const elsewhere = context({ notes: [note({ createdBy: 'townwise_ai', startDate: '2026-11-22', endDate: '2026-11-22' })] });
+    await run({ date: '2026-11-21' }, elsewhere.tc);
+    expect(elsewhere.tc.turn.readNotTyped).toBe(false);
   });
 
   it('gives the day’s row, the notes and calendar entries that cover it, and when its upload was made, never who made it', async () => {

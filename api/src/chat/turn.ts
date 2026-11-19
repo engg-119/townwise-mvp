@@ -18,7 +18,7 @@ import type { ChatModel } from './model.ts';
 import { costMicroUsd, messageCostMicroUsd, SEARCH_MICRO_USD, tokensOf, type TokenCounts } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
 import { UNANSWERED_RESULT } from './tools/next.ts';
-import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, TOOLS, type ToolContext, type ToolView } from './tools/registry.ts';
+import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, TOOLS, type SavedNote, type ToolContext, type ToolView } from './tools/registry.ts';
 import type { Visual } from './tools/visual.ts';
 import { carriesWebPages, citedSources, searchCard, WEB_SEARCH, WEB_SEARCH_TOOL, type SourceLink } from './web-search.ts';
 
@@ -59,7 +59,8 @@ export type TurnEvent =
     type: 'tool';
     data: { id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null };
   }
-  | { type: 'proposal'; data: { id: string; proposal: NoteContent } }
+  /** D59 slice 4: `saved` when propose_note saved the note itself (the person stated it plainly), for the card's Undo. */
+  | { type: 'proposal'; data: { id: string; proposal: NoteContent; saved?: SavedNote } }
   | { type: 'visual'; data: { id: string; visual: Visual } }
   | { type: 'suggestions'; data: { id: string; prompts: string[] } };
 
@@ -545,7 +546,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         if (known) input.emit({ type: 'tool', data: { id, name, state: 'running', input: view, result: null } });
         const outcome = await runTool(input.tools, block);
         results.push(outcome.result);
-        if (outcome.proposal !== null) input.emit({ type: 'proposal', data: { id, proposal: outcome.proposal } });
+        if (outcome.proposal !== null) {
+          input.emit({ type: 'proposal', data: { id, proposal: outcome.proposal, ...(outcome.saved === null ? {} : { saved: outcome.saved }) } });
+        }
         if (outcome.visual !== null) input.emit({ type: 'visual', data: { id, visual: outcome.visual } });
         if (outcome.prompts !== null) input.emit({ type: 'suggestions', data: { id, prompts: outcome.prompts } });
         if (known) {

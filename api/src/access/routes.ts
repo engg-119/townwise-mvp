@@ -10,6 +10,7 @@ import {
   queryAudit, rejectRequest, removeOrgMember, signOutEverywhere, updateOrg,
 } from '../handlers/admin.ts';
 import { answerQuestion, getAgent } from '../handlers/agent.ts';
+import { listAgentChanges, switchAgentAuto, undoAgentChange } from '../handlers/agent-changes.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
 import { listCalibrations, setForecastSchedule, startCalibration, switchForecasts } from '../handlers/calibrations.ts';
 import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
@@ -18,7 +19,9 @@ import { getTurnEvents, stopTurn } from '../handlers/chat-turns.ts';
 import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
 import { actOnOrderProposal, getOrderProposal } from '../handlers/chat-order-proposals.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
-import { getDataItem, listData, removeDataItem, replaceDataItem, requestAiRead, undoAiRead, updateDataItem } from '../handlers/data.ts';
+import {
+  getDataItem, listData, removeDataItem, replaceDataItem, requestAiRead, retryDataCalendar, undoAiRead, updateDataItem,
+} from '../handlers/data.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
 import { deleteItemSales, getOrderSetup, saveOrderCount, saveOrderSetup, uploadItemSales } from '../handlers/order-setup.ts';
@@ -349,6 +352,12 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none',
     openAsAdmin: true, handler: removeDataItem,
   },
+  // D60: importing a calendar file kept in Your data again, after a refusal a retry may mend. Every member, as Your
+  // calendars' import, open as admin included; it fetches nothing, so no route limiter.
+  {
+    id: 'org.data.calendar', method: 'POST', path: '/org/locations/:locationId/data/:ref/calendar', policy: 'member', bodyLimit: '2kb',
+    openAsAdmin: true, handler: retryDataCalendar,
+  },
   {
     id: 'org.originals.remove', method: 'DELETE', path: '/org/locations/:locationId/originals', policy: 'org_admin',
     bodyLimit: 'none', openAsAdmin: true, handler: deleteLocationOriginals,
@@ -464,6 +473,21 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.weekly_suggestions.calendar_titles', method: 'PATCH', path: '/org/weekly-suggestions/calendar-titles', policy: 'org_admin',
     bodyLimit: '2kb', openAsAdmin: true, handler: switchCalendarTitles,
+  },
+  // D59 (openspec change auto-apply-agent-reads): TownwiseAI working on its own. The org admin's switch (open as admin may
+  // turn it off only), the log of a location's changes, and Undo of one (any member for a note, an org admin for days,
+  // checked in the handler; never under view-as, which refuses every write).
+  {
+    id: 'org.agent_auto.switch', method: 'PATCH', path: '/org/agent-auto', policy: 'org_admin', bodyLimit: '2kb', openAsAdmin: true,
+    handler: switchAgentAuto,
+  },
+  {
+    id: 'org.agent.changes', method: 'GET', path: '/org/locations/:locationId/agent/changes', policy: 'member', bodyLimit: 'none',
+    openAsAdmin: true, handler: listAgentChanges,
+  },
+  {
+    id: 'org.agent.change_undo', method: 'POST', path: '/org/locations/:locationId/agent/changes/:changeId/undo', policy: 'member',
+    bodyLimit: 'none', openAsAdmin: true, handler: undoAgentChange,
   },
   // U13A, estimates (spec 10.13): people in town and "How Townwise estimates". Reads with no limiter.
   {

@@ -107,6 +107,9 @@ describe('reading stored files', () => {
     });
     const uploaded = (await auditEvents(server)).filter((event) => event.action === 'sales.uploaded').at(-1);
     expect(uploaded).toMatchObject({ actorUserId: member.userId, actorRole: 'member', details: { locationId, dayCount: 3, inserted: 3, fileId: file.id, via: 'file' } });
+    // D59: the days it wrote change what the lab trains on, so the location wants a refit.
+    const location = await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(locationId) });
+    expect((location?.refit as { wantedAt?: Date } | undefined)?.wantedAt).toBeInstanceOf(Date);
     // Done within the last day, the import is still current.
     expect((await (await call(server, `${base(locationId)}/imports/current`, { session: member })).json() as { import: ImportView }).import.id).toBe(importId);
   });

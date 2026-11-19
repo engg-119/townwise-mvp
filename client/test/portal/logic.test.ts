@@ -24,7 +24,7 @@ const CALENDAR_ITEM = '/locations/l1/data/c_fedcba9876543210fedcba98';
 const MEMBER = [
   '/dashboard', '/settings', '/locations/l1', '/locations/l1/calendar', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload',
   '/locations/l1/data', UPLOAD_ITEM, FILE_ITEM, CALENDAR_ITEM, '/locations/l1/notes', '/locations/l1/town', '/locations/l1/orders', '/locations/l1/orders/setup',
-  '/locations/l1/agent', '/locations/l1/chat', '/locations/l1/rules',
+  '/locations/l1/agent', '/locations/l1/agent/changes', '/locations/l1/chat', '/locations/l1/rules',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
 const CONSOLE = ['/admin/overview', '/admin', '/admin/orgs', '/admin/orgs/o1', '/admin/people', '/admin/audit'];
@@ -280,6 +280,9 @@ describe('navigation per role (spec 15.3)', () => {
     }
     // The old chat address belongs to TownwiseAI, where it redirects, and an item's page to Your data.
     expect(tabOf('/locations/l1/chat')).toBe('agent');
+    // D59: TownwiseAI's log of its changes is TownwiseAI's, and scrolls as a page.
+    expect(tabOf('/locations/l1/agent/changes')).toBe('agent');
+    expect(isFillRoute('/locations/l1/agent/changes')).toBe(false);
     expect(tabOf(FILE_ITEM)).toBe('data');
     expect(tabOf(UPLOAD_ITEM)).toBe('data');
     expect(tabOf(CALENDAR_ITEM)).toBe('data');

@@ -16,21 +16,22 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { activityFor, type ActivityItem } from '../agent/activity.ts';
+import { agentAutoView, type AgentAutoView } from './agent-changes.ts';
+import { questionInputAt } from '../agent/question-input.ts';
 import {
-  answerOfNote, noteFor, parseQuestionId, QUESTION_ANSWERS, questionsFor, questionWindow, type AskedQuestion, type Question,
-  type QuestionAnswer,
+  answerOfNote, noteFor, parseQuestionId, QUESTION_ANSWERS, questionsFor, type AskedQuestion, type Question, type QuestionAnswer,
 } from '../agent/questions.ts';
-import { TYPICAL_LOOKBACK_DAYS } from '../closed-days.ts';
 import { utcDay } from '../dates.ts';
 import { authorEmail } from '../people.ts';
 import type { AnswerKey, AnswerRecord } from '../stores/agent-answers.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord } from '../stores/notes.ts';
-import { localDay, timeZoneOf } from '../time-zones.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { addNote, noteContent, noteView, type NoteView } from './notes.ts';
 import { actorOf } from './team.ts';
-import { ruleSuggestionViews, type RuleSuggestionView } from '../agent/rule-suggestion-views.ts';
+import {
+  noteSuggestionViews, ruleSuggestionViews, type NoteSuggestionView, type RuleSuggestionView,
+} from '../agent/rule-suggestion-views.ts';
 import { suggestionsPanel, type SuggestionView, type WeeklySuggestionsView } from './weekly-suggestions.ts';
 
 /** A question id: dates and a weekday number only, never text. */
@@ -45,6 +46,12 @@ const answerBody = z.strictObject({ answer: z.enum(QUESTION_ANSWERS) });
 export interface AgentPanel {
   questions: Question[]; activity: ActivityItem[]; suggestions: SuggestionView[]; weeklySuggestions: WeeklySuggestionsView;
   ruleSuggestions: RuleSuggestionView[];
+  /** D59: whether TownwiseAI works on its own here, and whether the caller turns it. */
+  agentAuto: AgentAutoView;
+  /** D59: the events files stated that TownwiseAI was not sure of, waiting for a member. */
+  noteSuggestions: NoteSuggestionView[];
+  /** D59: how many things TownwiseAI was not sure of are waiting: these note suggestions and the suggested rules. */
+  waiting: number;
 }
 
 export interface AnswerResult {
@@ -60,33 +67,15 @@ function notFound(): AppError {
   return new AppError(404, 'not_found', 'Not found');
 }
 
-/** The questions currently asked at the location, with the records they came from. */
+/**
+ * The questions currently asked at the location, with the records they came from (agent/question-input.ts; D59 slice 5:
+ * days a calendar plainly says were closed are explained).
+ */
 async function currentQuestions(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord): Promise<{
   questions: Question[]; notes: NoteRecord[]; answers: AnswerRecord[];
 }> {
-  const { scope } = caller;
-  const [coverage, notes, answers, scheduled] = await Promise.all([
-    ctx.stores.salesDays.coverage(scope, location.id),
-    ctx.stores.notes.list(scope, location.id),
-    ctx.stores.agentAnswers.list(scope, location.id),
-    ctx.stores.businessRules.scheduled(scope, location.id),
-  ]);
-  const window = questionWindow(coverage);
-  // The days read reach 56 days before the window, for each day's typical guests (D32). D28: a turned-off upload's days
-  // are left out of `days` and explained by `turnedOff`, so they are never asked about.
-  const [days, turnedOff] = window === null ? [[], []] : await Promise.all([
-    ctx.stores.salesDays.days(scope, location.id, {
-      from: utcDay(new Date(`${window.from}T00:00:00.000Z`), -TYPICAL_LOOKBACK_DAYS), to: window.to,
-    }),
-    ctx.stores.salesDays.disabledDates(scope, location.id, window),
-  ]);
-  // A save still in progress is not answered yet: the question stays until its answer is done.
-  const answered = answers.filter((row) => row.status === 'done').map((row) => row.questionId);
-  // D31: a business rule's schedule explains a day only as it decides it (questions.ts); a rule with none, nothing.
-  const rules = scheduled.flatMap((rule) => (rule.schedule === null ? [] : [rule.schedule]));
-  return { questions: questionsFor({
-    coverage, days, notes, rules, answered, turnedOff, today: localDay(ctx.now(), timeZoneOf(location.town).timeZone),
-  }), notes, answers };
+  const { input, notes, answers } = await questionInputAt(ctx, caller.scope, location);
+  return { questions: questionsFor(input), notes, answers };
 }
 
 /** GET /api/org/locations/:locationId/agent. */
@@ -94,12 +83,16 @@ export async function getAgent(ctx: TownwiseContext, req: Request, res: Response
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const { questions, notes, answers } = await currentQuestions(ctx, caller, location);
-  const [activity, suggested, ruleSuggestions] = await Promise.all([
-    activityFor({ ctx, scope: caller.scope, locationId: location.id, userId: caller.userId, notes, answers }),
+  const [activity, suggested, ruleSuggestions, agentAuto, noteSuggestions] = await Promise.all([
+    activityFor({ ctx, scope: caller.scope, locationId: location.id, userId: caller.userId, caller, notes, answers }),
     suggestionsPanel(ctx, caller, location),
     ruleSuggestionViews(ctx, caller, location),
+    agentAutoView(ctx, caller),
+    noteSuggestionViews(ctx, caller, location),
   ]);
-  const body: AgentPanel = { questions, activity, ...suggested, ruleSuggestions };
+  const body: AgentPanel = {
+    questions, activity, ...suggested, ruleSuggestions, agentAuto, noteSuggestions, waiting: noteSuggestions.length + ruleSuggestions.length,
+  };
   res.status(200).json(body);
 }
 

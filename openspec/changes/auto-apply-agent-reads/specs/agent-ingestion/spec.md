@@ -54,3 +54,22 @@ Every change TownwiseAI applies SHALL first be inserted into `tw_agent_changes` 
 #### Scenario: Two sources state the same event
 - **WHEN** a PDF and a photo read the same day state the same private event with the same kind, dates, effect and title
 - **THEN** one note is written, and the second read records it as skipped `duplicate`
+
+### Requirement: A file calendar is sorted when it is imported
+While the organization's `agentAuto`, `TOWNWISE_AGENT_AUTO` and the organization's `calendarTitlesToAi` are all on, Townwise SHALL queue one automatic sort of a file calendar (a CSV or an `.ics` file) when it is imported, unless Townwise staff open as admin imported it. The TownwiseAI reader's loop SHALL claim it under the read's lease, one job per organization across reads and sorts, check the switches and the importer's seat again, and reserve D58's sort from the TownwiseAI month before any call. Every label but `unsure` SHALL be written as TownwiseAI's only on events nobody labeled, as one `booking.label` change for the calendar, and the calendar SHALL then be confirmed by TownwiseAI. A calendar someone sorted, labeled or confirmed before TownwiseAI's labels are confirmed SHALL be left to them, with none of TownwiseAI's labels kept, so TownwiseAI's confirm covers only its own labels. The model's labels SHALL be kept until the sort ends, so a retry writes them with no second call. Each upcoming buyout or party SHALL get a linked note as its own `note.add` change. A calendar SHALL be sorted on its own at most once, and no calibration SHALL start.
+
+#### Scenario: A calendar CSV imported with the switches on
+- **WHEN** a member imports a calendar CSV with an upcoming buyout and a past party
+- **THEN** TownwiseAI labels them with no press, the calendar reads confirmed, the buyout gets a linked note, and the activity shows one change for the labels with Undo for an org admin
+
+#### Scenario: The TownwiseAI month is spent
+- **WHEN** the organization's TownwiseAI month cannot cover the sort
+- **THEN** nothing is sent, the sort is skipped `budget_spent`, and an org admin can still press Sort with TownwiseAI
+
+#### Scenario: Undo per calendar
+- **WHEN** an org admin undoes the calendar's labels after a person changed one label and one note
+- **THEN** the other labels and notes TownwiseAI added are removed, the person's label and note stay, and the calendar waits for Use for forecasts again
+
+#### Scenario: Someone sorts the calendar first
+- **WHEN** an org admin presses Sort with TownwiseAI, or a person labels an event, while the calendar's automatic sort is queued or running
+- **THEN** the automatic sort keeps none of its labels, confirms nothing, records no change and is skipped `already_sorted`

@@ -12,10 +12,18 @@ export interface Sniffed {
 
 const TEXT_EXTENSIONS = new Set(['csv', 'tsv', 'txt', 'text', 'tab', '']);
 
-function extensionOf(name: string): string {
+/** A name's last extension, lower case, or '' with none. */
+export function extensionOf(name: string): string {
   const base = name.slice(name.lastIndexOf('/') + 1);
   const dot = base.lastIndexOf('.');
   return dot <= 0 ? '' : base.slice(dot + 1).toLowerCase();
+}
+
+const CALENDAR_EXTENSIONS: ReadonlySet<string> = new Set(['ics', 'ical']);
+
+/** A name an .ics or .ical calendar file has (D60, D63); sniff keeps such a file as `other`. */
+export function isCalendarFileName(name: string): boolean {
+  return CALENDAR_EXTENSIONS.has(extensionOf(name));
 }
 
 function startsWith(head: Uint8Array, bytes: readonly number[], at = 0): boolean {

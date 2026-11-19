@@ -34,15 +34,16 @@ import type { AgentPanelState, Decided } from '../useAgentPanel';
 // the weekly switch, the organization's switch for reading the calendars' event titles: admins turn it off or on (staff
 // open as admin only off), members see its state.
 
-/** The switch's words (spec P25), with the town's name. */
+/** The switch's words (spec P25), with the town's name. [CONFIRM: the panel's and switch's words] (D59 slice 3: what it saves on its own) */
 export function weeklyWords(town: string): string {
-  return `Once a week TownwiseAI reads the next 3 months of ${town}’s calendar with your notes and rules, and suggests notes or rules for you to accept. It sends them to Anthropic and uses this organization’s TownwiseAI budget.`;
+  return `Once a week TownwiseAI reads the next 3 months of ${town}’s calendar with your notes and rules, and suggests notes or rules for you to accept. Where TownwiseAI works on its own, it saves the ones it’s sure of instead, with Undo in its activity. It sends them to Anthropic and uses this organization’s TownwiseAI budget.`;
 }
 
 /**
- * The titles switch's words (calendar-event-suggestions design decision 9). [CONFIRM: the switch's words]
+ * The titles switch's words (calendar-event-suggestions design decision 9). D59 slice 2: the switch also stops a
+ * calendar file's sort on import, so they say so. Approved by the owner on 2026-11-19.
  */
-export const TITLES_WORDS = 'Read your calendars’ event titles. Once a week TownwiseAI also reads the titles, dates and hours of the next 3 months of events on this location’s calendars, to suggest notes for private events. They are sent to Anthropic, which doesn’t train on them.';
+export const TITLES_WORDS = 'Read your calendars’ event titles. Once a week TownwiseAI also reads the titles, dates and hours of the next 3 months of events on this location’s calendars, to suggest notes for private events, and where it works on its own it reads every event in a calendar file when it is imported, to label your bookings. They are sent to Anthropic, which doesn’t train on them.';
 
 /** A spotted event's two choices, neither chosen until the admin picks one. */
 const EVENT_CHOICES: readonly { value: EventChoice['effect']; label: string }[] = [

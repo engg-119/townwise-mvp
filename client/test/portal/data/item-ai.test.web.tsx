@@ -221,7 +221,7 @@ describe('a done read', () => {
       'TownwiseAI read this file as a menu.',
       'It added no sales days: TownwiseAI doesn’t take days from a picture, because it can’t check the figures against the file’s text. To add them yourself, use Upload sales history.',
       'It kept no summary: it found nothing to summarize.',
-      'The forecast wasn’t updated: it needs at least 595 days from the first to the last day of sales history.',
+      'The forecast wasn’t updated: it needs at least 230 days from the first to the last day of sales history, or 595 while its current forecast is from Townwiseâs demand model.',
     ]],
     ['codes the page doesn’t know read as the general line', {
       kind: 'recipes', daysReason: 'newer_reason', itemReason: 'newer_reason', calibration: { status: 'newer_status', id: null },

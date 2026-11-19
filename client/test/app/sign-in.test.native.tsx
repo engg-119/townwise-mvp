@@ -48,7 +48,7 @@ test('one Continue with Google button, links to the terms and privacy pages, and
   // note under the card is spec P1's line for new people and teammates.
   expect(screen.queryByRole('link', { name: 'Request early access' })).toBeNull();
   expect(screen.queryByText('Request early access')).toBeNull();
-  expect(screen.queryByText('Townwise is in development. No forecasts are for sale yet.')).toBeNull();
+  expect(screen.queryByText(/Forecasts are live for early-access restaurants/)).toBeNull();
   expect(view.container.queryAll((instance) => instance.type === 'TextInput')).toHaveLength(0);
   expect(screen.queryByLabelText('Email')).toBeNull();
   expect(screen.queryByText(/sign up/i)).toBeNull();

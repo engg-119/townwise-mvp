@@ -85,6 +85,7 @@ function context(fakes: Fakes = {}): ToolContext {
   return {
     ctx: { stores, ports: { forecasts: { window: () => Promise.resolve(NO_FORECAST) } }, now: () => NOW } as unknown as TownwiseContext,
     scope: { orgId: '000000000000000000000003' } as unknown as OrgScope,
+    conversationId: '0000000000000000000000c1',
     location: {
       id: LOCATION_ID, name: 'Test Taproom', placeId: null, createdAt: new Date('2026-01-01T00:00:00.000Z'),
       town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' },
@@ -93,7 +94,7 @@ function context(fakes: Fakes = {}): ToolContext {
     timeZone: 'America/New_York',
     role: 'member',
     actor: { actorUserId: 'user-1', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-    turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
+    turn: { readUntrusted: false, readWeb: false, readNotTyped: false, pictureBytes: 0 },
     files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() },
   };
 }

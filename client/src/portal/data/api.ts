@@ -102,10 +102,77 @@ export const dataItemSchema = z.object({
   ai: aiReadSchema.nullable(),
   /** On an upload or a summary item a TownwiseAI read made: the ref of the item it was read from. */
   fromAiRead: z.string().nullable(),
+  /**
+   * D60: on one item's page only (absent on the list's rows), what importing its stored file as a calendar did: added
+   * (its calendar's id, label and event count), removed since, or refused (the code, read as a string, and whether Try
+   * again may mend it); null for any other item.
+   */
+  calendar: z.discriminatedUnion('status', [
+    z.object({ status: z.literal('added'), calendarId: z.string(), label: z.string(), eventCount: z.number() }),
+    z.object({ status: z.literal('removed') }),
+    z.object({ status: z.literal('refused'), reason: z.string(), retry: z.boolean() }),
+  ]).nullable().optional(),
+  /**
+   * D61: the folder the item is in (folders.ts), read as a string so a folder a later API adds files the item under Not
+   * sorted yet; Not sorted yet from an API older than folders.
+   */
+  folder: z.string().default('unsorted'),
 });
 export type DataItem = z.infer<typeof dataItemSchema>;
+export type DataItemCalendar = NonNullable<DataItem['calendar']>;
 
-const listSchema = z.object({ items: z.array(dataItemSchema), next: z.string().nullable() });
+const CALENDAR_EXTENSIONS: ReadonlySet<string> = new Set(['ics', 'ical']);
+
+/** An .ics or .ical name, as api/src/files/sniff.ts isCalendarFileName tells a calendar file (D60, D63). */
+export function isCalendarFileName(name: string | null): boolean {
+  const dot = name?.lastIndexOf('.') ?? -1;
+  return name !== null && dot > 0 && CALENDAR_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+}
+
+/**
+ * UI review 2026-11-19: on one item's page, a calendar file kept before D60 imported calendar files: no `calendar`, and
+ * an .ics or .ical file's kind (`other`) and name. Never under view-as, which sends no name.
+ */
+export function isUnimportedCalendarFile(item: Pick<DataItem, 'kind' | 'name' | 'calendar'>): boolean {
+  return item.calendar === null && item.kind === 'other' && isCalendarFileName(item.name);
+}
+
+/**
+ * A calendar file, which Townwise imports as a calendar (D60) rather than TownwiseAI reading it: one whose import found a
+ * calendar (added, removed since, or refused for its size, the limit or a read), or one kept before D60. An .ics file
+ * that is no calendar (`not_calendar`) is any other file.
+ */
+export function isCalendarFile(item: Pick<DataItem, 'kind' | 'name' | 'calendar'>): boolean {
+  const calendar = item.calendar ?? null;
+  if (calendar !== null) return !(calendar.status === 'refused' && calendar.reason === 'not_calendar');
+  return isUnimportedCalendarFile({ ...item, calendar: null });
+}
+
+/**
+ * D61: one of the list's calendars, an item of the Calendars folder opening at `c_<id>`: never its address. `kind` and
+ * `status` are read as strings, as Your calendars reads them.
+ */
+export const dataCalendarSchema = z.object({
+  id: z.string(),
+  locationId: z.string(),
+  label: z.string(),
+  kind: z.string(),
+  host: z.string().nullable(),
+  eventCount: z.number(),
+  skippedRepeating: z.number(),
+  status: z.string(),
+  lastSuccessAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type DataCalendar = z.infer<typeof dataCalendarSchema>;
+
+/**
+ * `calendars` are the same on every page; none from an API older than D61. D59: `agentAuto`, whether TownwiseAI reads a
+ * file added here on its own; absent from an API before it, read as no.
+ */
+const listSchema = z.object({
+  items: z.array(dataItemSchema), next: z.string().nullable(), calendars: z.array(dataCalendarSchema).default([]), agentAuto: z.boolean().optional(),
+});
 const itemSchema = z.object({ item: dataItemSchema });
 const removedSchema = z.object({ deletedDays: z.number(), deletedFiles: z.number() });
 const undoneSchema = z.object({ item: dataItemSchema, calibrationKept: z.string().nullable() });
@@ -115,8 +182,13 @@ function itemPath(locationId: string, ref: string): `/${string}` {
   return `/api/org/locations/${encodeURIComponent(locationId)}/data/${encodeURIComponent(ref)}`;
 }
 
-/** Newest first, 100 a page; one location's items, or every location's without `locationId`. `after` is the last page's `next`. */
-export function listData(api: ApiClient, opts: { locationId?: string; after?: string }): Promise<{ items: DataItem[]; next: string | null }> {
+/**
+ * Newest first, 100 a page; one location's items, or every location's without `locationId`. `after` is the last page's
+ * `next`. D61: with the scope's calendars, and without a file a calendar was imported from while that calendar exists.
+ */
+export function listData(
+  api: ApiClient, opts: { locationId?: string; after?: string },
+): Promise<{ items: DataItem[]; next: string | null; calendars: DataCalendar[]; agentAuto?: boolean | undefined }> {
   const query = new URLSearchParams();
   if (opts.locationId !== undefined) query.set('locationId', opts.locationId);
   if (opts.after !== undefined) query.set('after', opts.after);
@@ -162,7 +234,8 @@ export function removeItem(api: ApiClient, locationId: string, ref: string): Pro
 }
 
 /** Pasted text kept for reference, as a `.txt` file named from its title. */
-export async function addText(api: ApiClient, locationId: string, input: { title: string; text: string }): Promise<FileView> {
+/** D59 slice 4: `aiAuto: true` only when the person left the box checked, so TownwiseAI reads the text on its own. */
+export async function addText(api: ApiClient, locationId: string, input: { title: string; text: string; aiAuto?: true }): Promise<FileView> {
   const body = await api.json(`/api/org/locations/${encodeURIComponent(locationId)}/data/text`, textSchema, { method: 'POST', body: input });
   return body.file;
 }
@@ -175,6 +248,16 @@ export async function addText(api: ApiClient, locationId: string, input: { title
  */
 export async function readWithAi(api: ApiClient, locationId: string, ref: string): Promise<DataItem> {
   const body = await api.json(`${itemPath(locationId, ref)}/ai`, itemSchema, { method: 'POST', body: {} });
+  return body.item;
+}
+
+/**
+ * D60: imports a calendar file kept in Your data again, after a refusal Try again may mend (the location had 5
+ * calendars, or its original couldn't be read); answers the item with its `calendar` as it is after, refused again
+ * included. 400 invalid_request for an item that is no calendar file.
+ */
+export async function retryCalendar(api: ApiClient, locationId: string, ref: string): Promise<DataItem> {
+  const body = await api.json(`${itemPath(locationId, ref)}/calendar`, itemSchema, { method: 'POST', body: {} });
   return body.item;
 }
 

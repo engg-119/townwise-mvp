@@ -725,3 +725,61 @@ describe('the sales history', () => {
     expect(await count('tw_agent_suggestions', { locationId: oid(theirs) })).toBe(0);
   });
 });
+
+// ---- D59: an event a file read was not sure of --------------------------------------------------------------------
+
+describe('a file’s note suggestion (D59)', () => {
+  const UNSURE = {
+    title: `${SENTINEL} tasting dinner`, startDate: '2026-06-20', endDate: '2026-06-20', kind: 'private_event', effect: 'more',
+    expectedGuests: 30, detail: 'Upstairs', confidence: 'medium',
+  };
+
+  it('any member confirms it: the note is written as theirs under the suggestion’s id, once, and a retry answers the same', async () => {
+    const { locationId } = await readWith({ events: [UNSURE] });
+    const [suggestion] = (await panel(locationId)).noteSuggestions;
+    if (suggestion === undefined) throw new Error('no suggestion');
+    expect(suggestion).toMatchObject({ source: 'file', canDecide: true, note: { kind: 'private_event', title: `${SENTINEL} tasting dinner` } });
+    expect(await count('tw_notes', { locationId: oid(locationId) })).toBe(0);
+    // An edit body is refused: a note is edited on Notes.
+    expect((await decide(team.member, locationId, suggestion.id, 'accept', { rule: { text: 'x' } })).status).toBe(400);
+    const res = await decide(team.member, locationId, suggestion.id, 'accept');
+    expect(res.status).toBe(200);
+    const body = await res.json() as { suggestion: unknown; note: { id: string; createdByEmail: string; title: string } };
+    expect(body.suggestion).toEqual({ id: suggestion.id, status: 'accepted' });
+    expect(body.note).toMatchObject({ id: suggestion.id, title: `${SENTINEL} tasting dinner`, expectedGuests: 30 });
+    const note = await server.connection.collection('tw_notes').findOne({ _id: oid(suggestion.id) });
+    expect(note).toMatchObject({ createdBy: team.member.userId });
+    expect(note?.agent).toBeUndefined();
+    expect(note?.source).toBeUndefined();
+    expect((await decide(team.member, locationId, suggestion.id, 'accept')).status).toBe(200);
+    expect(await count('tw_notes', { locationId: oid(locationId) })).toBe(1);
+    expect((await eventsOf('agent.suggestion_accepted')).filter((event) => (event.details as { suggestionId: string }).suggestionId === suggestion.id)
+      .map((event) => event.details)).toEqual([{ locationId, suggestionId: suggestion.id, type: 'note', source: 'file', edited: false }]);
+    expect((await panel(locationId)).noteSuggestions).toEqual([]);
+    expect(JSON.stringify(await auditEvents(server))).not.toContain(`${SENTINEL} tasting`);
+  });
+
+  it('any member dismisses it: nothing is written, it is gone from the panel, and staff in view-as see it without its words and cannot decide', async () => {
+    const { locationId } = await readWith({ events: [UNSURE] });
+    const [suggestion] = (await panel(locationId)).noteSuggestions;
+    if (suggestion === undefined) throw new Error('no suggestion');
+    const staff = await signInStaff(server);
+    await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: team.member.userId, orgId: team.orgId });
+    try {
+      const seen = (await panel(locationId, staff)).noteSuggestions[0];
+      expect(seen).toMatchObject({ id: suggestion.id, canDecide: false, note: { title: null, detail: null }, file: { title: null } });
+      expect(await errorOf(await decide(staff, locationId, suggestion.id, 'dismiss'))).toEqual({ status: 403, error: 'view_as_read_only' });
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
+    const res = await decide(team.member, locationId, suggestion.id, 'dismiss');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ suggestion: { id: suggestion.id, status: 'dismissed' }, note: null });
+    expect(await count('tw_notes', { locationId: oid(locationId) })).toBe(0);
+    expect((await panel(locationId)).noteSuggestions).toEqual([]);
+    expect(await suggestionDoc(suggestion.id)).toMatchObject({ status: 'dismissed', decidedBy: team.member.userId });
+    // A note suggestion is never decided through the weekly routes.
+    expect((await weeklyDecide(team.admin, locationId, suggestion.id, 'accept')).status).toBe(404);
+  });
+});

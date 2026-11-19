@@ -6,6 +6,7 @@ import {
   type CalendarInput, type ImportedEvent,
 } from '../../../src/portal/calendar/model';
 import type { ForecastDay, ForecastReason, ForecastWindow } from '../../../src/portal/estimates/api';
+import { forecastDayLines, WHY_LINES, whyRows } from '../../../src/portal/home/DayDetail';
 import { daysBetween } from '../../../src/portal/locations/dates';
 import { holiday, note, townEvent } from '../analytics/fakes';
 import { ruleOf } from '../rules/fakes';
@@ -430,6 +431,23 @@ test('a day the model closed that a private event opened shows only the notes’
   });
 });
 
+// UI review 2026-11-19: a day the run closed with its own closure reason said "Closed" twice in the tooltip and in Home's
+// day panel. The status says it once; a closure that is a note or a rule still names itself.
+test('a closed day says Closed once in the tooltip and in Home’s Why', () => {
+  const closed = forecastDay({
+    date: '2026-11-24', status: 'closed', low: null, mid: null, high: null, model: { status: 'closed', low: null, mid: null, high: null },
+    reasons: [{ kind: 'closure', label: 'Closed', effectPct: null, sources: [], note: null }, { kind: 'weekday', label: 'Tuesday', effectPct: null, sources: [], note: null }],
+  });
+  const lines = tooltipLines('2026-11-24', input({ forecast: windowOf([closed]) }))?.lines ?? [];
+  expect(lines.filter((line) => /^Closed\.?$/.test(line))).toEqual(['Closed']);
+  expect(lines).toContain('Tuesday');
+  expect(whyRows(closed, WHY_LINES).map((row) => row.line)).toEqual(['Tuesday']);
+  expect(forecastDayLines(closed)).toEqual(['Closed.']);
+  // A closure note still names itself under the status.
+  const noted = { ...closed, reasons: [{ kind: 'note', label: 'Your closure', effectPct: null, sources: [], note: { id: 'n3', guests: null, outcome: 'closed' } }] } as ForecastDay;
+  expect(whyRows(noted, WHY_LINES).map((row) => row.line)).toEqual(['Your closure']);
+});
+
 test('the tooltip holds the range, the notes’ guests and at most three reasons', () => {
   // The note reason's note is PARTY, joined by its id.
   expect(tooltipLines('2026-11-21', input({ notes: [{ ...PARTY, id: 'n1' }] }))).toEqual({
@@ -595,6 +613,8 @@ test('today’s stored day is never likely closed: its upload may be partial, so
 
 test('a rule a note sets aside says so, and rule reasons past the first six are counted for the panel (D31)', () => {
   expect(reasonOutcomeWords('overridden', null)).toBe('A note on this day sets this rule aside');
+  // D59: a TownwiseAI note a note your team made sets aside.
+  expect(reasonOutcomeWords('overridden', null, 0, 'note')).toBe('A note your team made on this day sets this TownwiseAI note aside');
   const ruled = forecastDay({ date: '2026-11-21', moreRules: 2 });
   expect(dayView('2026-11-21', input({ forecast: windowOf([ruled]) })).moreRules).toBe(2);
   // An older answer without the count reads as none.

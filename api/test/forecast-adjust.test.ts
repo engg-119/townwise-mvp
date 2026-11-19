@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { adjustDay, flagsAfterData, MAX_NOTE_REASONS, MAX_RULE_REASONS, orderedReasons, type AdjustedNote, type AdjustedRule, type ModelDay, type ScheduledRule } from '../src/forecasts/adjust.ts';
 import type { RuleSchedule } from '../src/stores/business-rules.ts';
-import type { NoteContent, NoteRecord } from '../src/stores/notes.ts';
+import type { NoteRecord } from '../src/stores/notes.ts';
 
 const TODAY = '2026-06-01';
 const DAY = '2026-06-06';
@@ -17,11 +17,11 @@ const BOOKED: ModelDay = { status: 'booked', low: null, mid: null, high: null };
 const WEEKDAY = [{ kind: 'weekday' as const }];
 
 let ids = 0;
-function note(fields: Partial<NoteContent> = {}): NoteRecord {
+function note(fields: Partial<NoteRecord> = {}): NoteRecord {
   ids += 1;
   return {
     id: String(ids).padStart(24, '0'), kind: 'private_event', startDate: DAY, endDate: DAY, weekdays: null, effect: 'more_guests',
-    expectedGuests: 70, detail: null, title: null, startTime: null, endTime: null, createdBy: 'author', byStaff: false, source: null, fromEvent: null,
+    expectedGuests: 70, detail: null, title: null, startTime: null, endTime: null, createdBy: 'author', byStaff: false, source: null, fromEvent: null, agent: null,
     createdAt: new Date('2026-05-01T00:00:00Z'), updatedAt: new Date('2026-05-01T00:00:00Z'), ...fields,
   };
 }
@@ -313,5 +313,54 @@ describe('flagsAfterData (D49 as amended)', () => {
     // The read applies a counted party and a buyout itself, from today on; a closure and any other kind set no flag there.
     expect([flagsAfterData(party(70)), flagsAfterData(buyout(40)), flagsAfterData(closure())]).toEqual([false, false, false]);
     expect(flagsAfterData(note({ kind: 'opening', effect: 'more_guests', expectedGuests: null }))).toBe(false);
+  });
+});
+
+describe('owner beats agent (D59)', () => {
+  const AT = new Date('2026-05-10T00:00:00Z');
+  /** A note TownwiseAI saved on its own and nobody edited since. */
+  const agent = (fields: Partial<NoteRecord> = {}): NoteRecord => note({
+    kind: 'closure', effect: 'closed', expectedGuests: null, createdBy: 'townwise_ai', agent: { changeId: 'c'.repeat(24), at: AT },
+    createdAt: AT, updatedAt: AT, ...fields,
+  });
+
+  it('a person’s note that decides the day sets aside TownwiseAI’s note on it, listed as overridden', () => {
+    const theirs = agent();
+    const mine = party(40);
+    const day = adjustDay(DAY, TODAY, OPEN, WEEKDAY, [theirs, mine]);
+    expect(day).toMatchObject({ status: 'open', low: 120, mid: 140, high: 160, noteGuests: 40 });
+    expect(day.notes).toEqual([{ note: mine, outcome: 'added' }, { note: theirs, outcome: 'overridden' }]);
+  });
+
+  it('without a person’s note deciding the day, TownwiseAI’s note applies as any note does', () => {
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [agent()])).toMatchObject({ status: 'closed', notes: [{ outcome: 'closed' }] });
+    // A person's note that decides nothing (an other note, effect unknown) leaves it standing.
+    const day = adjustDay(DAY, TODAY, OPEN, WEEKDAY, [agent(), note({ kind: 'other', effect: 'unknown', expectedGuests: null })]);
+    expect(day.status).toBe('closed');
+  });
+
+  it('once a person edits TownwiseAI’s note it is theirs, and is never set aside', () => {
+    const edited = agent({ updatedAt: new Date(AT.getTime() + 60_000) });
+    const day = adjustDay(DAY, TODAY, OPEN, WEEKDAY, [edited, party(40)]);
+    expect(day.status).toBe('closed');
+    expect(day.notes.map((entry) => entry.outcome)).toEqual(['closed', 'day_closed']);
+  });
+
+  it('a note D34 made from a file counts as TownwiseAI’s until edited', () => {
+    const fromFile = note({ kind: 'closure', effect: 'closed', expectedGuests: null, source: { via: 'ai_file', fileId: 'f'.repeat(24) } });
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [fromFile, party(40)]).notes.map((entry) => entry.outcome)).toEqual(['added', 'overridden']);
+    const edited = { ...fromFile, updatedAt: new Date('2026-05-20T00:00:00Z') };
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [edited, party(40)]).status).toBe('closed');
+  });
+
+  it('a note TownwiseAI saved from the person’s own words in chat (slice 4) is theirs: it sets aside TownwiseAI’s note', () => {
+    const stated = agent({ kind: 'private_event', effect: 'more_guests', expectedGuests: 40, createdBy: 'author' });
+    const theirs = agent();
+    const day = adjustDay(DAY, TODAY, OPEN, WEEKDAY, [theirs, stated]);
+    expect(day.notes).toEqual([{ note: stated, outcome: 'added' }, { note: theirs, outcome: 'overridden' }]);
+  });
+
+  it('a past day keeps the model’s numbers, and every note there is past_day, TownwiseAI’s included', () => {
+    expect(adjustDay('2026-05-30', TODAY, OPEN, WEEKDAY, [agent(), party(40)]).notes.map((entry) => entry.outcome)).toEqual(['past_day', 'past_day']);
   });
 });
