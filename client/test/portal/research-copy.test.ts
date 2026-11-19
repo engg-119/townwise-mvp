@@ -3,6 +3,10 @@ import {
   foundChips, foundEntryLabel, foundLine, foundTime, foundWords, whereWho,
 } from '../../src/portal/research/copy';
 import * as copy from '../../src/portal/research/copy';
+import {
+  APPLY_NOTICES, CORRECTED_LINE, CORRECTION, CORRECTION_CODES, correctionDoneLine, correctionFieldLines, correctionProposedLine,
+  DASHBOARD_RESEARCHING, researchBudgetLine, researchDoneLine, type ResearchDone,
+} from '../../src/portal/research/copy';
 
 // D66 (town-research-agent) task 7.5, the Calendar's part: every sentence the Calendar says about town research,
 // pinned (design decision 15). Research works in "topics", never "threads", and no sentence has an em dash.
@@ -77,6 +81,66 @@ test('the banner: only a run a person started, while it runs and after, in plain
   expect(BANNER_DISMISS).toBe('Dismiss');
 });
 
+describe('TownwiseAI, Home and the dashboard (task 7.4)', () => {
+  const RUN: ResearchDone = { subject: 'town', status: 'done', found: 12, added: 4, competitors: null, threadsFailed: 0 };
+
+  test('the correction card: what TownwiseAI did, what it proposes, and the change in plain words', () => {
+    expect(CORRECTION).toEqual({
+      eyebrow: 'Calendar correction', undo: 'Undo', undoing: 'Undoing…', undone: 'Undone. The event reads as it did before.',
+      apply: 'Apply', applying: 'Applying…', applied: 'Applied. Only this location’s calendar changed. Reset it on the Calendar to undo.',
+      why: 'This conversation read a web page or a file, so nothing changes until you apply it. It changes this location’s calendar only.',
+      open: 'Open the Calendar',
+    });
+    expect(correctionDoneLine('edit')).toBe('TownwiseAI changed an event town research found, on this location’s calendar only.');
+    expect(correctionDoneLine('hide')).toBe('TownwiseAI hid an event town research found, on this location’s calendar only.');
+    expect(correctionDoneLine('restore')).toBe('TownwiseAI restored an event town research found, on this location’s calendar only.');
+    expect(correctionProposedLine('edit')).toBe('TownwiseAI suggests changing an event town research found.');
+    expect(correctionProposedLine('hide')).toBe('TownwiseAI suggests hiding an event town research found.');
+    expect(correctionProposedLine('restore')).toBe('TownwiseAI suggests restoring an event town research found.');
+    expect(correctionFieldLines({ title: 'Quiz night', start: '2026-12-10', end: '2026-12-10', weekdays: [4], startTime: '19:30', where: 'Example Hall' }))
+      .toEqual(['Title: Quiz night', 'Dates: Dec 10, 2026', 'Thursdays only', 'From 7:30 pm', 'Where: Example Hall']);
+    expect(correctionFieldLines({ start: '2026-12-10' })).toEqual(['Starts Dec 10, 2026']);
+    expect(correctionFieldLines({ end: '2026-12-12', weekdays: null, startTime: null, where: null }))
+      .toEqual(['Ends Dec 12, 2026', 'Every day of its dates', 'No start time', 'No place']);
+    expect(correctionFieldLines(null)).toEqual([]);
+    expect(APPLY_NOTICES).toEqual({
+      changedSince: 'Someone changed this event just now. Check it on the Calendar, then apply again if it’s still right.',
+      gone: 'This event isn’t available any more.',
+      tooManyEdits: 'This location has reached its limit of 1,000 edits to researched events.',
+      invalid: 'This change can’t be applied as it is now. Make it on the Calendar instead.',
+      viewAs: 'View-as is read-only, so you can’t apply this.',
+      failed: 'Couldn’t apply this. Try again.',
+    });
+    // Every code the API's tool answers (api/src/chat/tools/correct-calendar-event.ts CorrectionCode) but needs_tap, which is a card.
+    expect(Object.keys(CORRECTION_CODES).sort()).toEqual([
+      'bad_dates', 'bad_title', 'changed_since', 'duplicate', 'invalid', 'not_found', 'not_researched', 'staff', 'too_many', 'too_many_edits', 'view_as',
+    ]);
+    expect(CORRECTED_LINE).toBe('Corrected an event town research found, on this location’s calendar only, from your message.');
+  });
+
+  test('the activity’s research_done line, the town’s by name and the location’s as your restaurant and nearby', () => {
+    expect(researchDoneLine(RUN, 'Hanover')).toBe('Researched Hanover: 12 events found, 4 new.');
+    expect(researchDoneLine({ ...RUN, subject: 'location', found: 9, added: 3, competitors: 2 }, 'Hanover'))
+      .toBe('Researched your restaurant and nearby: 9 events found, 3 new, 2 of them at competitors.');
+    expect(researchDoneLine({ ...RUN, subject: 'location', found: 1, added: 0, competitors: 0 }, 'Hanover'))
+      .toBe('Researched your restaurant and nearby: 1 event found, none new.');
+    expect(researchDoneLine({ ...RUN, found: 0, added: 0 }, 'Hanover')).toBe('Researched Hanover: nothing found this time.');
+    expect(researchDoneLine({ ...RUN, status: 'partial', threadsFailed: 2 }, 'Hanover')).toBe('Researched Hanover: 12 events found, 4 new. 2 topics didn’t finish.');
+    expect(researchDoneLine({ ...RUN, status: 'partial', threadsFailed: 1 }, 'Hanover')).toBe('Researched Hanover: 12 events found, 4 new. 1 topic didn’t finish.');
+    expect(researchDoneLine({ ...RUN, status: 'failed' }, 'Hanover')).toBe('Research of Hanover didn’t finish. Nothing changed on the calendar.');
+    expect(researchDoneLine({ ...RUN, status: 'budget' }, 'Hanover')).toBe('Research of Hanover waited: Townwise’s research budget for this month is used.');
+    expect(researchDoneLine({ ...RUN, subject: 'location', status: 'budget', competitors: 0 }, 'Hanover'))
+      .toBe('Research of your restaurant and nearby didn’t run: little of this month’s TownwiseAI budget was left.');
+  });
+
+  test('the budget’s research line in dollars, only when research spent something; the dashboard’s word', () => {
+    expect(researchBudgetLine(3.5)).toBe('Research used $3.50 of this month’s budget.');
+    expect(researchBudgetLine(0)).toBeNull();
+    expect(researchBudgetLine(undefined)).toBeNull();
+    expect(DASHBOARD_RESEARCHING).toBe('Researching');
+  });
+});
+
 test('no word says “thread”, and none has an em dash', () => {
   const strings: string[] = [];
   const collect = (value: unknown): void => {
@@ -87,6 +151,11 @@ test('no word says “thread”, and none has an em dash', () => {
   strings.push(
     bannerWords({ trigger: 'press', status: 'partial', counts: COUNTS }, 'X') ?? '', bannerWords({ trigger: 'press', status: 'failed', counts: COUNTS }, 'X') ?? '',
     bannerWords({ trigger: 'press', status: 'running', counts: COUNTS }, 'X') ?? '',
+    ...(['edit', 'hide', 'restore'] as const).flatMap((change) => [correctionDoneLine(change), correctionProposedLine(change)]),
+    ...(['town', 'location'] as const).flatMap((subject) => (['done', 'partial', 'failed', 'budget'] as const).map((status) => researchDoneLine({
+      subject, status, found: 3, added: 2, competitors: 1, threadsFailed: 1,
+    }, 'X'))),
+    researchBudgetLine(1) ?? '',
   );
   for (const words of strings) {
     expect(words).not.toMatch(/thread/i);

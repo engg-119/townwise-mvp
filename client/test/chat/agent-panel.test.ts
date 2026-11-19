@@ -44,6 +44,26 @@ test('D65: a forecast run with a cause, reason or outcome this client does not k
   expect((await loadAgentPanel(api, 'l1')).activity).toEqual([run]);
 });
 
+test('D66: research runs and TownwiseAI’s corrections read as the API sends them; an unknown status or subject is left out', async () => {
+  // Shapes copied from api/test/agent-activity.test.ts (research_done) and api/src/agent/activity.ts (an event.correct
+  // change: no dates, kind or count). The shared fixture is unchanged; these items sit beside it.
+  const done = {
+    at: '2026-06-01T09:00:00.000Z', kind: 'research_done', subject: 'location', status: 'done', found: 9, added: 3, competitors: 2, threadsFailed: 0,
+    finishedAt: '2026-06-01T09:00:00.000Z',
+  };
+  const town = { ...done, subject: 'town', status: 'budget', found: 0, added: 0, competitors: null, threadsFailed: 3 };
+  const corrected = {
+    at: '2026-06-01T08:30:00.000Z', kind: 'agent_change', changeId: '0000000000000000000000e9', action: 'event.correct', sourceKind: 'chat',
+    status: 'applied', startDate: null, endDate: null, noteKind: null, weekdays: null, count: null, undoable: true,
+  };
+  const api = fakeChatApi();
+  api.panel = {
+    ...fixture.panel,
+    activity: [done, town, corrected, { ...done, status: 'off' }, { ...done, subject: 'region' }, { ...corrected, action: 'event.later' }],
+  };
+  expect((await loadAgentPanel(api, 'l1')).activity).toEqual([done, town, corrected]);
+});
+
 test('an answer sends the body the API takes and reads the response it gives', async () => {
   const api = fakeChatApi();
   const path = `/api/org/locations/l1/agent/questions/${fixture.answer.questionId}`;

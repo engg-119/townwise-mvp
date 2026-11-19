@@ -121,7 +121,8 @@ function sourceLinks(raw: readonly unknown[]): SourceLink[] {
   return known(raw, sourceSchema);
 }
 
-const budgetSchema = z.object({ month: z.string(), usedUsd: z.number(), limitUsd: z.number(), exhausted: z.boolean() });
+/** `researchUsd` (D66): location research's part of `usedUsd`; absent from an API before it. */
+const budgetSchema = z.object({ month: z.string(), usedUsd: z.number(), limitUsd: z.number(), exhausted: z.boolean(), researchUsd: z.number().optional() });
 /** `running` (spec P25 build note, 2026-11-18): TownwiseAI is still replying in it; false from an API before it. */
 const conversationSummarySchema = z.object({
   id: z.string(), title: z.string(), updatedAt: z.string(), turnCount: z.number(), running: z.boolean().catch(false).default(false),
@@ -619,6 +620,19 @@ export const forecastMadeItemSchema = z.object({
 });
 export type ForecastMadeItem = z.infer<typeof forecastMadeItemSchema>;
 
+/**
+ * D66 (openspec change town-research-agent, design decision 15): a research run of the location or of its town (a town's
+ * is shared, so it never says what started it) that ended, with its counts: what it found and added, how many of the
+ * added are competitors' (null for the town), and the topics that ended failed or out of budget. A status this client
+ * doesn't know leaves the item out.
+ */
+export const researchDoneItemSchema = z.object({
+  at: z.string(), kind: z.literal('research_done'), subject: z.enum(['town', 'location']), status: z.enum(['done', 'partial', 'failed', 'budget']),
+  found: z.number().int().nonnegative(), added: z.number().int().nonnegative(), competitors: z.number().int().nonnegative().nullable(),
+  threadsFailed: z.number().int().nonnegative(), finishedAt: z.string(),
+});
+export type ResearchDoneItem = z.infer<typeof researchDoneItemSchema>;
+
 const activitySchema = z.discriminatedUnion('kind', [
   z.object({ at: z.string(), kind: z.literal('upload_applied'), firstDate: dateSchema, lastDate: dateSchema, dayCount: z.number().int() }),
   z.object({
@@ -633,6 +647,7 @@ const activitySchema = z.discriminatedUnion('kind', [
   /** D59: a change TownwiseAI saved on its own, with whether Undo is offered. */
   agentChangeItemSchema,
   forecastMadeItemSchema,
+  researchDoneItemSchema,
 ]);
 export type ActivityItem = z.infer<typeof activitySchema>;
 

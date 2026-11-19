@@ -8,7 +8,7 @@ import { dayContext, ruleSchedules } from '../analytics/days';
 import { metricsWithData } from '../analytics/filters';
 import { byDate, decodeHistory } from '../analytics/history';
 import {
-  forecastRange, homeCalendarRange, lastWeekComparison, lastWeekRange, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput,
+  forecastRange, homeCalendarRange, homeFound, lastWeekComparison, lastWeekRange, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput,
 } from '../analytics/week';
 import { fetchOwnerCalendarEvents, type OwnerCalendarEvent } from '../calendar/api';
 import { ALL_FILTERS, type CalendarInput } from '../calendar/model';
@@ -58,7 +58,8 @@ import { ThisWeek } from './ThisWeek';
 // location's own calendars over the forecast's range (D49: this month and This week's days past it, under the events
 // route's 92 days; none while they load or if the read fails), and writes nothing, so view-as shows it unchanged with
 // its upload links disabled. This week, This month (its grid, tooltip and day detail) and the month's list read one
-// CalendarInput, the Calendar's, through the shared entries helper (calendar/entries.ts).
+// CalendarInput, the Calendar's, through the shared entries helper (calendar/entries.ts). D66: This week alone adds the
+// events town research found, last on each day, leaving Unconfirmed and competitors' ones to the Calendar (week.ts homeFound).
 // "Today" is the device's date; This week in {Town} is the seven days from today, today first, and Last week the
 // seven days before today. While onboarding's needsHistory is true, its HistoryStep
 // takes the place of the blocks that need days, and when it has read the history Home loads again.
@@ -172,7 +173,8 @@ function HomeView(props: {
     today, covered: forecastRange(today), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported,
     filters: ALL_FILTERS,
   }), [today, forecast, input.byDate, calendar.events, notes, rules, imported]);
-  const week = useMemo(() => thisWeek(input, entries), [input, entries]);
+  // D66: This Week alone reads found events, last on each day and without Unconfirmed or competitors' ones (homeFound).
+  const week = useMemo(() => thisWeek(input, { ...entries, found: homeFound(calendar.found) }), [input, entries, calendar.found]);
   const lastWeek = useMemo(() => lastWeekComparison(input, lastWeekForecast), [input, lastWeekForecast]);
   const share = useMemo(() => lateWeekShare(input), [input]);
   const facts = useMemo(() => monthFacts(input), [input]);

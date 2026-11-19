@@ -320,3 +320,29 @@ it('D59 slice 4: reads a proposal TownwiseAI saved itself, streamed with `saved`
   api.conversation = withPart(shown);
   expect((await loadConversation(api, 'l1', 'c1')).messages[1]?.parts).toEqual([{ type: 'proposal', proposal: shown }]);
 });
+
+it('D66: a conversation holding correct_calendar_event tool parts loads with the current schema, each part as stored', async () => {
+  const api = fakeChatApi();
+  const applied = {
+    type: 'tool', id: 'toolu_c1', name: 'correct_calendar_event', state: 'done', input: { eventId: `l-${'a'.repeat(24)}`, change: 'hide' },
+    result: { applied: true, code: null, eventId: `l-${'a'.repeat(24)}`, changeId: 'c1', proposed: null },
+  };
+  const proposed = {
+    type: 'tool', id: 'toolu_c2', name: 'correct_calendar_event', state: 'done', input: { eventId: `t-${'b'.repeat(24)}`, change: 'edit' },
+    result: { applied: false, code: 'needs_tap', eventId: `t-${'b'.repeat(24)}`, changeId: null, proposed: { change: 'edit', fields: { startTime: '20:00' } } },
+  };
+  api.conversation = {
+    ...CONVERSATION,
+    messages: [CONVERSATION.messages[0], { ...CONVERSATION.messages[1], parts: [{ type: 'text', text: 'Done.' }, applied, proposed] }],
+  };
+  const load = await loadConversation(api, 'l1', 'c1');
+  expect(load.messages[1]?.parts).toEqual([{ type: 'text', text: 'Done.' }, applied, proposed]);
+});
+
+it('D66: the budget reads research’s part of the month, and an API before it reads without one', async () => {
+  const api = fakeChatApi();
+  api.summary = { ...SUMMARY, budget: { month: '2026-11', usedUsd: 4.26, limitUsd: 20, exhausted: false, researchUsd: 3.55 } };
+  expect((await loadChat(api, 'l1')).budget).toEqual({ month: '2026-11', usedUsd: 4.26, limitUsd: 20, exhausted: false, researchUsd: 3.55 });
+  api.summary = { ...SUMMARY, budget: { month: '2026-11', usedUsd: 4.26, limitUsd: 20, exhausted: false } };
+  expect((await loadChat(api, 'l1')).budget).toEqual({ month: '2026-11', usedUsd: 4.26, limitUsd: 20, exhausted: false });
+});

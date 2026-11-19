@@ -1,3 +1,4 @@
+import { CORRECTION_CODES } from '../portal/research/copy';
 import type { ToolView } from './api';
 import { dayText, formatCount, rangeText } from './format';
 
@@ -446,6 +447,21 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
   propose_order_setup: {
     object: () => 'ordering setup suggestions',
     hidden: true,
+  },
+  // D66: correct_calendar_event (api/src/chat/tools/correct-calendar-event.ts). A call that changed the event, or proposed
+  // the change for one tap, shows as its correction card (ui/CorrectionCard.tsx, correctionOf); a call that changed
+  // nothing stays a row, its code in words. It reads nothing, so it is no piece of the Based on line.
+  correct_calendar_event: {
+    object: () => 'an event on the calendar',
+    status: (state, result) => {
+      if (state === 'running') return 'Changing';
+      if (state === 'error') return 'Couldn’t change';
+      return result?.applied === true ? 'Changed' : result?.code === 'needs_tap' ? 'Proposed a change to' : 'Didn’t change';
+    },
+    detail: (result) => wordsFor(CORRECTION_CODES, text(result, 'code')),
+    basedOn: () => null,
+    terms: { applied: 'Changed', code: 'Reason' },
+    values: { code: CORRECTION_CODES },
   },
   // D37: Anthropic's web search (api/src/chat/web-search.ts searchCard), not in the registry: the API runs it, and only
   // while it is turned on, so it adds nothing to what TownwiseAI reads. The card never shows the query (its input is

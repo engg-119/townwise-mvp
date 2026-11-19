@@ -23,6 +23,8 @@ const REGISTERED = [
   'get_owner_calendar',
   // Orders.
   'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule', 'propose_order_setup',
+  // D66: a correction of a researched event.
+  'correct_calendar_event',
 ];
 const CTX = { town: 'Hanover', hasTownProfile: true };
 
@@ -34,9 +36,12 @@ test('every registered tool has words for each state; propose_note, propose_data
   for (const name of REGISTERED) {
     expect(isKnownTool(name)).toBe(true);
     const lines = (['running', 'done', 'error'] as const).map((state) => toolLine(step(name, state), CTX));
-    // start_calibration starts a job rather than reading.
-    expect(lines.map((line) => line.status))
-      .toEqual(name === 'start_calibration' ? ['Starting', 'Asked to start', 'Couldn’t start'] : ['Reading', 'Read', 'Couldn’t read']);
+    // start_calibration starts a job rather than reading, and correct_calendar_event changes an event.
+    const own: Readonly<Record<string, string[]>> = {
+      start_calibration: ['Starting', 'Asked to start', 'Couldn’t start'],
+      correct_calendar_event: ['Changing', 'Didn’t change', 'Couldn’t change'],
+    };
+    expect(lines.map((line) => line.status)).toEqual(own[name] ?? ['Reading', 'Read', 'Couldn’t read']);
     for (const line of lines) expect(line.object).not.toBe('');
   }
   expect(REGISTERED.filter(isHiddenTool)).toEqual(['propose_note', 'show_visual', 'suggest_next', 'propose_data_item', 'propose_order_change', 'propose_order_rule', 'propose_order_setup']);
@@ -517,4 +522,26 @@ describe('links to the team’s own data (spec P25 build note, 2026-11-18)', () 
     expect(targetWords({ kind: 'item', ref: 'c_0123456789abcdef01234567' })).toEqual({ text: 'Open on Your data', label: 'Open this calendar on Your data' });
     expect(targetWords({ kind: 'data' })).toEqual({ text: 'Open Your data', label: 'Open Your data' });
   });
+});
+
+test('D66: correct_calendar_event that changed nothing is a row, its code in words, and no piece of the Based on line', () => {
+  const refused = step('correct_calendar_event', 'done', { eventId: 'l-0123456789abcdef01234567', change: 'edit' }, {
+    applied: false, code: 'not_researched', eventId: 'l-0123456789abcdef01234567', changeId: null, proposed: null,
+  });
+  expect(toolLine(refused, CTX)).toMatchObject({
+    sentence: 'Didn’t change an event on the calendar', detail: 'Only events town research found can be changed', sources: [],
+  });
+  expect(toolLine({ ...refused, result: { ...refused.result, code: 'too_many' } }, CTX).detail).toBe('At most 5 corrections in one reply');
+  // A code this client has no words for shows no detail rather than the code.
+  expect(toolLine({ ...refused, result: { ...refused.result, code: 'later_code' } }, CTX).detail).toBeNull();
+  expect(toolLine(step('correct_calendar_event', 'running'), CTX).sentence).toBe('Changing an event on the calendar');
+  // Its card says what it did; as a row (the stored part of a client before the card) it still reads in words.
+  expect(toolLine(step('correct_calendar_event', 'done', null, { applied: true, code: null }), CTX).status).toBe('Changed');
+  expect(toolLine(step('correct_calendar_event', 'done', null, { applied: false, code: 'needs_tap' }), CTX).status).toBe('Proposed a change to');
+  expect(basedOnLine([refused], CTX)).toBe('Based on this conversation only.');
+  expect(viewRows(refused.input, refused.result, 'correct_calendar_event')).toEqual([
+    { term: 'Changed', value: 'No' }, { term: 'Reason', value: 'Only events town research found can be changed' },
+  ]);
+  // It reads nothing, so What TownwiseAI reads names nothing new.
+  expect(readsLine(CTX)).not.toContain('calendar event');
 });
