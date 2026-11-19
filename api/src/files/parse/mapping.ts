@@ -19,7 +19,9 @@ export type KeptOutcome =
   | 'decimal_comma' | 'repeated_dates' | 'too_many_days' | 'too_complex' | 'bad_encoding' | 'not_a_workbook'
   | 'no_sales_columns' | 'too_large_to_read' | 'encrypted' | 'old_excel' | 'old_word' | 'numbers' | 'image' | 'type_not_read'
   | 'pdf_no_table' | 'pdf_scanned' | 'word_no_table'
-  | 'zip_too_big' | 'zip_bomb' | 'zip_damaged' | 'zip_empty' | 'nothing_usable';
+  | 'zip_too_big' | 'zip_bomb' | 'zip_damaged' | 'zip_empty' | 'nothing_usable'
+  /** D58: a text table whose header is a calendar CSV export's (calendar/csv-events.ts), for Your calendars, not sales. */
+  | 'calendar_export';
 
 export interface QuestionDraft {
   readonly kind: QuestionKind;

@@ -102,6 +102,15 @@ describe('entries', () => {
     expect(outcome.report.families).toEqual([expect.objectContaining({ label: ['Date', 'Guests', 'Net Sales'], used: true, dayCount: 2, why: 'sales' })]);
   });
 
+  it('keeps a calendar export entry calendar_export and reads the sales beside it (D58)', async () => {
+    const sales = `Date,Guests,Net Sales\n${day('2025-01-01', 10)}`;
+    const calendar = 'event_id,title,start_at,end_at\ne1,Spring reunion,2025-04-12T18:00:00-04:00,2025-04-12T22:00:00-04:00\n';
+    const outcome = await read(zipOf([{ name: 'sales.csv', data: sales }, { name: 'master.csv', data: calendar }]));
+    expect(outcome).toMatchObject({ kind: 'days', days: [{ date: '2025-01-01', guests: 10 }] });
+    if (outcome.kind !== 'days') return;
+    expect(outcome.entries.map((row) => [row.path, row.status, row.outcome])).toEqual([['sales.csv', 'used', null], ['master.csv', 'kept', 'calendar_export']]);
+  });
+
   it('opens a ZIP inside the ZIP, and never one inside that', async () => {
     const deepest = zipOf([{ name: 'c.csv', data: `Date,Guests\n${day('2025-03-01', 3)}` }]);
     const inner = zipOf([{ name: 'b.csv', data: `Date,Guests\n${day('2025-02-01', 2)}` }, { name: 'deeper.zip', data: deepest }]);

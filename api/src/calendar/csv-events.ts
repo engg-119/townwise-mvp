@@ -14,7 +14,7 @@
 // parseCalendarFile, the add's entry, picks the format: an .ics file (a BEGIN:VCALENDAR line) is parseIcs's, a CSV of
 // this profile is parseCalendarCsv's, and anything else is not_calendar. It lives here, not in ics.ts, so the two
 // files do not import each other.
-import { parseCsv } from '../files/parse/csv.ts';
+import { CsvReader, detectDelimiter, parseCsv, stripBom } from '../files/parse/csv.ts';
 import { isCalendarDate } from '../dates.ts';
 import {
   FILE_WINDOW, keepWindow, MAX_KEY_CHARS, parseIcs, spanOf, titleOf, townClock,
@@ -51,6 +51,12 @@ function columnsOf(record: readonly string[]): CsvColumns | null {
 /** Whether a header record is the calendar CSV profile's (D58): the file reader keeps such a file `calendar_export`. */
 export function isCalendarCsvHeader(record: readonly string[]): boolean {
   return columnsOf(record) !== null;
+}
+
+/** Whether a text's first record is the calendar CSV profile's header: Read with TownwiseAI skips such a file (D58). */
+export function isCalendarCsvText(text: string): boolean {
+  const clean = stripBom(text);
+  return isCalendarCsvHeader(new CsvReader(clean, detectDelimiter(clean)).next() ?? []);
 }
 
 /** YYYY-MM-DD, or that with a time ('T' or a space) to the minute, seconds and fractions allowed, then Z or ±HH:MM. */
