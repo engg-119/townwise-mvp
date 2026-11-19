@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 
 import { InTown } from '../../../src/portal/home/InTown';
 import { theme } from '../../../src/theme';
@@ -40,17 +40,18 @@ test('at phone width a row stacks its date over its words; wide, they sit side b
   expect(document.body.textContent).toBe(phone);
 });
 
-test('while it loads, the line keeps the block’s height, so the jobs under it don’t move when the groups arrive', async () => {
+test('while it loads, the groups’ skeleton stands in above the jobs, with one status line and no other words', async () => {
   const api = analyticsFake({});
   const json = api.json.bind(api);
   api.json = (path, schema, opts) => (path === PEOPLE_PATH ? new Promise(() => undefined) : json(path, schema, opts));
   const Wrapper = portalWrapper(api, meOf(ACCESS.member));
   render(<Wrapper><InTown today="2026-11-05" townId="hanover-nh" locationId={LOCATION_ID} /></Wrapper>);
-  const line = await screen.findByRole('status');
-  expect(line.textContent).toBe('Loading who’s in town…');
-  const box = line.parentElement;
-  if (box === null) throw new Error('no box');
-  expect(parseFloat(window.getComputedStyle(box).minHeight)).toBeGreaterThanOrEqual(240);
+  const skeleton = await screen.findByTestId('skeleton-in-town');
+  expect(within(skeleton).getByRole('status').textContent).toBe('Loading who’s in town…');
+  expect(skeleton.textContent).toBe('Loading who’s in town…');
+  // The county's jobs don't wait for the read, so they sit under the shapes already.
+  const jobs = screen.getByText('Food-service jobs in Grafton County');
+  expect(skeleton.compareDocumentPosition(jobs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 /**

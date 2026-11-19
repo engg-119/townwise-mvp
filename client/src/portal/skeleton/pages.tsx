@@ -385,7 +385,11 @@ const masked = (words: string): string => words.replace(/[\p{L}\p{N}]/gu, 's');
 const PLACEHOLDER_TOWN = { townId: 'town', name: 'Hanover', state: 'NH' };
 const PLACEHOLDER_WEEK = { from: '2026-11-18', to: '2026-11-24' };
 
-/** This week's forecast tile's six lines (Glance.tsx ForecastWeekTile): range, days, today, busiest, quietest, last year. */
+/**
+ * This week's forecast tile's six lines (Glance.tsx ForecastWeekTile): range, days, today, busiest, quietest, last year.
+ * The last-year line is drawn from 6 of its 7 days, with its "From 6 of its 7 days." ending, as the owner's location's
+ * is (a closed day last year); a complete week's line is that much shorter.
+ */
 const WEEK_TILE_WORDS: readonly string[] = [
   plainOf(weekRangePhrase({ low: 600, high: 900 })),
   weekForecastLabel({ ...PLACEHOLDER_WEEK, missing: [] }),
@@ -394,7 +398,7 @@ const WEEK_TILE_WORDS: readonly string[] = [
   plainOf(forecastDayPhrase('Busiest', { date: '2026-11-21', value: 220, booked: false })),
   plainOf(forecastDayPhrase('Quietest', { date: '2026-11-23', value: 60, booked: false })),
   plainOf(lastYearBesidePhrase({
-    ...PLACEHOLDER_WEEK, days: 7, total: 757, vsUsual: { change: -0.19, days: 7 }, busiest: null, quietest: null, busiestValue: null, quietestValue: null,
+    ...PLACEHOLDER_WEEK, days: 6, total: 757, vsUsual: { change: -0.19, days: 7 }, busiest: null, quietest: null, busiestValue: null, quietestValue: null,
   }, 'guests')),
 ];
 
@@ -492,6 +496,41 @@ function ChipSkeleton(): React.JSX.Element {
   return <View style={styles.chip}><SkeletonBlock height={24} width={140} /></View>;
 }
 
+/** One of Who's in town's runs (InTown.tsx Rows): its dates (mono, 112px) beside its words, over them on a phone. */
+function TownRunSkeleton(): React.JSX.Element {
+  const { phone } = useBreakpoint();
+  return (
+    <View style={phone ? styles.townRunPhone : styles.townRun}>
+      <View style={phone ? null : styles.townRunWhen}><SkeletonText type="mono" width={88} /></View>
+      <View style={styles.townRunWords}><SkeletonText width={120} /></View>
+    </View>
+  );
+}
+
+/**
+ * Who's in town's people (home/InTown.tsx People) for a college town with no headcount, as the owner's is: the Planned
+ * tag with its no-number line; This week (today's term as an h3 line, then a run); Later in the month (a run); the
+ * between-terms note over a source chip; and Your sales by term (two lines over its provenance). Home's skeleton and
+ * the block's own, while its read is out, both draw it.
+ */
+export function InTownPeopleShapes(): React.JSX.Element {
+  const group = (label: number, body: React.ReactNode): React.JSX.Element => (
+    <View style={styles.inTownGroup}><SkeletonText type="label" width={label} />{body}</View>
+  );
+  return (
+    <View style={styles.inTown}>
+      <View style={styles.townTagRow}>
+        <View style={styles.townTag}><SkeletonText type="label" width={56} /></View>
+        <View style={styles.townRunWords}><SkeletonText width="80%" /></View>
+      </View>
+      {group(72, <><SkeletonHeading width="80%" /><TownRunSkeleton /></>)}
+      {group(120, <TownRunSkeleton />)}
+      <View style={styles.townFoot}><SkeletonText type="mono" width="70%" /><ChipSkeleton /></View>
+      {group(130, <><SkeletonText lines={2} lastWidth="30%" /><SkeletonText type="mono" width="70%" /></>)}
+    </View>
+  );
+}
+
 /**
  * The selected day beside the month (home/DayDetail.tsx), today at first: its h3, then Forecast, Why, Reorder, On the
  * calendar, This day and Same weekday last year.
@@ -519,8 +558,8 @@ function DayDetailSkeleton(): React.JSX.Element {
  * three tiles (the week's forecast, last week's figure, the next event's title); This week (its calendar line, the
  * strip from 1024px or the day table below it, the footnotes and Show the numbers); This month's grid with the key,
  * Open the calendar and the month's check line, beside the selected day; Last week on a line of its own (as with last
- * week's forecast; on web the chart with its day labels, legend and scale); On the calendar beside Who's in town (whose
- * people load on their own in 240px, then the county's jobs); Past years beside Bar order (which checks the next order
+ * week's forecast; on web the chart with its day labels, legend and scale); On the calendar beside Who's in town (its
+ * people's groups, then the county's jobs); Past years beside Bar order (which checks the next order
  * on its own, with no title yet); and Your history (its year's heatmap on web) with its links. Fixed copy (block
  * titles, footnotes, the month's first line) is drawn in its own words, so it wraps where the page's does.
  */
@@ -633,8 +672,8 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
                 <SkeletonPanel>
                   <BlockHeadSkeleton eyebrow={160} words="Who’s in town" />
                   <View style={styles.inTown}>
-                    <View style={styles.inTownPeople}><SkeletonText width="60%" /></View>
-                    <View style={styles.inTownJobs}>
+                    <InTownPeopleShapes />
+                    <View style={styles.inTownGroup}>
                       <SkeletonText type="label" width={220} />
                       {/* The figure line is 24px (InTown.tsx `figureLine`), its figure 18px. */}
                       <View style={styles.jobsFigure}><View style={styles.jobsFigureBar} /></View>
@@ -985,9 +1024,15 @@ const styles = StyleSheet.create({
   monthItemDate: { width: 112 },
   monthItemBody: { flex: 1, minWidth: 0 },
   inTown: { gap: theme.space[5], minWidth: 0 },
-  // Who's in town's people load on their own, in a LoadingLine of 240px (InTown.tsx).
-  inTownPeople: { minHeight: 240 },
-  inTownJobs: { gap: theme.space[3], paddingTop: theme.space[4], borderTopWidth: 1, borderTopColor: c.border },
+  // InTown.tsx's group, row and tag (ui/feedback.tsx StatusTag: its label line, 3px padding and 1px border).
+  inTownGroup: { gap: theme.space[3], paddingTop: theme.space[4], borderTopWidth: 1, borderTopColor: c.border, minWidth: 0 },
+  townTagRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[3], rowGap: theme.space[2] },
+  townTag: { borderWidth: 1, borderColor: c.line, paddingVertical: 3, paddingHorizontal: 6 },
+  townRun: { flexDirection: 'row', alignItems: 'center', columnGap: theme.space[4], minWidth: 0 },
+  townRunPhone: { gap: 2, minWidth: 0 },
+  townRunWhen: { width: 112 },
+  townRunWords: { flexGrow: 1, flexShrink: 1, flexBasis: 120, minWidth: 0 },
+  townFoot: { alignItems: 'flex-start' },
   month: { gap: 3, width: '100%' },
   monthRow: { flexDirection: 'row', gap: 3 },
   monthHead: { flex: 1, alignItems: 'center' },
