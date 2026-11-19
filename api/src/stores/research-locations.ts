@@ -17,7 +17,7 @@ import type { OrgScope } from '../access/policy.ts';
 import type { LocationOrigin, ThreadId } from '../research/threads.ts';
 import type { EntityType, SourceRef } from '../research/verify.ts';
 import {
-  entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc, REPORTED_RUN_STATUSES,
+  clearEndedFound, entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc, REPORTED_RUN_STATUSES,
   runFields, runMoves, SCHEMA_OPTIONS, threadFields, threadMoves, toEntityBase, toEventBase, toRunBase, toThreadBase,
   type EntityDoc, type EntityRecordBase, type EventDoc, type EventInsertBase, type EventRecordBase, type EventUpdate,
   type RunDoc, type RunEnd, type RunRecordBase, type ThreadDoc, type ThreadEnd, type ThreadRecordBase,
@@ -166,12 +166,17 @@ export interface LocationResearchStore {
   insertThreads(scope: OrgScope, run: { id: string; locationId: string }, threads: readonly { thread: ThreadId; notBefore: Date }[], now: Date): Promise<number>;
   threadsOf(scope: OrgScope, runId: string): Promise<LocationThreadRecord[]>;
   markRunRunning(scope: OrgScope, id: string, now: Date): Promise<boolean>;
-  finishRun(scope: OrgScope, id: string, end: RunEnd): Promise<boolean>;
+  /** Ends a live run; with `mergeOwner`, only while that merge still holds it (research-shared.ts runMoves.finish). */
+  finishRun(scope: OrgScope, id: string, end: RunEnd, mergeOwner?: string): Promise<boolean>;
+  /** Renews `owner`'s merge lease; false once the run ended or another merge took it over (runMoves.holdMerge). */
+  holdMerge(scope: OrgScope, id: string, input: { owner: string; now: Date; leaseMs: number }): Promise<boolean>;
   clearFound(scope: OrgScope, runId: string): Promise<void>;
   reserveThread(scope: OrgScope, id: string, owner: string, input: { reservedMicroUsd: number; month: string }): Promise<boolean>;
   heartbeat(scope: OrgScope, id: string, owner: string, input: ThreadTallyWrite & { now: Date; leaseMs: number }): Promise<boolean>;
   finishThread(scope: OrgScope, id: string, owner: string, end: ThreadEnd): Promise<boolean>;
   requeueThread(scope: OrgScope, id: string, owner: string, input: ThreadTallyWrite & { notBefore: Date; code: string | null }): Promise<boolean>;
+  /** Puts a claimed thread back with its attempt not counted (a shutdown before any call, threadMoves.release). */
+  releaseThread(scope: OrgScope, id: string, owner: string): Promise<boolean>;
   reclaimThread(scope: OrgScope, id: string, input: { now: Date; next: { status: 'queued'; notBefore: Date } | { status: 'failed'; code: string } }): Promise<LocationThreadRecord | null>;
   /** The location's stored events, every stamp included (the reader skips rows of another place or town). */
   events(scope: OrgScope, locationId: string): Promise<LocationEventRecord[]>;
@@ -188,7 +193,7 @@ export interface LocationResearchStore {
   /**
    * A merge's retention (decision 8 step 6): the location's events that ended before `endedBefore` (a day), entities
    * last seen before `unseenBefore` that no event names, and ended runs and their threads created before
-   * `createdBefore`. Resolves the number deleted.
+   * `createdBefore`; and `found` cleared on the threads of any ended run (clearEndedFound). Resolves the number deleted.
    */
   removeOld(scope: OrgScope, locationId: string, input: { endedBefore: string; unseenBefore: Date; createdBefore: Date }): Promise<number>;
   /**
@@ -277,7 +282,8 @@ export function createLocationResearchStore(connection: Connection): LocationRes
       return (await Thread.find({ ...org(scope), runId: oid(runId) }).sort({ _id: 1 }).lean()).map(toThread);
     },
     markRunRunning: (scope, runId, now) => runMoves.markRunning(runs, org(scope), runId, now),
-    finishRun: (scope, runId, end) => runMoves.finish(runs, org(scope), runId, end),
+    finishRun: (scope, runId, end, mergeOwner) => runMoves.finish(runs, org(scope), runId, end, mergeOwner),
+    holdMerge: (scope, runId, input) => runMoves.holdMerge(runs, org(scope), runId, input),
     async clearFound(scope, runId) {
       await Thread.updateMany({ ...org(scope), runId: oid(runId) }, { $set: { found: null } });
     },
@@ -285,6 +291,7 @@ export function createLocationResearchStore(connection: Connection): LocationRes
     heartbeat: (scope, threadId, owner, input) => threadMoves.heartbeat(threads, org(scope), threadId, owner, input),
     finishThread: (scope, threadId, owner, end) => threadMoves.finish(threads, org(scope), threadId, owner, end),
     requeueThread: (scope, threadId, owner, input) => threadMoves.requeue(threads, org(scope), threadId, owner, input),
+    releaseThread: (scope, threadId, owner) => threadMoves.release(threads, org(scope), threadId, owner),
     async reclaimThread(scope, threadId, input) {
       const doc = await threadMoves.reclaim(threads, org(scope), threadId, input);
       return doc === null ? null : toThread(doc as LocationThreadDoc);
@@ -348,6 +355,7 @@ export function createLocationResearchStore(connection: Connection): LocationRes
         deleted += (await Thread.deleteMany({ ...where, runId: trusted({ $in: ids }) })).deletedCount;
         deleted += (await Run.deleteMany({ ...where, _id: trusted({ $in: ids }) })).deletedCount;
       }
+      await clearEndedFound(runs, threads, where);
       return deleted;
     },
     async endLive(scope, locationId, input) {

@@ -244,6 +244,31 @@ describe('the runner: threads', () => {
     expect(await stores.researchSpend.spent(MONTH, 'hanover-nh')).toEqual({ month: 0, town: 0 });
   });
 
+  it('a thread claimed while the replica shuts down goes back untouched, its attempt not counted and nothing reserved', async () => {
+    await townRun();
+    // Its second try, claimed during a rolling deploy.
+    await server.connection.collection('tw_town_research_threads').updateMany({}, { $set: { attempts: 1 } });
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let claiming = false;
+    const slow = { ...stores, researchTowns: { ...stores.researchTowns, claimThread: async (...args: Parameters<TownwiseStores['researchTowns']['claimThread']>) => {
+      claiming = true;
+      const claimed = await stores.researchTowns.claimThread(...args);
+      await gate;
+      return claimed;
+    } } };
+    const { model, calls } = answering();
+    const r = runner(model, { stores: slow });
+    r.nudge();
+    await until(() => Promise.resolve(claiming));
+    const closed = r.close();
+    release();
+    await closed;
+    expect(calls).toHaveLength(0);
+    expect(await threadDoc()).toMatchObject({ status: 'queued', attempts: 1, owner: null, reservedMicroUsd: 0 });
+    expect(await stores.researchSpend.spent(MONTH, 'hanover-nh')).toEqual({ month: 0, town: 0 });
+  });
+
   it('a lane whose lease the stale sweep took settles nothing itself: the sweep’s charge stands alone', async () => {
     await townRun();
     const { model } = answering({ gather: () => ({ kind: 'hang', before: [] }) });
@@ -294,16 +319,18 @@ describe('the runner: threads', () => {
 });
 
 describe('the runner: merges', () => {
-  it('a merge redone after a crash adds nothing twice', async () => {
+  it('a merge redone after a crash adds nothing twice, and still counts what it found and added', async () => {
     const created = await townRun();
-    const crashing = { ...stores, researchTowns: { ...stores.researchTowns, clearFound: () => Promise.reject(new Error('crash')) } };
+    const crashing = { ...stores, researchTowns: { ...stores.researchTowns, finishRun: () => Promise.reject(new Error('crash')) } };
     await run(runner(answering().model, { stores: crashing }));
     expect((await stores.researchTowns.findRun(created.id))?.status).toBe('merging');
     expect(await stores.researchTowns.events('hanover-nh')).toHaveLength(1);
     // The merge lease passes and the sweep takes it over.
     clock = new Date(NOW.getTime() + 2 * 60_000);
     await runner(answering().model, { lanes: 0 }).plan();
-    expect(await stores.researchTowns.findRun(created.id)).toMatchObject({ status: 'done', counts: { added: 0, updated: 0 } });
+    expect(await stores.researchTowns.findRun(created.id)).toMatchObject({ status: 'done', counts: { found: 1, added: 1, updated: 0 } });
+    // Found is cleared once the run ended.
+    expect((await stores.researchTowns.threadsOf(created.id)).map((thread) => thread.found)).toEqual([null]);
     const events = await stores.researchTowns.events('hanover-nh');
     expect(events).toHaveLength(1);
     expect(events[0]?.seenCount).toBe(1);
@@ -358,6 +385,51 @@ describe('the runner: merges', () => {
     await run(runner(answering().model, { stores: crashing }));
     expect(await stores.researchLocations.findRun(t.scope, created.id)).toMatchObject({ status: 'off', code: 'place_changed' });
     expect(await server.connection.collection('tw_location_events').countDocuments({})).toBe(0);
+  });
+
+  it('a place changed while the merge writes: the rows of the old place go and the run ends `off`', async () => {
+    const t = await tenant();
+    const [locationId = ''] = t.locationIds;
+    const created = await locationRun(t, locationId);
+    // The change lands mid-merge, after the merge's first check: its own cleanup ran before this insert.
+    const moving = { ...stores, researchLocations: { ...stores.researchLocations, insertEvent: async (...args: Parameters<TownwiseStores['researchLocations']['insertEvent']>) => {
+      await server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(locationId) }, { $set: { placeId: 'place-elsewhere' } });
+      return stores.researchLocations.insertEvent(...args);
+    } } };
+    await run(runner(answering().model, { stores: moving }));
+    expect(await stores.researchLocations.findRun(t.scope, created.id)).toMatchObject({ status: 'off', code: 'place_changed' });
+    expect(await server.connection.collection('tw_location_events').countDocuments({})).toBe(0);
+    expect(await server.connection.collection('tw_location_entities').countDocuments({})).toBe(0);
+  });
+
+  it('a location deleted before its merge leaves no run or thread behind (the late-writer rule)', async () => {
+    const t = await tenant();
+    const [locationId = ''] = t.locationIds;
+    const created = await locationRun(t, locationId);
+    // The thread ended, then the location went with both research sweeps done before a tick's run and thread landed.
+    await server.connection.collection('tw_location_research_threads').updateMany({}, { $set: { status: 'empty', code: 'no_sources', finishedAt: clock } });
+    await server.connection.collection('tw_location_research_runs').updateOne({ _id: new Types.ObjectId(created.id) }, { $set: { status: 'running' } });
+    await server.connection.collection('tw_locations').deleteOne({ _id: new Types.ObjectId(locationId) });
+    await runner(answering().model, { lanes: 0 }).plan();
+    for (const name of ['tw_location_research_runs', 'tw_location_research_threads']) {
+      expect(await server.connection.collection(name).countDocuments({})).toBe(0);
+    }
+  });
+
+  it('a merge whose lease another merge took over stops writing and ends nothing', async () => {
+    const created = await townRun();
+    const takenOver = { ...stores, researchTowns: { ...stores.researchTowns, insertEvent: async (...args: Parameters<TownwiseStores['researchTowns']['insertEvent']>) => {
+      const inserted = await stores.researchTowns.insertEvent(...args);
+      // It stalled past its lease, and the sweep handed the merge to another owner.
+      await server.connection.collection('tw_town_research_runs').updateOne({ _id: new Types.ObjectId(created.id) }, { $set: { mergeOwner: 'other-replica' } });
+      return inserted;
+    } } };
+    await run(runner(answering().model, { stores: takenOver }));
+    expect(await stores.researchTowns.findRun(created.id)).toMatchObject({ status: 'merging' });
+    expect(lines('townwise.research_merge_lost')).toHaveLength(1);
+    expect(lines('townwise.research_run')).toHaveLength(0);
+    // Found is kept for the merge that holds the run now.
+    expect((await stores.researchTowns.threadsOf(created.id)).every((thread) => thread.found !== null)).toBe(true);
   });
 
   it('merges a location run into the location’s rows, stamped with its place and town', async () => {

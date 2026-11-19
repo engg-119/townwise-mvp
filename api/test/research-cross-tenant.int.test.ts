@@ -189,6 +189,20 @@ describe('the merge claim', () => {
     expect((await stores.researchLocations.findRun(a.scope, open.id))?.status).toBe('running');
   });
 
+  it('the sweep is never starved: it skips organizations research leaves alone and pages past runs not ready', async () => {
+    // 55 older runs that cannot merge yet (their threads still queued), one of a suspended organization and one of an
+    // organization with research off that are ready, then a ready run of an active one.
+    for (let i = 0; i < 55; i += 1) await runningRun(await tenant());
+    const suspended = await tenant({ status: 'suspended' });
+    const off = await tenant({ researchOn: false });
+    for (const t of [suspended, off]) await endThreads(t, (await runningRun(t)).id, 2);
+    const ready = await tenant();
+    const run = await runningRun(ready);
+    await endThreads(ready, run.id, 2);
+    expect(await merge('sweep')).toEqual({ runId: run.id, orgId: ready.orgId, locationId: ready.locationId });
+    expect(await merge('sweep-2')).toBeNull();
+  });
+
   it('claims no run while a thread it planned has no row yet (a plan that crashed between its thread rows)', async () => {
     const t = await tenant();
     const run = await stores.researchLocations.insertRun(t.scope, {

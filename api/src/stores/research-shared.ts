@@ -447,6 +447,17 @@ export const threadMoves = {
     return result.modifiedCount === 1;
   },
   /**
+   * Puts `owner`'s running thread back in the queue as it was before the claim, the attempt not counted: a lane that
+   * claimed it while its replica was shutting down, before any call or reservation.
+   */
+  async release(model: Model<ThreadDoc>, base: Filter, id: string, owner: string): Promise<boolean> {
+    const result = await model.updateOne(
+      { ...base, _id: new Types.ObjectId(id), status: 'running', owner },
+      { $set: { status: 'queued', owner: null, leaseUntil: null }, $inc: { attempts: -1 } },
+    );
+    return result.modifiedCount === 1;
+  },
+  /**
    * Takes back a running thread whose lease passed (a dead replica's), queued again or ended, and answers it as it was,
    * so the caller settles its last written tally (decision 6). Null when it was not stale by then. The row gives up its
    * reservation in the same write, so the caller is the only one to settle it: a lane still alive past its lease sees
@@ -478,10 +489,14 @@ export const runMoves = {
     const result = await model.updateOne({ ...base, _id: new Types.ObjectId(id), status: 'queued' }, { $set: { status: 'running', startedAt: now } });
     return result.modifiedCount === 1;
   },
-  /** Ends a live run and frees its subject's slot. False when it had already ended. */
-  async finish(model: Model<RunDoc>, base: Filter, id: string, end: RunEnd): Promise<boolean> {
+  /**
+   * Ends a live run and frees its subject's slot. False when it had already ended. With `mergeOwner`, only while that
+   * merge still holds the run (`merging` under it), so a merge whose lease another took over ends nothing.
+   */
+  async finish(model: Model<RunDoc>, base: Filter, id: string, end: RunEnd, mergeOwner?: string): Promise<boolean> {
+    const live = mergeOwner === undefined ? { status: trusted({ $in: [...LIVE_RUN_STATUSES] }) } : { status: 'merging' as const, mergeOwner };
     const result = await model.updateOne(
-      { ...base, _id: new Types.ObjectId(id), status: trusted({ $in: [...LIVE_RUN_STATUSES] }) },
+      { ...base, _id: new Types.ObjectId(id), ...live },
       {
         $set: {
           status: end.status, code: end.code, counts: { ...end.counts }, costMicroUsd: end.costMicroUsd, finishedAt: end.now,
@@ -492,7 +507,30 @@ export const runMoves = {
     );
     return result.modifiedCount === 1;
   },
+  /**
+   * Renews `owner`'s merge lease while the run is still `merging` under it. A merge asks before each write and stops at
+   * a miss: the run was ended (a place change, a deletion) or its lease passed and another merge took it over, so two
+   * merges of one run never write side by side.
+   */
+  async holdMerge(model: Model<RunDoc>, base: Filter, id: string, input: { owner: string; now: Date; leaseMs: number }): Promise<boolean> {
+    const result = await model.updateOne(
+      { ...base, _id: new Types.ObjectId(id), status: 'merging', mergeOwner: input.owner },
+      { $set: { mergeUntil: new Date(input.now.getTime() + input.leaseMs) } },
+    );
+    return result.matchedCount === 1;
+  },
 };
+
+/**
+ * A merge's retention step: clears `found` on the subject's threads whose run has ended. A merge clears its own run's
+ * after ending it, so a crash between the two leaves found words only until the subject's next merge.
+ */
+export async function clearEndedFound(runModel: Model<RunDoc>, threadModel: Model<ThreadDoc>, base: Filter): Promise<void> {
+  const live = await runModel.find({ ...base, liveSubject: trusted({ $exists: true }) }, { _id: 1 }).lean();
+  await threadModel.updateMany(
+    { ...base, found: trusted({ $ne: null }), runId: trusted({ $nin: live.map((doc) => doc._id) }) }, { $set: { found: null } },
+  );
+}
 
 /** Ids as ObjectIds, for an `$in`. */
 export function objectIds(ids: readonly string[]): Id[] {

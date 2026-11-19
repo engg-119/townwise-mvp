@@ -91,5 +91,5 @@ The Calendar SHALL show researched events under a "Found by research" filter, on
 - **THEN** the Town tab and the activity say how many topics did not finish
 
 #### Scenario: Waiting to retry
-- **WHEN** a location's thread waits 60 minutes to retry
+- **WHEN** a location's thread waits 10 minutes to retry
 - **THEN** the dashboard still says "Researching", the Town tab says "Waiting to try again", and Research now answers 409 `research_running`

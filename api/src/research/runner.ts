@@ -7,17 +7,22 @@
 // compare-and-set (a town's against the system month and its town's slice; a location's against its organization's
 // TownwiseAI month, held for an automatic run to its share and $5 of headroom), runs it (call.ts runThread) under a
 // 90-second lease whose 30-second heartbeat writes the spend tally, settles the reservation to what it cost, and ends
-// the thread recorded, empty, budget or failed (a retryable failure waits 10, then 60 minutes; a thread is tried at most
-// twice). A missed heartbeat (the thread was ended by a place change, a deletion or a reclaim) aborts the call: the lane
-// settles (unless a reclaim already did) and writes nothing else. A graceful shutdown aborts the calls, settles and puts the threads back with the
-// attempt counted. A dead replica's thread is reclaimed by the stale sweep, which charges its last written tally plus 30
-// seconds of streaming at the ceiling rate and refunds the rest.
+// the thread recorded, empty, budget or failed (a retryable failure waits 10 minutes; a thread is tried at most twice).
+// A missed heartbeat (the thread was ended by a place change, a deletion or a reclaim) aborts the call: the lane
+// settles (unless a reclaim already did) and writes nothing else. A graceful shutdown aborts the calls, settles and puts
+// the threads back with the attempt counted; a thread claimed while shutting down, before its call, goes back with the
+// attempt not counted. A dead replica's thread is reclaimed by the stale sweep, which charges its last written tally
+// plus 30 seconds of streaming at the ceiling rate and refunds the rest.
 //
 // The lane that ends a run's last thread claims its merge (the fast path); the planner's sweep (plan.ts) claims any run
-// that lane missed. The merge (merge.ts planMerge, applied here) is the only writer of researched events and entities:
-// a location's first checks that the location still has the run's place and town and that its organization is active
-// (else the run ends `off` and nothing is written), and after its writes checks the location again and removes its rows
-// itself if it was deleted meanwhile (removeLocation sweeps them too). Then retention, `found` cleared, the run ended.
+// that lane missed. The merge (merge.ts planMerge, applied here) is the only writer of researched events and entities.
+// It renews its merge lease before each write and stops at a miss (the run ended, or its lease passed and another merge
+// took it over), so two merges of a run never write side by side. A location's first checks that the location still
+// has the run's place and town and that its organization is active (else the run ends `off` and nothing is written; a
+// location deleted meanwhile has its research rows removed, the late-writer rule), and after its writes checks the
+// location again: deleted meanwhile, its rows go; its place or town changed meanwhile, the rows of any other place or
+// town go, as the change's own cleanup does. Then retention, the run ended with its counts, and only then `found`
+// cleared, so a merge replayed after a crash still counts what it found.
 //
 // It reads the research stores for the prompts' base values only, never a revision (test/isolation.test.ts): a member's
 // edit never reaches Anthropic. Google is asked (the restaurant's profile, its competitors: research/places.ts) only
@@ -51,7 +56,7 @@ import type { Town, TownId } from '../towns.ts';
 import { GATHER_MAX_TOKENS, reserveMicroUsd, threadLimits } from './budget.ts';
 import { createThreadTally, RESEARCH_REQUEST_MS, runThread, type FetchSwitch, type ThreadOutcome } from './call.ts';
 import { competitorInputs, placesByN, type Competitor } from './competitors.ts';
-import { planMerge, type MergeInput, type StoredEvent, type ThreadFound } from './merge.ts';
+import { planMerge, type MergeInput, type MergePlan, type StoredEvent, type ThreadFound } from './merge.ts';
 import { isTownId, MERGE_LEASE_MS, planTick, townOf, townStamp, type ClaimedMerge, type PlanContext, type PlanCounts } from './plan.ts';
 import {
   gatherPrompt, knownRows, promptTown, restaurantFor, seedsFrom, type GatherInput, type RestaurantProfile, type StoredBaseRow,
@@ -64,8 +69,8 @@ const DAY_MS = 86_400_000;
 export const RESEARCH_LANES = 2;
 export const PER_ORG_LIVE = 1;
 export const RESEARCH_MAX_ATTEMPTS = 2;
-/** The waits after a first and a second failed attempt. */
-export const RESEARCH_RETRY_WAITS_MS: readonly number[] = [10 * MINUTE, 60 * MINUTE];
+/** The wait after a failed attempt that may be retried; with at most 2 attempts only the first attempt is ever retried. */
+export const RESEARCH_RETRY_WAITS_MS: readonly number[] = [10 * MINUTE];
 export const RESEARCH_LEASE_MS = 90_000;
 export const RESEARCH_HEARTBEAT_MS = 30_000;
 /** What an automatic location thread leaves of the TownwiseAI month: $5. */
@@ -147,6 +152,13 @@ interface Job {
   heartbeat(input: ThreadTallyWrite & { now: Date; leaseMs: number }): Promise<boolean>;
   finish(end: ThreadEnd): Promise<boolean>;
   requeue(input: ThreadTallyWrite & { notBefore: Date; code: string | null }): Promise<boolean>;
+  /** Back in the queue with the attempt not counted. */
+  release(): Promise<boolean>;
+}
+
+/** A merge whose lease another took over, or whose run ended meanwhile: it stops writing. */
+class MergeLost extends Error {
+  override name = 'MergeLost';
 }
 
 const NO_DROPS: StoredDrops = {
@@ -166,6 +178,8 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
   const waits = deps.retryWaitsMs ?? RESEARCH_RETRY_WAITS_MS;
   const fetchSwitch: FetchSwitch = { on: config.researchWebFetch };
   const closing = new AbortController();
+  /** Read through a call, so a check after an await is not narrowed by one before it. */
+  const shuttingDown = (): boolean => closing.signal.aborted;
   const planContext: PlanContext = { connection, stores, logger, now, config };
   let stopped = false;
   let preferTown = true;
@@ -189,6 +203,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       heartbeat: (input) => store.heartbeat(thread.id, owner, input),
       finish: (end) => store.finishThread(thread.id, owner, end),
       requeue: (input) => store.requeueThread(thread.id, owner, input),
+      release: () => store.releaseThread(thread.id, owner),
     };
   }
 
@@ -204,6 +219,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       heartbeat: (input) => store.heartbeat(scope, thread.id, owner, input),
       finish: (end) => store.finishThread(scope, thread.id, owner, end),
       requeue: (input) => store.requeueThread(scope, thread.id, owner, input),
+      release: () => store.releaseThread(scope, thread.id, owner),
     };
   }
 
@@ -367,6 +383,11 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
   /** Runs one claimed thread to its end, a requeue, or (lease lost) nothing; true when it ended the thread. */
   async function runJob(job: Job): Promise<boolean> {
     const started = now().getTime();
+    // Claimed while this replica shuts down: back in the queue untouched, so a deploy never uses up an attempt.
+    if (shuttingDown()) {
+      await job.release();
+      return false;
+    }
     const run = await job.findRun();
     if (run === null || !['queued', 'running'].includes(run.status)) return endWithout(job, 'failed', 'run_ended', started);
     await job.markRunning(now());
@@ -374,6 +395,11 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     const prepared = await prepare(job, run);
     if (prepared.kind === 'end') return endWithout(job, prepared.status, prepared.code, started);
 
+    // Shutting down while it prepared: nothing reserved or called yet, so back untouched too.
+    if (shuttingDown()) {
+      await job.release();
+      return false;
+    }
     const prompt = gatherPrompt(prepared.input);
     const reserved = reserveMicroUsd(threadLimits(prepared.input.thread, fetchSwitch.on, prompt));
     const inMonth = month(now());
@@ -509,9 +535,22 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       : []));
   }
 
-  function countsOf(threads: readonly ThreadRecordBase[], plan: { found: number; inserts: unknown[]; updates: unknown[]; drops: Record<string, number> }): RunCounts {
+  /**
+   * The run's counts. A merge replayed after a crash before its run ended finds its own earlier writes stored (rows whose
+   * `lastRunId` is this run), which the plan leaves out, so they are counted here: added when this run inserted them,
+   * else updated.
+   */
+  function countsOf(
+    runId: string, threads: readonly ThreadRecordBase[], stored: readonly EventRecordBase[],
+    plan: MergePlan,
+  ): RunCounts {
     const verifyDrops = threads.reduce((total, thread) => total + (thread.drops === null ? 0 : sum(thread.drops.events)), 0);
-    return { found: plan.found, added: plan.inserts.length, updated: plan.updates.length, dropped: sum(plan.drops) + verifyDrops };
+    const planned = new Set(plan.updates.map((update) => update.id));
+    const earlier = stored.filter((event) => event.lastRunId === runId && !planned.has(event.id));
+    const added = earlier.filter((event) => event.firstRunId === runId).length;
+    return {
+      found: plan.found, added: plan.inserts.length + added, updated: planned.size + earlier.length - added, dropped: sum({ ...plan.drops }) + verifyDrops,
+    };
   }
 
   const retention = (at: Date) => ({
@@ -519,10 +558,18 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     createdBefore: new Date(at.getTime() - RETENTION_DAYS * DAY_MS),
   });
 
-  async function mergeTown(runId: string): Promise<void> {
+  /** Renews the merge lease before a write; throws MergeLost once the run ended or another merge took it over. */
+  function holder(hold: (input: { owner: string; now: Date; leaseMs: number }) => Promise<boolean>, owner: string): () => Promise<void> {
+    return async () => {
+      if (!await hold({ owner, now: now(), leaseMs: MERGE_LEASE_MS })) throw new MergeLost();
+    };
+  }
+
+  async function mergeTown(runId: string, owner: string): Promise<void> {
     const store = stores.researchTowns;
     const run = await store.findRun(runId);
     if (run?.status !== 'merging') return;
+    const held = holder((input) => store.holdMerge(runId, input), owner);
     const townKey = run.townKey;
     const at = now();
     const threads = await store.threadsOf(runId);
@@ -536,42 +583,56 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     const plan = planMerge(input);
     const ids = new Map<string, string>();
     for (const entity of plan.entities) {
+      await held();
       ids.set(`${entity.key.type}|${entity.key.nameKey}`, await store.upsertEntity(townKey, { type: entity.key.type, name: entity.name, nameKey: entity.key.nameKey, sources: entity.sources, now: at }));
     }
     const idOf = (key: { type: string; nameKey: string } | null): string | null => (key === null ? null : ids.get(`${key.type}|${key.nameKey}`) ?? null);
     for (const insert of plan.inserts) {
+      await held();
       await store.insertEvent(townKey, {
         title: insert.title, titleKey: insert.titleKey, kind: insert.kind, category: insert.category, start: insert.start, end: insert.end,
         weekdays: insert.weekdays, startTime: insert.startTime, status: insert.status, venueId: idOf(insert.venue), hostId: idOf(insert.host),
         confidence: insert.confidence, sources: insert.sources, firstRunId: runId, lastRunId: runId, firstSeenAt: at, lastSeenAt: at, seenCount: 1,
       });
     }
-    for (const update of plan.updates) await store.updateEvent(townKey, update.id, { ...update, lastSeenAt: at });
+    for (const update of plan.updates) {
+      await held();
+      await store.updateEvent(townKey, update.id, { ...update, lastSeenAt: at });
+    }
+    await held();
     await store.removeOld(townKey, retention(at));
-    await store.clearFound(runId);
-    const counts = countsOf(threads, { ...plan, inserts: [...plan.inserts], updates: [...plan.updates], drops: { ...plan.drops } });
+    const counts = countsOf(runId, threads, events, plan);
     const status = runStatus(threads);
     const cost = threads.reduce((total, thread) => total + thread.spentMicroUsd, 0);
-    if (await store.finishRun(runId, { status, code: null, counts, costMicroUsd: cost, now: now() })) {
+    // Ended before `found` is cleared, so a replay after a crash in between never finds nothing and ends with zero counts.
+    if (await store.finishRun(runId, { status, code: null, counts, costMicroUsd: cost, now: now() }, owner)) {
+      await store.clearFound(runId);
       logger.info({ townKey, runId, subject: 'town', status, added: counts.added, updated: counts.updated }, 'townwise.research_run');
     }
   }
 
-  async function mergeLocation(scope: OrgScope, locationId: string, runId: string): Promise<void> {
+  async function mergeLocation(scope: OrgScope, locationId: string, runId: string, owner: string): Promise<void> {
     const store = stores.researchLocations;
     const run = await store.findRun(scope, runId);
     if (run?.status !== 'merging') return;
+    const held = holder((input) => store.holdMerge(scope, runId, input), owner);
     const at = now();
     const ids = { orgId: scope.orgId, locationId, runId };
     const threads = await store.threadsOf(scope, runId);
     const cost = threads.reduce((total, thread) => total + thread.spentMicroUsd, 0);
     const before = await locationState(scope, locationId, run);
     if (before.kind === 'gone') {
+      if (before.code === 'location_gone') {
+        // The late-writer rule: a planner tick or a lane can leave a run and threads behind a location deleted meanwhile.
+        await store.removeForLocation(scope, locationId);
+        logger.info({ ...ids, subject: 'location', status: 'off', code: before.code, added: 0, updated: 0 }, 'townwise.research_run');
+        return;
+      }
       const counts = { found: 0, added: 0, updated: 0, dropped: 0 };
-      if (await store.finishRun(scope, runId, { status: 'off', code: before.code, counts, costMicroUsd: cost, now: at })) {
+      if (await store.finishRun(scope, runId, { status: 'off', code: before.code, counts, costMicroUsd: cost, now: at }, owner)) {
+        await store.clearFound(scope, runId);
         logger.info({ ...ids, subject: 'location', status: 'off', code: before.code, added: 0, updated: 0 }, 'townwise.research_run');
       }
-      await store.clearFound(scope, runId);
       return;
     }
     const { location } = before;
@@ -594,6 +655,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     const entityIds = new Map<string, string>();
     for (const entity of plan.entities) {
       const key = `${entity.key.type}|${entity.key.nameKey}`;
+      await held();
       entityIds.set(key, await store.upsertEntity(scope, locationId, {
         ...stamp, type: entity.key.type, name: entity.name, nameKey: entity.key.nameKey, townEntityId: townEntityIds.get(key) ?? null,
         sources: entity.sources, now: at,
@@ -601,6 +663,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     }
     const idOf = (key: { type: string; nameKey: string } | null): string | null => (key === null ? null : entityIds.get(`${key.type}|${key.nameKey}`) ?? null);
     for (const insert of plan.inserts) {
+      await held();
       await store.insertEvent(scope, locationId, {
         ...stamp, title: insert.title, titleKey: insert.titleKey, kind: insert.kind, category: insert.category, start: insert.start, end: insert.end,
         weekdays: insert.weekdays, startTime: insert.startTime, status: insert.status, venueId: idOf(insert.venue), hostId: idOf(insert.host),
@@ -608,25 +671,50 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
         origin: insert.origin ?? 'neighborhood', competitorEntityId: idOf(insert.competitorEntity), competitorPlaceId: insert.competitorPlaceId,
       });
     }
-    for (const update of plan.updates) await store.updateEvent(scope, locationId, update.id, { ...update, lastSeenAt: at });
-    // The late-writer rule: deleted while this merge wrote, its rows go now (removeLocation sweeps them again too).
-    if (await stores.locations.find(scope, locationId) === null) {
+    for (const update of plan.updates) {
+      await held();
+      await store.updateEvent(scope, locationId, update.id, { ...update, lastSeenAt: at });
+    }
+    // The location again, after the writes: a change landing before this read is seen here, and one landing after it
+    // runs its own cleanup after these writes, so no row of an old place or a deleted location outlives both.
+    const after = await stores.locations.find(scope, locationId);
+    if (after === null) {
+      // The late-writer rule: deleted while this merge wrote, its rows go now (removeLocation sweeps them again too).
       await store.removeForLocation(scope, locationId);
       logger.info({ ...ids, subject: 'location', status: 'off', code: 'location_gone', added: 0, updated: 0 }, 'townwise.research_run');
       return;
     }
+    const current = { placeId: after.placeId, town: townStamp(after.town) };
+    if (current.placeId !== stamp.placeId || current.town !== stamp.town) {
+      // Its place or town changed while this merge wrote: what it wrote under the old one goes, as the change's own
+      // cleanup (handlers/research.ts researchAfterWrite) does, and the run ends `off` unless that change ended it.
+      await store.removeOtherStamps(scope, locationId, current);
+      const counts = { found: 0, added: 0, updated: 0, dropped: 0 };
+      if (await store.finishRun(scope, runId, { status: 'off', code: 'place_changed', counts, costMicroUsd: cost, now: now() }, owner)) {
+        await store.clearFound(scope, runId);
+      }
+      logger.info({ ...ids, subject: 'location', status: 'off', code: 'place_changed', added: 0, updated: 0 }, 'townwise.research_run');
+      return;
+    }
+    await held();
     await store.removeOld(scope, locationId, retention(at));
-    await store.clearFound(scope, runId);
-    const counts = countsOf(threads, { ...plan, inserts: [...plan.inserts], updates: [...plan.updates], drops: { ...plan.drops } });
+    const counts = countsOf(runId, threads, mine, plan);
     const status = runStatus(threads);
-    if (await store.finishRun(scope, runId, { status, code: null, counts, costMicroUsd: cost, now: now() })) {
+    // Ended before `found` is cleared, so a replay after a crash in between never finds nothing and ends with zero counts.
+    if (await store.finishRun(scope, runId, { status, code: null, counts, costMicroUsd: cost, now: now() }, owner)) {
+      await store.clearFound(scope, runId);
       logger.info({ ...ids, subject: 'location', status, added: counts.added, updated: counts.updated }, 'townwise.research_run');
     }
   }
 
   async function merge(claimed: ClaimedMerge): Promise<void> {
-    if (claimed.kind === 'town') await mergeTown(claimed.runId);
-    else await mergeLocation(claimed.scope, claimed.locationId, claimed.runId);
+    try {
+      if (claimed.kind === 'town') await mergeTown(claimed.runId, claimed.owner);
+      else await mergeLocation(claimed.scope, claimed.locationId, claimed.runId, claimed.owner);
+    } catch (err) {
+      if (!(err instanceof MergeLost)) throw err;
+      logger.info({ runId: claimed.runId, subject: claimed.kind }, 'townwise.research_merge_lost');
+    }
   }
 
   // ---- The stale sweep -----------------------------------------------------------------------------------------------

@@ -176,6 +176,23 @@ describe('the tick', () => {
     expect(await count('tw_location_research_runs')).toBe(1);
   });
 
+  it('an early run for a new place ends a live run a tick stamped with the old place, and runs now (not after 6 days)', async () => {
+    const t = await tenant();
+    const location = await stores.locations.find(t.scope, t.locationId);
+    if (location === null) throw new Error('no location');
+    // A tick read the location before its place changed, and inserted its weekly run after the change's endLive.
+    const stale = await stores.researchLocations.insertRun(t.scope, {
+      locationId: t.locationId, key: 'w:2026-11-16', trigger: 'weekly', placeId: 'place-before', town: townStamp(location.town), threads: ['neighborhood'], now: clock,
+    });
+    expect(await queueEarlyRun(context(), t.scope, location)).toBe('inserted');
+    expect(await stores.researchLocations.findRun(t.scope, stale?.id ?? '')).toMatchObject({ status: 'off', code: 'place_changed' });
+    const live = await stores.researchLocations.liveRun(t.scope, t.locationId);
+    expect(live).toMatchObject({ trigger: 'early', placeId: location.placeId });
+    // A live run of the same place is left alone.
+    expect(await queueEarlyRun(context(), t.scope, location)).toBe('running');
+    expect((await stores.researchLocations.liveRun(t.scope, t.locationId))?.id).toBe(live?.id);
+  });
+
   it('queues no early run for an organization with research off', async () => {
     const t = await tenant({ researchOn: false });
     const location = await stores.locations.find(t.scope, t.locationId);

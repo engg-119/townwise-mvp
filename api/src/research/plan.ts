@@ -240,12 +240,25 @@ export async function planLocationRun(ctx: PlanContext, scope: OrgScope, locatio
  * active organization with research on, with its town's week's run asked for now. The caller (handlers/locations.ts)
  * checks the deploy switch and that the caller is not staff with the organization open as admin, and never fails its
  * request on a throw from here.
+ *
+ * A planner tick that read the location before its place changed can insert a weekly run stamped with the old place
+ * after the change's endLive found none, and so hold the one live slot. When the insert meets a live run of another
+ * place or town, that run is ended `off` (`place_changed`) and the insert tried once more, so the new place is
+ * researched now rather than after the old run's 6 days.
  */
 export async function queueEarlyRun(ctx: PlanContext, scope: OrgScope, location: LocationRecord): Promise<PlanOutcome> {
   if (ctx.config.researchOrgMonthlyUsd <= 0) return 'off';
   const org = await ctx.stores.orgs.findById(scope.orgId);
   if (org?.status !== 'active' || !org.research.on) return 'off';
-  const inserted = await insertLocationRun(ctx, scope, location, { key: `s:${new Types.ObjectId().toHexString()}`, trigger: 'early' }) !== null;
+  const early = () => insertLocationRun(ctx, scope, location, { key: `s:${new Types.ObjectId().toHexString()}`, trigger: 'early' });
+  let inserted = await early() !== null;
+  if (!inserted) {
+    const live = await ctx.stores.researchLocations.liveRun(scope, location.id);
+    if (live !== null && (live.placeId !== location.placeId || live.town !== townStamp(location.town))) {
+      await ctx.stores.researchLocations.endLive(scope, location.id, { code: 'place_changed', now: ctx.now() });
+      inserted = await early() !== null;
+    }
+  }
   const { townId } = location.town;
   if (townId !== null && isTownId(townId)) await planTownRun(ctx, townId);
   return inserted ? 'inserted' : 'running';

@@ -14,7 +14,7 @@ import type { ThreadId } from '../research/threads.ts';
 import type { EntityType, SourceRef } from '../research/verify.ts';
 import type { TownId } from '../towns.ts';
 import {
-  allThreadsEnded, entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc,
+  allThreadsEnded, clearEndedFound, entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc,
   REPORTED_RUN_STATUSES, runFields, runMoves, SCHEMA_OPTIONS, threadFields, threadMoves, toEntityBase, toEventBase, toRunBase,
   toThreadBase, type EntityDoc, type EntityRecordBase, type EventDoc, type EventInsertBase, type EventRecordBase,
   type EventUpdate, type RunDoc, type RunEnd, type RunRecordBase, type ThreadDoc, type ThreadEnd,
@@ -131,8 +131,10 @@ export interface TownResearchStore {
    * oldest first, at most 50. claimMerge decides which of them are ready.
    */
   mergeableRuns(now: Date): Promise<string[]>;
-  /** Ends a live run and frees the town's slot. */
-  finishRun(id: string, end: RunEnd): Promise<boolean>;
+  /** Ends a live run and frees the town's slot; with `mergeOwner`, only while that merge still holds it. */
+  finishRun(id: string, end: RunEnd, mergeOwner?: string): Promise<boolean>;
+  /** Renews `owner`'s merge lease; false once the run ended or another merge took it over (runMoves.holdMerge). */
+  holdMerge(id: string, input: { owner: string; now: Date; leaseMs: number }): Promise<boolean>;
   /** Clears `found` on the run's threads once merged (counts and drops kept). */
   clearFound(runId: string): Promise<void>;
   /** Claims the queued town thread due first, counting the attempt. */
@@ -141,6 +143,8 @@ export interface TownResearchStore {
   heartbeat(id: string, owner: string, input: ThreadTallyWrite & { now: Date; leaseMs: number }): Promise<boolean>;
   finishThread(id: string, owner: string, end: ThreadEnd): Promise<boolean>;
   requeueThread(id: string, owner: string, input: ThreadTallyWrite & { notBefore: Date; code: string | null }): Promise<boolean>;
+  /** Puts a claimed thread back with its attempt not counted (a shutdown before any call, threadMoves.release). */
+  releaseThread(id: string, owner: string): Promise<boolean>;
   /** Running threads whose lease passed by `now` (a dead replica's), ids only. */
   staleThreads(now: Date): Promise<string[]>;
   reclaimThread(id: string, input: { now: Date; next: { status: 'queued'; notBefore: Date } | { status: 'failed'; code: string } }): Promise<TownThreadRecord | null>;
@@ -154,8 +158,8 @@ export interface TownResearchStore {
   upsertEntity(townKey: TownId, input: { type: EntityType; name: string; nameKey: string; sources: readonly SourceRef[]; now: Date }): Promise<string>;
   /**
    * A merge's retention (decision 8 step 6): events that ended before `endedBefore` (a day), entities last seen before
-   * `unseenBefore` that no event names, and ended runs and their threads created before `createdBefore`. Resolves the
-   * number deleted.
+   * `unseenBefore` that no event names, and ended runs and their threads created before `createdBefore`; and `found`
+   * cleared on the threads of any ended run (clearEndedFound). Resolves the number deleted.
    */
   removeOld(townKey: TownId, input: { endedBefore: string; unseenBefore: Date; createdBefore: Date }): Promise<number>;
 }
@@ -233,7 +237,8 @@ export function createTownResearchStore(connection: Connection): TownResearchSto
       ).sort({ createdAt: 1, _id: 1 }).limit(50).lean();
       return docs.map((doc) => doc._id.toHexString());
     },
-    finishRun: (runId, end) => runMoves.finish(runs, {}, runId, end),
+    finishRun: (runId, end, mergeOwner) => runMoves.finish(runs, {}, runId, end, mergeOwner),
+    holdMerge: (runId, input) => runMoves.holdMerge(runs, {}, runId, input),
     async clearFound(runId) {
       await Thread.updateMany({ runId: id(runId) }, { $set: { found: null } });
     },
@@ -245,6 +250,7 @@ export function createTownResearchStore(connection: Connection): TownResearchSto
     heartbeat: (threadId, owner, input) => threadMoves.heartbeat(threads, {}, threadId, owner, input),
     finishThread: (threadId, owner, end) => threadMoves.finish(threads, {}, threadId, owner, end),
     requeueThread: (threadId, owner, input) => threadMoves.requeue(threads, {}, threadId, owner, input),
+    releaseThread: (threadId, owner) => threadMoves.release(threads, {}, threadId, owner),
     async staleThreads(now) {
       const docs = await Thread.find({ status: 'running', leaseUntil: trusted({ $lte: now }) }, { _id: 1 }).lean();
       return docs.map((doc) => doc._id.toHexString());
@@ -284,6 +290,7 @@ export function createTownResearchStore(connection: Connection): TownResearchSto
         deleted += (await Thread.deleteMany({ townKey, runId: trusted({ $in: ids }) })).deletedCount;
         deleted += (await Run.deleteMany({ townKey, _id: trusted({ $in: ids }) })).deletedCount;
       }
+      await clearEndedFound(runs, threads, { townKey });
       return deleted;
     },
   };

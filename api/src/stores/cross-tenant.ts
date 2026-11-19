@@ -1101,7 +1101,9 @@ export interface ClaimedLocationResearchMerge {
  * A location run's merge claim (design decision 8): `running → merging` for `owner` once every thread of the run is
  * terminal, or a `merging` run whose merge lease passed taken over. With `runId`, the lane that settled the run's last
  * thread asks for that run (the fast path); without it, the planner's sweep takes the oldest such run in any
- * organization, so a run never stays `running` because that lane died. One caller wins each claim.
+ * organization, so a run never stays `running` because that lane died. One caller wins each claim. The sweep leaves out
+ * organizations research leaves alone (not active, or switched off), whose queued threads no lane claims, and pages
+ * past runs not ready yet, so runs that cannot finish never hide newer ones that can.
  */
 export async function claimLocationResearchMerge(
   connection: Connection, input: { readonly runId?: string; readonly owner: string; readonly now: Date; readonly leaseMs: number },
@@ -1109,10 +1111,15 @@ export async function claimLocationResearchMerge(
   const Run = locationResearchRunModel(connection);
   const Thread = locationResearchThreadModel(connection);
   const due = { $or: [{ status: 'running' as const }, { status: 'merging' as const, mergeUntil: trusted({ $lte: input.now }) }] };
-  const candidates = await Run.find(
-    input.runId === undefined ? due : { _id: new Types.ObjectId(input.runId), ...due },
-    { _id: 1, status: 1, mergeUntil: 1, threads: 1 },
-  ).sort({ createdAt: 1, _id: 1 }).limit(input.runId === undefined ? 50 : 1).lean();
+  let where: Record<string, unknown>;
+  if (input.runId === undefined) {
+    const off = await researchOffOrgs(connection);
+    where = off.length === 0 ? due : { ...due, orgId: trusted({ $nin: off }) };
+  } else {
+    where = { _id: new Types.ObjectId(input.runId), ...due };
+  }
+  // Ids and thread counts only; at most one live run a location, so this stays as small as the locations researched.
+  const candidates = await Run.find(where, { _id: 1, status: 1, mergeUntil: 1, threads: 1 }).sort({ createdAt: 1, _id: 1 }).lean();
   const set = { $set: { status: 'merging', mergeOwner: input.owner, mergeUntil: new Date(input.now.getTime() + input.leaseMs) } };
   for (const run of candidates) {
     // Every thread the run planned has a row and has ended (a plan that crashed between its thread rows waits for them).
