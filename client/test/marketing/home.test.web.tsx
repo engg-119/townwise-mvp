@@ -266,7 +266,7 @@ test('steps 02 and 03 and the FAQ say what the portal does today: uploads, notes
   expect(faq.getByText(/^Your daily guest counts/).textContent)
     .toContain('Once you have access, you drop your files in the app, and we store them privately for your organization and read the date, guest count and net sales for each day. Or your browser can read a CSV and send us only those three values a day, without the file.');
   expect(faq.getByText(/^No\. Your sales data/).textContent)
-    .toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants, and it is not used to train AI models.');
+    .toContain('Your sales data is used only to provide Townwise to your restaurant: its own forecasts and TownwiseAI, its AI assistant. It is not shared with or used for other restaurants. It trains only your own location’s forecast model, and it is never used to train AI models such as TownwiseAI’s.');
   // D25: staff also see the figures by opening the organization as its admin, with a reason once anyone has joined.
   expect(faq.getByText(/^No\. Your sales data/).textContent)
     .toContain('only through a read-only view that is recorded and shown to your organization’s admins, or by opening your organization as its admin with your consent, which needs a reason once anyone from it has joined and is recorded and shown to your admins too.');
