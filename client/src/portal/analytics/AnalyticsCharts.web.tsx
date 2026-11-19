@@ -2,6 +2,7 @@ import { theme } from '../../theme';
 import { formatCount } from '../format';
 import type { BarChartProps, EffectBarProps, LineChartProps } from './AnalyticsCharts';
 import type { ChartTip, TipBar } from './barTips';
+import { scaleTop } from './chartScale';
 import { nearestIndex, slotIndex } from './hoverMath';
 import { ChartTooltip, useChartHover } from './ChartTooltip.web';
 import { MONTH_NAMES, metricNumber, metricText, type Metric } from './words';
@@ -20,13 +21,7 @@ import { MONTH_NAMES, metricNumber, metricText, type Metric } from './words';
 const C = theme.color;
 const mono = { fontFamily: theme.font.mono, fontSize: 12, lineHeight: '16px', color: C.text3, fontVariantNumeric: 'tabular-nums' } as const;
 
-/** A round top for the scale: 1, 2, 2.5 or 5 times a power of ten, at or above `max`. */
-export function scaleTop(max: number): number {
-  if (max <= 0) return 1;
-  const power = 10 ** Math.floor(Math.log10(max));
-  const step = [1, 2, 2.5, 5, 10].find((each) => each * power >= max) ?? 10;
-  return step * power;
-}
+export { scaleTop };
 
 const NOUN: Readonly<Record<Metric, string>> = { guests: ' guests', netSales: '' };
 

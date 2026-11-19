@@ -30,7 +30,8 @@ import { analyticsFake, calendarBody, historyBody, holiday, note, run, townEvent
 import { forecastDay, forecastOf, NO_FORECAST } from '../calendar/fakes';
 import { NOVEMBER } from '../estimates/fakes';
 
-// P11 Home on native (home.md 2, D21): no SVG and no heatmap, so every section keeps its words and its table.
+// P11 Home on native (home.md 2, D21): no heatmap and no Last week chart, so those sections keep their words and their
+// tables; This week's chart is the one Home draws on native too (owner request, 2026-11-18; week-chart.test.native.tsx).
 // Synthetic days and a synthetic order board only. Pillars: the In progress and Planned lines name what Townwise doesn't do yet and the
 // coverage line says what the town calendar covers (T); comparisons state their day counts and the footnote
 // defines "last year" and "usual" (E); the page writes nothing and stores nothing (P).
@@ -153,6 +154,10 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByText('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.')).toBeTruthy();
   expect(screen.getByText('Busiest last year: Sat, Nov 8, 2025 (140 guests).')).toBeTruthy();
   expect(screen.getByText('On the calendar this week: Sample game (Saturday), and 1 more.')).toBeTruthy();
+  // The days are behind This week's Show the numbers, under its chart (owner request, 2026-11-18).
+  const [weekNumbers] = screen.getAllByRole('button', { name: /Show the numbers/ });
+  if (weekNumbers === undefined) throw new Error('no Show the numbers');
+  await fireEvent.press(weekNumbers);
   // On Saturday's row, and as the next event at a glance.
   expect(screen.getAllByText('Sample game')).toHaveLength(2);
   expect(screen.getByText('Sat, Nov 7, 2026, in 2 days')).toBeTruthy();
@@ -189,7 +194,9 @@ test('with history: the lead, this week with the calendar and past years, bar or
   // Last week against the same week last year; no chart on native.
   expect(screen.getByText('Last week, Oct 29 to Nov 4')).toBeTruthy();
   expect(screen.getByText('Last week: 814 guests, 10% more than the same week last year (740), compared over 7 days.')).toBeTruthy();
-  expect(screen.queryByText(/^Scale 0 to/)).toBeNull();
+  // The one scale on native is This week's chart's (owner request, 2026-11-18); Last week draws none.
+  expect(screen.getAllByText(/^Scale 0 to/)).toHaveLength(1);
+  expect(within(screen.getByLabelText('Last week')).queryByText(/^Scale 0 to/)).toBeNull();
 
   // This month in Hanover.
   expect(screen.getByRole('heading', { name: 'This month in Hanover' })).toBeTruthy();
@@ -243,7 +250,8 @@ test('with history: the lead, this week with the calendar and past years, bar or
 
 test('tapping a day opens the calendar at that day', async () => {
   const { router } = await renderApp('/locations/l1', portal());
-  expect(await screen.findByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
+  // This month's selected day and This week's chosen day both start on today.
+  expect(await screen.findAllByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toHaveLength(2);
   expect(screen.getByText('Tap a day to open it in the Calendar.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Open the calendar' })).toBeTruthy();
   await fireEvent.press(screen.getByLabelText('Wed, Nov 11, 2026. This week. No forecast. Veterans Day.'));
@@ -258,8 +266,8 @@ test('with a published forecast, each day from today shows its figure and the le
   expect(await screen.findByLabelText('Wed, Nov 11, 2026. This week. 212 guests, forecast, likely 180 to 240. Veterans Day.')).toBeTruthy();
   expect(screen.queryByText(FORECAST_LINE)).toBeNull();
   expect(screen.queryByText('In progress')).toBeNull();
-  // The selected day (today) gives its forecast.
-  expect(screen.getByText('About 212 guests, likely 180 to 240.')).toBeTruthy();
+  // The selected day (today) gives its forecast, in This month and in This week's chart.
+  expect(screen.getAllByText('About 212 guests, likely 180 to 240.')).toHaveLength(2);
 });
 
 test('a term period shows once with its span and source; the one-day event takes the headline', async () => {

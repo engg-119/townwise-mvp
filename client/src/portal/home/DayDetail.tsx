@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
+import type { TownEvent } from '../analytics/api';
 import { noteWords } from '../analytics/panel';
 import { eventLine, thisDayPhrase, type MonthDay } from '../analytics/week';
 import { shortDate, type Metric } from '../analytics/words';
@@ -19,7 +20,7 @@ import { PhraseParts } from '../ui/PhraseParts';
 import { AppChip, SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
 import { orderCoverSentence, orderForDay, REORDER_OVERVIEW } from './beside';
-import { PastCell } from './ThisWeek';
+import { PastCell } from './PastCell';
 
 // The selected day of This month (spec P11), beside the grid from where they fit side by side, under it otherwise:
 // from today on, the published forecast's day when there is one (its figure and range, the guests your notes and
@@ -38,6 +39,7 @@ import { PastCell } from './ThisWeek';
 // name. The Reorder part keeps its one line and its link; its explanation is behind "How Townwise builds an order".
 // D49 (2026-11-18): a past day's Forecast part says how its forecast did, or with no stored data the run's figure as a
 // forecast, in the Calendar's words (calendar/model.ts pastForecastLines).
+// This week's chart (WeekChart.tsx) gives its chosen day with the same Forecast, Why and On the calendar parts.
 
 export const DETAIL_ID = 'home-day-detail';
 const REORDER_ID = 'home-reorder-how';
@@ -48,7 +50,8 @@ function withTitle(row: ShortReason, notes: CalendarDayView['notes']): string {
   return title === null ? row.line : `${row.line}: ${title}`;
 }
 
-const WHY_LINES = 3;
+/** Why's rows: the three reasons with the largest effect either way. */
+export const WHY_LINES = 3;
 
 /**
  * The Forecast part's words: “About 212 guests, likely 180 to 240.”, a booked day, or a closed one. An outlook day's
@@ -82,12 +85,90 @@ function orderCover(date: string, board: LoadState<OrderBoard>): string {
   return board.data.available ? orderCoverSentence(date, orderForDay(date, board.data)) : board.data.reason;
 }
 
-function Part(props: { label: string; children: React.ReactNode }): React.JSX.Element {
+/** A part of a day's detail: its mono label over its lines. */
+export function Part(props: { label: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <View style={styles.part}>
       <Mono tone="text3">{props.label}</Mono>
       {props.children}
     </View>
+  );
+}
+
+/** The Forecast part's label: “Outlook” for an open outlook day (D52), else “Forecast”. */
+export function forecastPartLabel(forecast: ForecastDay | null): 'Forecast' | 'Outlook' {
+  return forecast?.outlook === true && forecast.status === 'open' ? 'Outlook' : 'Forecast';
+}
+
+/** Why: the rows whyRows gives, each after its mark, a note's followed by its name, then its sources as chips. */
+export function WhyPart(props: { why: readonly ShortReason[]; notes: CalendarDayView['notes'] }): React.JSX.Element | null {
+  if (props.why.length === 0) return null;
+  return (
+    <Part label="Why">
+      {props.why.map((row, index) => (
+        <View key={String(index)} style={styles.item}>
+          <View style={styles.line}>
+            {row.mark === null ? null : <ReasonMark mark={row.mark} grade={row.grade} />}
+            <Small style={styles.words}>{withTitle(row, props.notes)}</Small>
+          </View>
+          <SourceChips sources={row.reason.sources} />
+        </View>
+      ))}
+    </Part>
+  );
+}
+
+/**
+ * On the calendar (D49): the day's holidays and town events with their sources, less those Why names (as the Calendar's
+ * panel leaves them out), then the notes, the business rules and the location's own calendars' events covering it.
+ */
+export function CalendarPart(props: {
+  events: readonly TownEvent[]; why: readonly ShortReason[]; view: Pick<CalendarDayView, 'notes' | 'rules' | 'imported'>; locationId: string;
+}): React.JSX.Element {
+  const { view, locationId } = props;
+  // A holiday or town event a run reason in Why names is there with its sources, so On the calendar doesn't repeat it.
+  const named = new Set(props.why.flatMap((row) => (appliedOf(row.reason) === null ? [row.reason.label] : [])));
+  const events = props.events.filter((event) => !named.has(event.title));
+  const nothing = events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0;
+  return (
+    <Part label="On the calendar">
+      {nothing ? <Small>{events.length < props.events.length ? 'Nothing else on the calendar this day.' : 'Nothing on the calendar this day.'}</Small> : null}
+      {events.map((event) => (
+        <View key={event.id} style={styles.item}>
+          <Small white>{eventLine(event)}</Small>
+          <SourceChips sources={event.sources} />
+        </View>
+      ))}
+      {view.notes.map((note) => (
+        <View key={note.id} style={styles.item}>
+          {/* A person's own title ends with no full stop of ours (UI review nit 11); kind words do. */}
+          <Small white>{note.title === null || note.title === undefined ? `Your note: ${noteWords(note)}.` : `Your note: ${note.title}`}</Small>
+          {note.title === null || note.title === undefined ? null : <Small>{noteWords(note)}</Small>}
+          {note.detail === null ? null : <Small>{note.detail}</Small>}
+          {note.source?.ref ? (
+            <AppChip href={itemHref(locationId, note.source.ref)} name="Your file" label="Your file. Opens it in Your data" glyph="file" />
+          ) : null}
+        </View>
+      ))}
+      {view.rules.map((rule) => (
+        <View key={rule.id} style={styles.item}>
+          <Small white>{`Your rule: ${rule.text}`}</Small>
+          {rule.scheduleSummary === null || rule.scheduleSummary === undefined ? null : <Mono>{rule.scheduleSummary}</Mono>}
+        </View>
+      ))}
+      {view.imported.map((event) => (
+        <View key={`${event.calendarId}:${event.uid}`} style={styles.item}>
+          <Small white>{`From your calendar: ${event.title}`}</Small>
+          <Mono>{[datesLine(event), hoursLine(event)].filter((part) => part !== null).join(', ')}</Mono>
+          <AppChip
+            href={itemHref(locationId, `c_${event.calendarId}`)}
+            name={event.calendar ?? 'Your calendar'}
+            label={`${event.calendar ?? 'Your calendar'}. Opens this calendar in Your data`}
+            glyph="calendar"
+        />
+      </View>
+      ))}
+    </Part>
   );
 }
 
@@ -103,31 +184,15 @@ export function DayDetail(props: {
   const lines = forecast === null ? props.pastForecast ?? [] : forecastDayLines(forecast);
   // Home passes a forecast day only from today on.
   const why = forecast === null ? [] : whyRows(forecast, WHY_LINES);
-  // A holiday or town event a run reason in Why names is there with its sources, so On the calendar doesn't repeat it.
-  const named = new Set(why.flatMap((row) => (appliedOf(row.reason) === null ? [row.reason.label] : [])));
-  const events = day.events.filter((event) => !named.has(event.title));
-  const nothing = events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0;
   return (
     <View role="region" aria-label="Selected day" nativeID={DETAIL_ID} style={styles.root}>
       <Heading level={3}>{day.isToday ? `Today, ${shortDate(day.date)}` : shortDate(day.date)}</Heading>
       {lines.length === 0 ? null : (
-        <Part label={forecast?.outlook === true && forecast.status === 'open' ? 'Outlook' : 'Forecast'}>
+        <Part label={forecastPartLabel(forecast)}>
           {lines.map((line) => <Small key={line} white>{line}</Small>)}
         </Part>
       )}
-      {why.length === 0 ? null : (
-        <Part label="Why">
-          {why.map((row, index) => (
-            <View key={String(index)} style={styles.item}>
-              <View style={styles.line}>
-                {row.mark === null ? null : <ReasonMark mark={row.mark} grade={row.grade} />}
-                <Small style={styles.words}>{withTitle(row, view.notes)}</Small>
-              </View>
-              <SourceChips sources={row.reason.sources} />
-            </View>
-          ))}
-        </Part>
-      )}
+      <WhyPart why={why} notes={view.notes} />
       <Part label="Reorder">
         <Small white>{orderCover(day.date, board)}</Small>
         <Button
@@ -140,44 +205,7 @@ export function DayDetail(props: {
         {reorderOpen ? <View nativeID={REORDER_ID}><Small>{REORDER_OVERVIEW}</Small></View> : null}
         <Link href={`${locationHref(locationId, 'orders')}?day=${day.date}` as Href} style={styles.source}>Open this day on Orders</Link>
       </Part>
-      <Part label="On the calendar">
-        {nothing ? <Small>{events.length < day.events.length ? 'Nothing else on the calendar this day.' : 'Nothing on the calendar this day.'}</Small> : null}
-        {events.map((event) => (
-          <View key={event.id} style={styles.item}>
-            <Small white>{eventLine(event)}</Small>
-            <SourceChips sources={event.sources} />
-          </View>
-        ))}
-        {view.notes.map((note) => (
-          <View key={note.id} style={styles.item}>
-            {/* A person's own title ends with no full stop of ours (UI review nit 11); kind words do. */}
-            <Small white>{note.title === null || note.title === undefined ? `Your note: ${noteWords(note)}.` : `Your note: ${note.title}`}</Small>
-            {note.title === null || note.title === undefined ? null : <Small>{noteWords(note)}</Small>}
-            {note.detail === null ? null : <Small>{note.detail}</Small>}
-            {note.source?.ref ? (
-              <AppChip href={itemHref(locationId, note.source.ref)} name="Your file" label="Your file. Opens it in Your data" glyph="file" />
-            ) : null}
-          </View>
-        ))}
-        {view.rules.map((rule) => (
-          <View key={rule.id} style={styles.item}>
-            <Small white>{`Your rule: ${rule.text}`}</Small>
-            {rule.scheduleSummary === null || rule.scheduleSummary === undefined ? null : <Mono>{rule.scheduleSummary}</Mono>}
-          </View>
-        ))}
-        {view.imported.map((event) => (
-          <View key={`${event.calendarId}:${event.uid}`} style={styles.item}>
-            <Small white>{`From your calendar: ${event.title}`}</Small>
-            <Mono>{[datesLine(event), hoursLine(event)].filter((part) => part !== null).join(', ')}</Mono>
-            <AppChip
-              href={itemHref(locationId, `c_${event.calendarId}`)}
-              name={event.calendar ?? 'Your calendar'}
-              label={`${event.calendar ?? 'Your calendar'}. Opens this calendar in Your data`}
-              glyph="calendar"
-            />
-          </View>
-        ))}
-      </Part>
+      <CalendarPart events={day.events} why={why} view={view} locationId={locationId} />
       {history && !day.future ? (
         <Part label="This day">
           <Mono tone={day.value === null ? 'text3' : 'white'}><PhraseParts phrase={thisDayPhrase(day, metric)} /></Mono>
