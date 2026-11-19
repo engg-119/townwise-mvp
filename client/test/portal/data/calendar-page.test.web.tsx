@@ -15,8 +15,8 @@ import { dataFake, itemOf, type DataFake } from './fakes';
 
 // A calendar's page in Your data on web (D49, calendar-detail): P27 at the client-only ref `c_<calendarId>`, which
 // reads the calendar routes and never the data item's. Its name, kind and host as text, counts and last refresh, then
-// one month at a time of its events, each linking to its day on the Calendar. Today is Tue, Nov 17, 2026. Made-up
-// titles only.
+// one month at a time of its events, as a month grid (D62) whose chosen day lists its events, each linking to its day
+// on the Calendar; a phone keeps the month's agenda. Today is Tue, Nov 17, 2026. Made-up titles only.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -24,7 +24,8 @@ class ResizeObserverPolyfill {
   disconnect(): void { return undefined; }
 }
 if (typeof globalThis.ResizeObserver !== 'function') globalThis.ResizeObserver = ResizeObserverPolyfill;
-Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1280 });
+let width = 1280;
+Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, get: () => width });
 
 beforeEach(() => {
   jest.useFakeTimers({
@@ -39,6 +40,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   jest.useRealTimers();
+  width = 1280;
+  window.dispatchEvent(new Event('resize'));
 });
 
 const ID = 'fedcba9876543210fedcba98';
@@ -67,20 +70,28 @@ function setup(path: string, kitchen: Partial<OwnerCalendar> = {}, items: DataIt
   return fake;
 }
 
-test('a linked calendar’s page: its name, kind and host as text, counts and refresh, then November’s events linking to their days', async () => {
+test('a linked calendar’s page: its name, kind and host as text, counts and refresh, then November as a grid whose chosen day links its events', async () => {
   const fake = setup(`/locations/l1/data/c_${ID}`);
   expect(await screen.findByRole('heading', { name: 'US holidays' })).toBeTruthy();
   expect(screen.getByText('Link, calendar.google.com, 2 events')).toBeTruthy();
   expect(screen.getByText('1 repeating event wasn’t imported. Add it as a note with weekdays.')).toBeTruthy();
   expect(screen.getByText(/^Updated Nov 16, 2026/)).toBeTruthy();
-  const november = await screen.findByRole('list', { name: 'US holidays events, November 2026' });
-  // The month heads its list under Events (UI review nit 6).
   expect(screen.getByRole('heading', { name: 'Events' }).getAttribute('aria-level')).toBe('3');
-  expect(screen.getByRole('heading', { name: 'November 2026' }).getAttribute('aria-level')).toBe('4');
-  expect(within(november).getAllByRole('link').map((link) => [link.getAttribute('aria-label'), link.getAttribute('href')])).toEqual([
+  const grid = await screen.findByRole('grid', { name: 'US holidays, November 2026' });
+  await within(grid).findByRole('gridcell', { name: 'Wed, Nov 11, 2026. 1 event: Veterans Day.' });
+  // The month opens on today, which has none.
+  const today = within(grid).getByRole('gridcell', { name: 'Tue, Nov 17, 2026. Today. No events.' });
+  expect(today.getAttribute('aria-selected')).toBe('true');
+  expect(today.getAttribute('tabindex')).toBe('0');
+  expect(screen.getByText('No events on Tue, Nov 17, 2026.')).toBeTruthy();
+  // Choosing a day lists its events as the agenda's rows, each linking to its day on the Calendar.
+  fireEvent.click(within(grid).getByRole('gridcell', { name: /^Wed, Nov 11, 2026\./ }));
+  const day = screen.getByRole('list', { name: 'US holidays events, Wed, Nov 11, 2026' });
+  expect(screen.getByRole('heading', { name: 'Wed, Nov 11, 2026' }).getAttribute('aria-level')).toBe('4');
+  expect(within(day).getAllByRole('link').map((link) => [link.getAttribute('aria-label'), link.getAttribute('href')])).toEqual([
     ['Veterans Day, Wed, Nov 11, 2026. Opens the day on the Calendar.', '/locations/l1/calendar?day=2026-11-11'],
-    ['Thanksgiving Day, Thu, Nov 26, 2026. Opens the day on the Calendar.', '/locations/l1/calendar?day=2026-11-26'],
   ]);
+  expect(within(grid).getByRole('gridcell', { name: /^Wed, Nov 11, 2026\./ }).getAttribute('aria-selected')).toBe('true');
   expect(screen.queryByText('Wine delivery')).toBeNull();
   // It read the calendars and the month's events, never the data item route; and no page link holds the address.
   expect(fake.paths.some((path) => path.includes('/data/c_'))).toBe(false);
@@ -89,13 +100,35 @@ test('a linked calendar’s page: its name, kind and host as text, counts and re
   expect([...document.querySelectorAll('a[href]')].some((link) => (link.getAttribute('href') ?? '').includes('calendar.google.com'))).toBe(false);
 });
 
-test('Later moves a month on; a month with none says so; Earlier comes back', async () => {
+test('Later moves the grid a month on; a month with none says so; Earlier comes back', async () => {
   setup(`/locations/l1/data/c_${ID}`);
-  await screen.findByRole('list', { name: 'US holidays events, November 2026' });
+  await screen.findByRole('gridcell', { name: 'Wed, Nov 11, 2026. 1 event: Veterans Day.' });
+  // The month shown is named on the page, not only in the grid's label, so Earlier and Later say where they went.
+  expect(screen.getByRole('heading', { name: 'November 2026' }).getAttribute('aria-level')).toBe('4');
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Later: December 2026' })); await Promise.resolve(); });
   expect(await screen.findByText('No events in December 2026.')).toBeTruthy();
+  expect(screen.getByRole('grid', { name: 'US holidays, December 2026' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'December 2026' })).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'November 2026' })).toBeNull();
+  // With no events, December opens on its 1st and lists no day.
+  expect(screen.getByRole('gridcell', { name: 'Tue, Dec 1, 2026. No events.' }).getAttribute('aria-selected')).toBe('true');
+  expect(screen.queryByText(/^No events on /)).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Earlier: November 2026' }));
-  expect(await screen.findByRole('list', { name: 'US holidays events, November 2026' })).toBeTruthy();
+  expect(await screen.findByRole('grid', { name: 'US holidays, November 2026' })).toBeTruthy();
+});
+
+test('a phone keeps the month’s agenda, its events under the month linking to their days', async () => {
+  width = 375;
+  window.dispatchEvent(new Event('resize'));
+  setup(`/locations/l1/data/c_${ID}`);
+  const november = await screen.findByRole('list', { name: 'US holidays events, November 2026' });
+  // The month heads its list under Events (UI review nit 6).
+  expect(screen.getByRole('heading', { name: 'November 2026' }).getAttribute('aria-level')).toBe('4');
+  expect(within(november).getAllByRole('link').map((link) => link.getAttribute('aria-label'))).toEqual([
+    'Veterans Day, Wed, Nov 11, 2026. Opens the day on the Calendar.',
+    'Thanksgiving Day, Thu, Nov 26, 2026. Opens the day on the Calendar.',
+  ]);
+  expect(screen.queryByRole('grid')).toBeNull();
 });
 
 test('an unknown calendar, or another organization’s, shows the not-found state, which stays on the page', async () => {
