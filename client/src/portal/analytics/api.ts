@@ -95,12 +95,56 @@ export const townEventSchema = z.object({
 });
 export type TownEvent = z.infer<typeof townEventSchema>;
 
+/** A secure web link: https only (D66 design decision 15), so a found event's source never renders another scheme. */
+const SECURE_LINK = /^https:\/\/\S+$/i;
+
+/**
+ * Spec 10.10's `found` item (D66, town research): an event the research agent found, as this location sees it after
+ * its revisions. `head` is what an edit sends as `basedOn`. `weekdays` are 0 (Sunday) to 6. A source whose url is not
+ * an https link is dropped, and the event keeps its others.
+ */
+export const researchedEventSchema = z.object({
+  id: z.string().regex(/^[tl]-[0-9a-f]{24}$/),
+  head: z.string().min(1),
+  title: z.string(),
+  start: z.string().refine(isCalendarDate),
+  end: z.string().refine(isCalendarDate),
+  weekdays: z.array(z.number().int().min(0).max(6)).nullable(),
+  startTime: z.string().nullable(),
+  kind: z.enum(['event', 'season', 'closure']),
+  category: z.string(),
+  status: z.enum(['scheduled', 'cancelled', 'postponed']),
+  origin: z.enum(['town', 'neighborhood', 'competitor', 'town_overview']),
+  confidence: z.enum(['high', 'medium', 'low']),
+  where: z.string().nullable(),
+  who: z.string().nullable(),
+  competitor: z.object({ entityId: z.string().nullable(), placeId: z.string().nullable() }).nullable(),
+  sources: z.array(sourceSchema).transform((sources) => sources.filter((source) => SECURE_LINK.test(source.url))),
+  lastSeenAt: z.string(),
+  edited: z.boolean(),
+}).refine((event) => event.start <= event.end);
+export type ResearchedEvent = z.infer<typeof researchedEventSchema>;
+
+/**
+ * `found` read item by item: an item this client can't read is left out and the others kept. An API from before D66
+ * has no `found` and reads `[]`; `null` (the API's researched read failed) stays null, read as unavailable.
+ */
+export const foundSchema = z.unknown().optional().transform((value): ResearchedEvent[] | null => {
+  if (value === null) return null;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const parsed = researchedEventSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+});
+
 /** GET .../calendar. `covers` is the span of the town's researched events (all years), null when there are none. */
 export const calendarSchema = z.object({
   town: townSchema,
   researched: z.boolean(),
   covers: z.object({ from: z.string(), to: z.string() }).nullable(),
   events: z.array(townEventSchema),
+  found: foundSchema,
 });
 export type Calendar = z.infer<typeof calendarSchema>;
 
