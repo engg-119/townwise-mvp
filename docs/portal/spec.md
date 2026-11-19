@@ -3170,7 +3170,7 @@ Each is marked inline with “lead default”:
 139. Confirming making a linked note for each upcoming buyout or party event, at most 100 a confirm (D58, 10.18).
 140. Confirming starting a refit for the admin who confirmed (D58, 10.18).
 141. Past bookings on the calendar entered before their day, so the backtest may read them (D58, 14.5).
-142. The privacy page’s, import popover’s and Bookings section’s words for calendar CSVs and Sort with TownwiseAI, shipped awaiting the owner’s approval on 2026-11-18 (D58, 17, P27, P28).
+142. The privacy page’s, import popover’s and Bookings section’s words for calendar CSVs and Sort with TownwiseAI, shipped awaiting the owner’s approval on 2026-11-18 (D58, 17, P27, P28). The privacy page’s words were approved by the owner on 2026-11-19; the popover’s and Bookings section’s are still open.
 143. A calendar file added to Your data imported as one of the location’s calendars automatically, with no `titlesNotice`, so the weekly call sends none of its titles (D60, 10.18).
 144. Only Your data’s reference files imported, not a calendar file uploaded as sales history, and an edit of an imported `.ics` imported again as a new calendar (D60, 11A.4).
 145. The words for a calendar file imported from Your data on its page, and the Calendars group’s import with the weekly reading’s words (D60, P26, P27).

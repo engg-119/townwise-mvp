@@ -22,6 +22,7 @@ Lands after `autonomous-forecasts` phase 3b. Tests first.
   - Done: spec D42's build note (with both `[CONFIRM]`s), `tw_orgs.weeklySuggestions`, new 6.27 and 6.28, the audit table, 10.7's sweep note, 10.12's routes, P11's count and P25's section, and the env table (with a `[DECISION NEEDED]` that the privacy page must say what they send before they run in production); `tuning-chat.md` section 9 (the prompt, what is sent and never sent, the checks, logs); `api/README.md` (Tuning chat, endpoints, audit, data, env); `api/production.env` and `api/.env.example` set `TOWNWISE_WEEKLY_SUGGESTIONS=true` explicitly.
 - [x] 3.3 Draft the suggestions sentence of the privacy paragraph in `client/app/(marketing)/privacy.tsx` (with "Last updated" bumped and a test) and in `docs/portal/estimates.md` section 5, for the owner's approval before push.
   - Done, for the owner: a new "TownwiseAI's weekly suggestions" item and a sentence in the Anthropic item (whose "Nothing is sent to Anthropic unless you use it" now starts "Apart from TownwiseAI's weekly suggestions"), marked `[CONFIRM]` in `privacy.tsx`; the same words in `estimates.md` section 5; pinned by new `client/test/marketing/privacy-suggestions.test.web.tsx` and `pages.test.web.tsx`. "Last updated" already reads November 16, 2026, today, so it is unchanged.
+  - Owner approved the privacy page's words on 2026-11-19.
 
 ## 4. Owner, review and verification
 

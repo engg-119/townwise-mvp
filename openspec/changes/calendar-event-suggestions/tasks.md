@@ -85,6 +85,7 @@ Spec decision D53; CONFIRM index items numbered after develop's last (116 to 129
 ## 10. Owner and reviews
 
 - [ ] 10.1 Owner: approve the privacy words and the explainer's words, and sign off the twelve `[CONFIRM]`s (five of them decided on 2026-11-17). Titles are on by default, so the approved words must be live before this is pushed; until then a spec 18 `[DECISION NEEDED]` says so, as the weekly change's did.
+  - 2026-11-19: the owner approved the privacy page's words. The explainer's words and the twelve `[CONFIRM]`s are still open.
 - [ ] 10.2 Independent UI review of the new cards, the switch and the Calendar's linked-note line (web and native), by an agent that did not build them.
 - [ ] 10.3 Security and privacy review of the diff (`/cso` or `security-auditor`): no title, `uid` or calendar name in a log, audit event, URL or stored suggestion; staff redaction on every new surface; `OrgScope` on every new store function.
 
