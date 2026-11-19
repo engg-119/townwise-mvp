@@ -638,7 +638,8 @@ export type SureChange =
  * D59 slice 3: what a kept suggestion writes when TownwiseAI is sure of it, or null when it waits for a person. Only one
  * rated `high`: a note as it is; a rule only when it is a closure (with or without hours), D59's `rule.add`; a spotted
  * event only when the model chose its effect, as a private-event note with that effect (alongside regular service only
- * with the guest count its title states), checked again by the note rules. Never a follow-up. Pure.
+ * with the guest count its title states), checked again by the note rules. Never a follow-up. Pure. [CONFIRM: TownwiseAI
+ * saves a weekly suggestion it rated high on its own: a note, a closure rule, or a spotted private event whose effect it chose]
  */
 export function sureChangeOf(kept: KeptSuggestion, today: string): SureChange | null {
   if (kept.confidence !== 'high') return null;
