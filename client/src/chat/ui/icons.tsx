@@ -31,12 +31,13 @@ function Stroked(props: { color: string; size: number; children: React.ReactNode
 /** The size of every icon in a message's row of actions. */
 const ROW = 18;
 
-export function Thumb(props: { down?: boolean; color: string }): React.JSX.Element {
+/** A thumb up or down; `filled` (a pressed Helpful or Not helpful) fills the hand in its color, as a solid glyph. */
+export function Thumb(props: { down?: boolean; color: string; filled?: boolean }): React.JSX.Element {
   const down = props.down === true;
   return (
     <Stroked color={props.color} size={ROW}>
       <Path d={down ? 'M17 14V2' : 'M7 10v12'} />
-      <Path d={down ? DOWN : UP} />
+      <Path d={down ? DOWN : UP} {...(props.filled === true ? { fill: props.color } : {})} testID={props.filled === true ? 'thumb-filled' : 'thumb-outline'} />
     </Stroked>
   );
 }

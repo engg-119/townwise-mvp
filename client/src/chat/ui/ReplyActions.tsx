@@ -12,7 +12,7 @@ import { MessageTime, rowMark, type RowShow } from './MessageTime';
 
 // The actions under a finished reply (owner decision 3, "Message actions"): Copy (web only: native has no clipboard
 // module and keeps the text selectable), Regenerate on the newest reply only, and Helpful / Not helpful as a thumb up
-// and a thumb down named by those words, ChatGPT's way: once rated only the chosen one shows, pressed, in mint, and
+// and a thumb down named by those words, ChatGPT's way: once rated only the chosen one shows, pressed, its hand filled in mint, and
 // pressing it again clears the rating. After Not
 // helpful, an optional reason from six fixed ones (never free text), or Skip. Every action is aria-disabled while
 // the chat can't act and under view-as, where staff see the author's rating in place.
@@ -123,7 +123,7 @@ export function ReplyActions(props: {
             key="up"
             variant="arrow"
             label="Helpful"
-            icon={(color) => <Thumb color={color} />}
+            icon={(color, on) => <Thumb color={color} filled={on} />}
             pressed={rating === 'up'}
             disabled={off}
             {...describedBy}
@@ -136,7 +136,7 @@ export function ReplyActions(props: {
             focusRef={notHelpful}
             variant="arrow"
             label="Not helpful"
-            icon={(color) => <Thumb down color={color} />}
+            icon={(color, on) => <Thumb down color={color} filled={on} />}
             pressed={rating === 'down'}
             disabled={off}
             {...describedBy}

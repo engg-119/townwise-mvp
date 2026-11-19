@@ -439,6 +439,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.forecast.get',
       // D28, Your data.
       'org.data.update', 'org.data.remove', 'org.chat.item_proposal.get', 'org.chat.item_proposal', 'org.data.replace', 'org.data.get',
+      // D60, importing a calendar file of Your data again.
+      'org.data.calendar',
       // Orders.
       'org.orders.get', 'org.orders.decision', 'org.orders.rule', 'org.orders.rule_off', 'org.orders.setup.get', 'org.orders.setup.save',
       'org.orders.item_sales.upload', 'org.orders.item_sales.remove', 'org.orders.counts.save', 'org.chat.order_proposal.get',

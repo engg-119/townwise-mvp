@@ -327,6 +327,12 @@ describe('route table', () => {
     ]);
   });
 
+  it('D60: importing a calendar file of Your data again is a member POST with a 2kb body, open as admin, with no route limiter', () => {
+    const route = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.data.calendar');
+    expect(route).toMatchObject({ method: 'POST', path: '/org/locations/:locationId/data/:ref/calendar', policy: 'member', bodyLimit: '2kb', openAsAdmin: true });
+    expect(route?.limiter).toBeUndefined();
+  });
+
   it('spec 11A.9: letting TownwiseAI read an item is a member POST with a 2kb body, open as admin, behind its own limiter that denies while its store is down', () => {
     const route = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.data.ai_read');
     expect(route).toMatchObject({

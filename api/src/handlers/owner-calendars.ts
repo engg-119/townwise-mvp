@@ -224,9 +224,15 @@ async function loadCalendar(ctx: TownwiseContext, scope: OrgScope, locationId: s
 
 type CalendarAction = 'owner_calendar.added' | 'owner_calendar.removed' | 'owner_calendar.refreshed';
 
-/** Ids, the kind, the event count and (but on removal) the status: never the label, host, address or a title. */
+/**
+ * Ids, the kind, the event count, (but on removal) the status and (D60, on an add from a stored file) the file's id:
+ * never the label, host, address or a title.
+ */
 function recordCalendar(ctx: TownwiseContext, caller: MemberPrincipal, action: CalendarAction, calendar: OwnerCalendarRecord, at: Date): Promise<void> {
-  const details: AuditDetails = { locationId: calendar.locationId, calendarId: calendar.id, kind: calendar.kind, eventCount: calendar.eventCount };
+  const details: AuditDetails = {
+    locationId: calendar.locationId, calendarId: calendar.id, kind: calendar.kind, eventCount: calendar.eventCount,
+    ...(action === 'owner_calendar.added' && calendar.fromFileId !== null ? { fileId: calendar.fromFileId } : {}),
+  };
   return recordAfter(ctx, {
     ...actorOf(caller), at, orgId: caller.scope.orgId, action,
     target: { type: 'owner_calendar', id: calendar.id },
@@ -367,6 +373,63 @@ async function googleToAdd(
 }
 
 /**
+ * D60: a stored file's name as its calendar's, as Your calendars words it (client/src/portal/calendar/calendars.ts
+ * labelOfFile): a final `.ics`, `.ical` or `.csv` off, trimmed, at most 60 code units (one fewer when the last would
+ * open a surrogate pair), and "Calendar file" when empty.
+ */
+export function labelOfFile(name: string): string {
+  const bare = name.replace(/\.(?:ics|ical|csv)$/i, '').trim();
+  const cut = bare.length <= MAX_LABEL_CHARS ? bare : bare.slice(0, MAX_LABEL_CHARS);
+  const last = cut.charCodeAt(cut.length - 1);
+  const label = (cut.length < bare.length && last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut).trim();
+  return label === '' ? 'Calendar file' : label;
+}
+
+/** D60: the location's calendar imported from the stored file, if it still exists (its page in Your data says so). */
+export async function calendarOfFile(ctx: TownwiseContext, scope: OrgScope, locationId: string, fileId: string): Promise<OwnerCalendarRecord | null> {
+  return (await ctx.stores.ownerCalendars.list(scope, locationId)).find((calendar) => calendar.fromFileId === fileId) ?? null;
+}
+
+/** Why a file calendar was not added: over 1 MB, not a calendar, or the location already has 5. */
+export type FileCalendarRefusal = 'too_large' | 'not_calendar' | 'calendar_limit';
+
+/** The 400 or 409 a refused file add answers. */
+function fileRefusal(code: FileCalendarRefusal): AppError {
+  return code === 'calendar_limit' ? calendarLimit() : new AppError(400, code, READ_FAILURES[code]);
+}
+
+/**
+ * Adds a calendar file, .ics or CSV, as a file calendar of the location: at most 1 MB of UTF-8 (too_large), parsed with
+ * the town's today and time zone in the file window (calendar/csv-events.ts parseCalendarFile; not_calendar), stored
+ * with its format and, when its screen said so, `titlesNotice`, then recorded as `owner_calendar.added`. The add of
+ * POST .../owner-calendars and (D60) of a calendar file kept in Your data (files/calendar-import.ts), which passes the
+ * stored file's id: 'file_imported' when that file already made a calendar, and nothing is stored.
+ */
+export async function addFileCalendar(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord,
+  input: { label: string; text: string; titlesNotice?: typeof WEEKLY_TITLES_NOTICE; fromFileId?: string },
+): Promise<{ calendar: OwnerCalendarRecord; skippedRows: number } | FileCalendarRefusal | 'file_imported'> {
+  const { scope } = caller;
+  const now = ctx.now();
+  if (Buffer.byteLength(input.text, 'utf8') > MAX_ICS_BYTES) return 'too_large';
+  const read = parseCalendarFile(input.text, townOf(location, now));
+  if ('error' in read) return read.error;
+  const calendar = {
+    kind: 'file', label: input.label, format: read.format, ...(input.titlesNotice === undefined ? {} : { titlesNotice: input.titlesNotice }),
+  } as const;
+  const by = { createdBy: caller.userId, now };
+  const calendars = ctx.stores.ownerCalendars;
+  const added = input.fromFileId === undefined
+    ? await calendars.add(scope, location.id, calendar, read, by)
+    : await calendars.addFromFile(scope, location.id, input.fromFileId, calendar, read, by);
+  if (added === 'calendar_limit' || added === 'file_imported') return added;
+  // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none.
+  await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
+  await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
+  return { calendar: added, skippedRows: read.skippedRows };
+}
+
+/**
  * POST /api/org/locations/:locationId/owner-calendars: `{ kind: 'file', label, ics }`, `{ kind: 'link', label, url }` or
  * `{ kind: 'google', googleCalendarId }`. A file of at most 1 MB (400 too_large), whose text `ics` carries whether it is
  * an .ics file or a calendar CSV (D58; the field keeps its name for shipped builds), is parsed with the town's today and
@@ -382,22 +445,22 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
   const { scope } = caller;
   const body = parseInput(calendarBody, req.body);
   const location = await loadLocation(ctx, scope, req.params.locationId);
+  if (body.kind === 'file') {
+    const added = await addFileCalendar(ctx, caller, location, {
+      label: body.label, text: body.ics, ...(body.titlesNotice === undefined ? {} : { titlesNotice: body.titlesNotice }),
+    });
+    // No fromFileId was passed, so the store never answers file_imported here.
+    if (added === 'file_imported') throw new Error('a file add without a stored file answered file_imported');
+    if (typeof added === 'string') throw fileRefusal(added);
+    res.status(201).json({ calendar: shownView(added.calendar, caller), skippedRows: added.skippedRows });
+    return;
+  }
   const calendars = ctx.stores.ownerCalendars;
   const now = ctx.now();
   const town = townOf(location, now);
   let calendar: NewCalendar;
   let parsed: ParsedCalendar;
-  let skippedRows = 0;
-  if (body.kind === 'file') {
-    if (Buffer.byteLength(body.ics, 'utf8') > MAX_ICS_BYTES) throw new AppError(400, 'too_large', READ_FAILURES.too_large);
-    const read = parseCalendarFile(body.ics, town);
-    if ('error' in read) throw new AppError(400, read.error, READ_FAILURES[read.error]);
-    calendar = {
-      kind: 'file', label: body.label, format: read.format, ...(body.titlesNotice === undefined ? {} : { titlesNotice: body.titlesNotice }),
-    };
-    parsed = read;
-    ({ skippedRows } = read);
-  } else if (body.kind === 'link') {
+  if (body.kind === 'link') {
     const key = linksKey(ctx);
     // Before the fetch, so a full location costs no request; the add itself holds the limit against concurrent adds.
     if ((await calendars.list(scope, location.id)).length >= MAX_CALENDARS) throw calendarLimit();
@@ -422,7 +485,7 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
   // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none.
   await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
   await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
-  res.status(201).json({ calendar: shownView(added, caller), skippedRows });
+  res.status(201).json({ calendar: shownView(added, caller), skippedRows: 0 });
 }
 
 /** 429 rate_limited until 5 minutes after the calendar's last "Refresh now". */

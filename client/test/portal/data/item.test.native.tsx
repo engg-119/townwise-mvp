@@ -79,3 +79,31 @@ test('native has Turn off and Delete: Turn off acts at once, and a delete goes b
   expect(fake.removed).toEqual([{ locationId: 'l1', ref: UPLOAD }]);
   expect(await screen.findByText('Deleted the upload and 5 days.')).toBeTruthy();
 });
+
+// D60: a calendar file kept in Your data says what importing it did on native too, with the calendar's page a tap away
+// and Try again for a fixable refusal.
+test('a calendar file’s page says it was added as a calendar, and Try again re-imports a refused one', async () => {
+  const { api, fake } = setup();
+  const ADDED = 'f_00000000000000000000000c';
+  const REFUSED = 'f_00000000000000000000000d';
+  const kept = { kind: 'other', state: 'kept', outcome: 'reference' } as const;
+  fake.items.push(
+    itemOf(ADDED, { ...kept, name: 'Bookings.ics', calendar: { status: 'added', calendarId: 'c1', label: 'Bookings', eventCount: 2 } }),
+    itemOf(REFUSED, { ...kept, name: 'Late.ics', calendar: { status: 'refused', reason: 'calendar_limit', retry: true } }),
+  );
+  await renderApp(`/locations/l1/data/${ADDED}`, api);
+  expect(await screen.findByText('Added to your calendars as Bookings: 2 events.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open the calendar' })).toBeTruthy();
+  await cleanup();
+  await renderApp(`/locations/l1/data/${REFUSED}`, api);
+  expect(await screen.findByText('Not added to your calendars: this location already has 5 calendars. Remove one on the Calendar, then try again.')).toBeTruthy();
+  const added = itemOf(REFUSED, { ...kept, name: 'Late.ics', calendar: { status: 'added', calendarId: 'c2', label: 'Late', eventCount: 1 } });
+  // As the API does, the retry's outcome stays: the page's read after it finds the item added.
+  fake.answers['POST calendar'] = () => {
+    fake.items = fake.items.map((item) => (item.ref === REFUSED ? added : item));
+    return { item: added };
+  };
+  await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByText('Added to your calendars as Late: 1 event.')).toBeTruthy();
+  expect(fake.calendarRetries).toEqual([REFUSED]);
+});

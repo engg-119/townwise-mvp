@@ -10,8 +10,11 @@ import { fileViewOf, filesFake, type FilesFake } from '../files/fakes';
 // (on or off, or a rename keeping the extension), DELETE, POST text and POST replace change `items` and are recorded.
 // POST and DELETE .../data/:ref/ai (reading with TownwiseAI) are recorded in `ai`, answer from `answers['POST ai']` and
 // `answers['DELETE ai']`, and by default queue a read or mark it undone.
-// GET .../sales/history answers from `history` (the item page's days). Anything else goes to the stored-files fake,
-// which sits over the location pages' fake.
+// GET .../sales/history answers from `history` (the item page's days). D60: POST .../data/:ref/calendar (Try again)
+// is recorded in `calendarRetries` and answers from `answers['POST calendar']`, by default the item as it is; POST
+// .../owner-calendars (Import a calendar file on Your data) is recorded in `calendarAdds` and answers from
+// `answers['POST owner-calendars']`, by default adding a file calendar named by the label sent to `calendars`.
+// Anything else goes to the stored-files fake, which sits over the location pages' fake.
 
 export function itemOf(ref: string, extra?: Partial<DataItem>): DataItem {
   return {
@@ -67,6 +70,9 @@ export interface DataFake extends ApiClient {
   bookingSort?: { available: boolean };
   /** GET .../owner-calendars/events: the stored events, each answered when it overlaps the range asked for. */
   calendarEvents: { startDate: string; endDate: string }[];
+  /** D60: POST .../data/:ref/calendar requests (the refs), and POST .../owner-calendars bodies, in order. */
+  calendarRetries: string[];
+  calendarAdds: unknown[];
   /** Every json path asked for, in order. */
   paths: string[];
 }
@@ -94,12 +100,27 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
     files,
     calendars: [],
     calendarEvents: [],
+    calendarRetries: [],
+    calendarAdds: [],
     paths: [],
     json<T>(path: `/${string}`, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T> {
       const method = opts?.method ?? 'GET';
       fake.paths.push(path);
       if (method === 'GET' && /^\/api\/org\/locations\/[^/]+\/owner-calendars$/.test(path)) {
         return settle({ calendars: fake.calendars, ...(fake.bookingSort === undefined ? {} : { bookingSort: fake.bookingSort }) }, schema);
+      }
+      if (method === 'POST' && /^\/api\/org\/locations\/[^/]+\/owner-calendars$/.test(path)) {
+        fake.calendarAdds.push(opts?.body);
+        const answered = fake.answers['POST owner-calendars']?.(opts?.body);
+        if (answered !== undefined) return settle(answered, schema);
+        const { label } = opts?.body as { label: string };
+        const calendar = {
+          id: `c${String(fake.calendars.length + 1)}`, label, kind: 'file', host: null, eventCount: 2, skippedRepeating: 0, status: 'ok',
+          lastSuccessAt: '2026-11-11T15:00:00.000Z', lastAttemptAt: '2026-11-11T15:00:00.000Z', createdAt: '2026-11-11T15:00:00.000Z',
+          mine: false, format: 'ics', bookings: null,
+        };
+        fake.calendars = [...fake.calendars, calendar];
+        return settle({ calendar, skippedRows: 0 }, schema);
       }
       const events = /^\/api\/org\/locations\/[^/]+\/owner-calendars\/events\?from=([\d-]+)&to=([\d-]+)$/.exec(path);
       if (method === 'GET' && events?.[1] !== undefined && events[2] !== undefined) {
@@ -163,6 +184,15 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
         };
         fake.items = fake.items.map((candidate) => (candidate.ref === ref ? item : candidate));
         return settle({ item }, schema);
+      }
+      const retry = /^\/api\/org\/locations\/([^/]+)\/data\/([^/]+)\/calendar$/.exec(path);
+      if (method === 'POST' && retry?.[2] !== undefined) {
+        const ref = retry[2];
+        fake.calendarRetries.push(ref);
+        const answered = fake.answers['POST calendar']?.(opts?.body);
+        if (answered !== undefined) return settle(answered, schema);
+        const item = fake.items.find((candidate) => candidate.ref === ref);
+        return item === undefined ? Promise.reject(refusal(404, 'not_found')) : settle({ item: { ...item } }, schema);
       }
       const ai = /^\/api\/org\/locations\/([^/]+)\/data\/([^/]+)\/ai$/.exec(path);
       if ((method === 'POST' || method === 'DELETE') && ai?.[2] !== undefined) {
