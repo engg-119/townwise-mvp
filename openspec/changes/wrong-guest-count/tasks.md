@@ -65,6 +65,9 @@ Spec decision D67 (reserved for this change). CONFIRM index items from 220 (219 
 
 ## 8. Verification and landing
 
-- [ ] 8.1 `npm run lint` on changed files and `npm run typecheck`.
-- [ ] 8.2 The targeted suites above, then `test/isolation.test.ts`, `test/isolation.int.test.ts` and the view-as and open-as-admin route tests.
-- [ ] 8.3 Renumber this change's CONFIRM items against develop's 22.2 just before push. Ask before a full `npm run verify` on the shared runner.
+- [x] 8.1 `npm run lint` on changed files and `npm run typecheck`.
+  Done: eslint on the 52 changed .ts and .tsx files: exit 0. `tsc` for api and client: exit 0.
+- [x] 8.2 The targeted suites above, then `test/isolation.test.ts`, `test/isolation.int.test.ts` and the view-as and open-as-admin route tests.
+  Done: 16 API unit files, 456 tests; 14 integration files (the targeted ones plus isolation.int, view-as, view-as-routes, open-as-admin and open-as-admin-routes), 700 tests; all pass.
+- [x] 8.3 Renumber this change's CONFIRM items against develop's 22.2 just before push. Ask before a full `npm run verify` on the shared runner.
+  Done: checked only: origin/develop (5f7c9cdb) has no D65 to D67 row and its 22.2 ends at 218, so 220 to 224 stand (219 is D68's). Renumbering before push is the coordinator's. No full `npm run verify` was run.
