@@ -933,6 +933,12 @@ test('a past day whose guest count is marked wrong (D67) says so in its panel, t
   expect(cellOf(calendarMonth('2026-11', bare), '2026-11-07').label).toMatch(/^Sat, Nov 7, 2026\. Guest count marked wrong\./);
   expect(tooltipLines('2026-11-07', bare)?.lines[0]).toBe('Guest count marked wrong');
   expect(cell.label).not.toContain('No data');
+  // The status word the cell shows matches its label: "Marked wrong", never "No data" (a day before any forecast, as
+  // Oct 31, 2025 is for Sawtooth); a day with nothing stored keeps "No data".
+  const bareCell = cellOf(calendarMonth('2026-11', bare), '2026-11-07');
+  expect(bareCell.status).toBe('marked_wrong');
+  expect(statusWord(bareCell.status)).toBe('Marked wrong');
+  expect(cellOf(calendarMonth('2026-11', input({ salesDays: [], forecast: windowOf([]) })), '2026-11-07').status).toBe('no_data');
 });
 
 test('Home’s day detail says a past day’s forecast the same way: how it did, or the run’s figure with no data', () => {

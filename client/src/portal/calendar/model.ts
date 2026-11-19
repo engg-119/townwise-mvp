@@ -170,7 +170,8 @@ export interface CalendarCell {
    * from today on, a day the answered forecast read doesn't cover; outlook, from today on, an open day in its run's
    * outlook (D52), which keeps its figure.
    */
-  status: 'closed' | 'booked' | 'likely_closed' | 'no_data' | 'no_forecast' | 'outlook' | null;
+  /** marked_wrong: a past day with no figure whose guest count a note marks wrong (D67), where no_data would say nothing was stored. */
+  status: 'closed' | 'booked' | 'likely_closed' | 'no_data' | 'marked_wrong' | 'no_forecast' | 'outlook' | null;
   figure: CellFigure | null;
   /** Guests the location's notes add to a forecast figure (“+70”); 0 when none. */
   noteGuests: number;
@@ -250,10 +251,11 @@ export function figureOf(date: string, input: CalendarInput, metric: Metric = 'g
     const stored = storedValue(date, input, metric);
     if (stored !== null) return { ...NO_FIGURE, figure: { value: stored, kind: 'actual' }, words: `${figureLabel(stored, { kind: 'actual' }, metric)}.` };
     const gap = gapWords(date, input);
-    if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: 'no_data', words: `${gap}.` };
+    const gapStatus = markedGuests(date, input) === null ? 'no_data' : 'marked_wrong';
+    if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: gapStatus, words: `${gap}.` };
     if (day.status === 'closed') return { ...NO_FIGURE, status: 'closed', words: `${gap}. Forecast closed.` };
     if (day.status === 'booked') return { ...NO_FIGURE, status: 'booked', words: `${gap}. ${bookedWords(day)}.` };
-    if (day.mid === null || day.low === null || day.high === null) return { ...NO_FIGURE, status: 'no_data', words: `${gap}.` };
+    if (day.mid === null || day.low === null || day.high === null) return { ...NO_FIGURE, status: gapStatus, words: `${gap}.` };
     return {
       ...NO_FIGURE, figure: { value: Math.round(day.mid), kind: 'past_forecast' },
       words: `${gap}. ${figureLabel(Math.round(day.mid), { kind: 'past_forecast' })}, likely ${rangeWords(day.low, day.high)}.`,
@@ -340,6 +342,7 @@ export function statusWord(status: CalendarCell['status']): string | null {
     case 'booked': return 'Booked';
     case 'likely_closed': return 'Likely closed';
     case 'no_data': return 'No data';
+    case 'marked_wrong': return 'Marked wrong';
     case 'no_forecast': return 'No forecast';
     case 'outlook': return 'Outlook';
     case null: return null;
