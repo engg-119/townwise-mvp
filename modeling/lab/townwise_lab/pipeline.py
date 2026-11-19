@@ -257,8 +257,12 @@ def _outlook_band(own: pd.Series, every: pd.Series, horizon: int) -> tuple[float
     - n_eff of CONFORMAL_MIN or more: the split conformal 80% rank on n_eff windows, ceil(0.8 (n_eff + 1)) of them,
       read as the same share of the n weeks' misses (in whole numbers, so no rounding moves it);
     - n_eff of 1 or more but under CONFORMAL_MIN: the largest miss, since so few windows hold no 80% rank;
-    - n_eff under 1: every backtest week at that lead, of either kind, by the conformal 80% rank on its weeks, from
-      forecast.MIN_HORIZON_WEEKS of them; with fewer, None."""
+    - n_eff under 1: the larger of the own weeks' largest miss and the conformal 80% rank of every backtest week at
+      that lead, of either kind, from forecast.MIN_HORIZON_WEEKS of them; with fewer, None. The rank treats correlated
+      weeks as exchangeable, which the reasoning above rejects, so it is only a floor under the own weeks' largest
+      miss: then the band never widens when the own weeks reach one window and the floor drops away, unless a new
+      week is a new largest miss. (Every week's largest miss instead widened two-year outlooks past the R2 fallback,
+      and the own weeks alone failed held-out histories: design.md, release B build notes.)"""
     misses = np.sort(own.abs().to_numpy(dtype=float))
     n = len(misses)
     if 7 * n >= CONFORMAL_MIN * horizon:
@@ -271,6 +275,7 @@ def _outlook_band(own: pd.Series, every: pd.Series, horizon: int) -> tuple[float
     if len(every) >= forecast.MIN_HORIZON_WEEKS:
         values = np.sort(every.abs().to_numpy(dtype=float))
         m = float(values[min(-(-8 * (len(values) + 1) // 10), len(values)) - 1])
+        m = max(m, float(misses[-1])) if n else m
         return -m, m
     return None
 

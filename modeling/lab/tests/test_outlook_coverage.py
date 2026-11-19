@@ -1,6 +1,7 @@
 """The outlook's coverage check (D52 decision 6): do a year-long run's outlook ranges hold the guests of the year after
 its cut? Release B ships only if this passes, and it is built to be able to fail: the same check on runs whose outlook
-is not widened at all (every outlook ratio forced to the 28-day ratio, 1) must fail it, which the second test asserts.
+carries the forecast tier's last ratio flat (the obvious naive outlook, no outlook widening) must fail it at every cut
+and horizon, which the last test asserts.
 
 Set on 2026-11-17, before anything was measured, and not tuned after:
 
@@ -23,7 +24,10 @@ Set on 2026-11-17, before anything was measured, and not tuned after:
   both horizons, so the check cannot pass on runs with no outlook.
 
 The control reuses each calibration: forecast.run_file and baseline.run_file are run a second time with
-forecast.outlook_ratio answering 1, which is the run the same calibration would publish with no outlook widening.
+forecast.lead_ratios given no outlook, so every outlook day takes the forecast tier's last ratio (91 days, or the
+reach), which is the run the same calibration would publish if the outlook only carried the tier's ranges on. Outlook
+weeks stay the same on both sides in the control, so it isolates the ratio. (Until 2026-11-19 the control forced every
+outlook ratio to 1, narrower than the tier's own last days: a strawman that any widening would beat.)
 Synthetic data only. Calibrates 64 histories (several minutes)."""
 
 import numpy as np
@@ -39,12 +43,20 @@ HORIZONS = (182, 365)
 WEEKLY_MEAN_MIN, WEEKLY_HISTORY_MIN, DAILY_MEAN_MIN = 0.80, 0.65, 0.75
 
 
+LEAD_RATIOS = forecast.lead_ratios
+
+
+def _flat(dates, data_through, widening, outlook=None):
+    """forecast.lead_ratios with the forecast tier's last ratio carried flat over the outlook's days."""
+    return LEAD_RATIOS(dates, data_through, widening)
+
+
 def _twice(original, controls: list):
-    """A run_file that returns its run and keeps, in `controls`, the run it makes with no outlook widening."""
+    """A run_file that returns its run and keeps, in `controls`, the run it makes with the tier's ratio held flat."""
     def run_file(*args, **kwargs):
         honest = original(*args, **kwargs)
         with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(forecast, "outlook_ratio", lambda lead, r182, r365: 1.0)
+            patch.setattr(forecast, "lead_ratios", _flat)
             controls.append(original(*args, **kwargs))
         return honest
     return run_file
@@ -141,7 +153,7 @@ def test_the_outlook_ranges_hold_the_year_after_each_cut(scored, capsys):
     assert failed == []
 
 
-def test_the_check_fails_with_no_outlook_widening(scored, capsys):
+def test_the_check_fails_with_the_tiers_ratio_held_flat(scored, capsys):
     with capsys.disabled():
         print("\n" + report(scored, "control"))
-    assert any(not v["passes"] for v in verdicts(scored, "control").values())
+    assert all(not v["passes"] for v in verdicts(scored, "control").values())

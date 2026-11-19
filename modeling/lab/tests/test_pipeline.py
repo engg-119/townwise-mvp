@@ -718,13 +718,25 @@ def test_outlook_band_takes_the_largest_miss_from_one_window_to_nine():
 
 
 def test_outlook_band_reads_every_week_under_one_window():
-    # 25 weeks at 182 days (0.96 windows) and 52 at 365 (0.997) read every week at that lead, of either kind, by its
-    # conformal 80% rank: of 30 weeks the 25th smallest, ceil(0.8 * 31)
+    # 25 weeks at 182 days (0.96 windows) and 52 at 365 (0.997): every week at that lead, of either kind, by its
+    # conformal 80% rank (of 30 weeks the 25th smallest, ceil(0.8 * 31)), but never under the own weeks' largest miss
     every = errors(np.arange(1, 31) / 100)
-    assert pipeline._outlook_band(every[-25:], every, 182) == pytest.approx((-0.25, 0.25))
+    assert pipeline._outlook_band(every[:25], every, 182) == pytest.approx((-0.25, 0.25))
+    assert pipeline._outlook_band(every[-25:], every, 182) == pytest.approx((-0.30, 0.30))
     assert pipeline._outlook_band(NONE, every, 182) == pytest.approx((-0.25, 0.25))  # none of the run's kind yet
     assert pipeline._outlook_band(errors([0.2] * 52), every, 365) == pytest.approx((-0.25, 0.25))
+    assert pipeline._outlook_band(errors([0.1] * 51 + [0.5]), every, 365) == pytest.approx((-0.5, 0.5))
     assert pipeline._outlook_band(NONE, every[:8], 365) == pytest.approx((-0.08, 0.08))  # 8 weeks: the 8th, ceil(7.2)
+
+
+def test_outlook_band_never_widens_as_the_runs_own_weeks_reach_one_window():
+    # The run's own weeks: one large miss, then small ones; 20 weeks of the other kind at 0.2. Under one window the
+    # every-week rank (0.2) is only a floor under the own largest miss (0.3), so the 26th own week at 182 days (one
+    # window, where the floor drops away) does not widen the band: no week after the first is a new largest miss
+    own = errors([0.3] + [0.05] * 40)
+    every = pd.concat([own, errors([0.2] * 20)])
+    widths = [pipeline._outlook_band(own[:n], every, 182)[1] for n in range(1, len(own) + 1)]
+    assert all(earlier >= later for earlier, later in zip(widths, widths[1:])), widths
 
 
 def test_outlook_band_is_none_under_8_weeks():
@@ -734,8 +746,9 @@ def test_outlook_band_is_none_under_8_weeks():
 
 def test_outlook_growth_with_no_year_ahead_backtest():
     # Spec scenario: 15 weeks at 182 whose band is 1.5 times the 28-day range's wider side, none at 365, a 91-day ratio
-    # of 1.3. Under one window, the 13th smallest of 15 misses (ceil(0.8 * 16)) is 0.15, over a side of 0.1
-    reports = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(errors([0.01] * 12 + [0.15, 0.2, 0.3]))),
+    # of 1.3. Under one window, the larger of the largest miss and the 13th smallest of 15 (ceil(0.8 * 16)), both
+    # 0.15, over a side of 0.1
+    reports = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(errors([0.01] * 12 + [0.15] * 3))),
                                                   (365, *backtested(NONE))], RANGE28)
     r182 = max(1.3 * math.sqrt(2), 1.5)
     assert [r["ratio"] for r in reports] == pytest.approx([r182, r182 * math.sqrt(365 / 182)])
@@ -751,7 +764,7 @@ def test_outlook_growth_with_no_year_ahead_backtest():
 
 def test_outlook_backtest_only_widens_the_growth():
     growth = 1.3 * math.sqrt(2)
-    # 25 weeks (under one window): the 21st smallest, ceil(0.8 * 26), is 0.25 over a side of 0.1
+    # 25 weeks (under one window): the largest miss and the 21st smallest, ceil(0.8 * 26), are 0.25 over a side of 0.1
     wider = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(errors([0.01] * 20 + [0.25] * 5))),
                                                 (365, *backtested(NONE))], RANGE28)
     assert wider[0]["ratio"] == pytest.approx(2.5) and wider[0]["basis"] == "growth_or_backtest"
