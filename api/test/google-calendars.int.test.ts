@@ -351,6 +351,8 @@ describe('Google’s access is sealed and never shown', () => {
     expect(listed.body).toEqual({
       calendars: [{ ...calendar }],
       google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID, canConnect: true },
+      // D58: Sort with TownwiseAI is off with no model here.
+      bookingSort: { available: false },
     });
   });
 });

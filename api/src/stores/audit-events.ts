@@ -57,6 +57,11 @@ export const AUDIT_DETAIL_KEYS = {
   'owner_calendar.added': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
   'owner_calendar.removed': ['locationId', 'calendarId', 'kind', 'eventCount'],
   'owner_calendar.refreshed': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
+  // Booking labels (D58, learn-from-calendar-bookings design decision 14): counts and the label set, never an event's uid,
+  // title or date, and never a label per event beyond the one edit's.
+  'owner_calendar.bookings_sorted': ['locationId', 'calendarId', 'sent', 'labeled'],
+  'owner_calendar.booking_labeled': ['locationId', 'calendarId', 'booking'],
+  'owner_calendar.bookings_confirmed': ['locationId', 'calendarId', 'buyouts', 'parties', 'notes'],
   // Google access for calendars (openspec change connect-google-calendar, design decision 13): the connection's id, how
   // many calendars went with it and why ('unused' or 'last_calendar'). Never a code, a token, a Google calendar id, an
   // email address, a calendar's name or anything Google answered.

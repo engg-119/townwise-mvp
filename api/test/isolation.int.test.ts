@@ -355,6 +355,8 @@ const BODY: Record<string, unknown> = {
   'org.rules.create': { text: 'Closed Mondays' },
   'org.rules.update': { text: 'Closed Tuesdays' },
   'org.owner_calendars.create': { kind: 'file', label: 'Added by A', ics: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n' },
+  // D58: a label names its event in the body.
+  'org.owner_calendars.bookings_label': { uid: 'fixture-0@example.test', booking: 'party' },
 };
 const QUERY: Record<string, string> = {
   'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
@@ -446,6 +448,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       // Owner calendars.
       'org.owner_calendars.list', 'org.owner_calendars.events', 'org.owner_calendars.create', 'org.owner_calendars.refresh',
       'org.owner_calendars.remove',
+      // D58, booking labels.
+      'org.owner_calendars.bookings_sort', 'org.owner_calendars.bookings_label', 'org.owner_calendars.bookings_confirm',
     ]));
   });
 

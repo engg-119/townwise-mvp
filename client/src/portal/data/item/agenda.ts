@@ -99,6 +99,18 @@ export function agendaMonths(items: readonly AgendaItem[], shown?: string): Agen
   return [...months].map(([month, list]) => ({ month, label: monthLabel(month), items: list }));
 }
 
+/**
+ * A file calendar keeps its events from 3 years back (D58, 1,096 days), so its page's Earlier goes back 36 months, not
+ * the Calendar's 12; Later stops where the Calendar's does.
+ */
+export const FILE_MONTHS_BACK = 36;
+
+/** The month `count` months before `month` ("YYYY-MM"). */
+export function monthsBefore(month: string, count: number): string {
+  const index = Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1 - count;
+  return `${String(Math.floor(index / 12))}-${String((index % 12) + 1).padStart(2, '0')}`;
+}
+
 /** “No events in November 2026.” */
 export function emptyMonthLine(month: string): string {
   return `No events in ${monthLabel(month)}.`;

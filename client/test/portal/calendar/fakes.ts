@@ -157,7 +157,7 @@ export function ownerCalendar(fields: Partial<OwnerCalendar> = {}): OwnerCalenda
   return {
     id: 'c1', label: 'Kitchen', kind: 'file', host: null, eventCount: 0, skippedRepeating: 0, status: 'ok',
     lastSuccessAt: '2026-11-11T15:00:00.000Z', lastAttemptAt: '2026-11-11T15:00:00.000Z', createdAt: '2026-11-01T15:00:00.000Z',
-    mine: false, ...fields,
+    mine: false, format: null, bookings: null, ...fields,
   };
 }
 
@@ -166,7 +166,7 @@ export function ownerEvent(fields: Partial<OwnerCalendarEvent> = {}): OwnerCalen
   const startDate = fields.startDate ?? '2026-11-21';
   return {
     calendarId: 'c1', calendar: 'Kitchen', uid: 'e1', title: 'Wine delivery', startDate, endDate: startDate, startTime: null, endTime: null,
-    ...fields,
+    booking: null, bookingBy: null, ...fields,
   };
 }
 

@@ -48,7 +48,8 @@ import { IcsImport } from './IcsImport';
 // calendar", which the Google section replaces while it is open; then "How importing works" with its help, mounted
 // while hidden and describing the import, and under view-as the popover's own read-only line. The help, and native's
 // line in place of the import, name Google calendars only while the list answers them on. A chosen file is posted as
-// `{ kind: 'file', label, ics, titlesNotice }` (the label from its name, labelOfFile), with "Importing…" meanwhile, and a
+// `{ kind: 'file', label, ics, titlesNotice }` (an .ics or a calendar CSV's text, the label from its name, labelOfFile;
+// the added line says how many CSV rows were skipped), with "Importing…" meanwhile, and a
 // link as `{ kind: 'link', label, url, titlesNotice }` with "Adding…" while the API fetches it (`titlesNotice` since this
 // popover shows CALENDARS_COPY.weeklyReading); on a 201 the page reads the list and the
 // grid's stored events again and turns "Your calendar" on (`onChanged(true)`). "Refresh now" (a 200, whatever its
@@ -441,7 +442,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
 
   const importFile = useAction(useCallback(async (file: { name: string; text: string }) => {
     setMessage(null);
-    let added: OwnerCalendar;
+    let added: { calendar: OwnerCalendar; skippedRows: number };
     try {
       // This popover shows CALENDARS_COPY.weeklyReading, so the add records that the person was told.
       added = await addOwnerCalendar(api, location.id, { kind: 'file', label: labelOfFile(file.name), ics: file.text, titlesNotice: WEEKLY_TITLES_NOTICE });
@@ -449,7 +450,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
       setMessage({ live: 'alert', items: [addRefusal(error, 'file', platform)] });
       return;
     }
-    setMessage({ live: 'status', items: addedLines(added) });
+    setMessage({ live: 'status', items: addedLines(added.calendar, added.skippedRows) });
     onChanged(true);
   }, [api, location.id, platform, onChanged]));
 
@@ -466,7 +467,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   const add = useAction(useCallback(async (body: { label: string; url: string }) => {
     let added: OwnerCalendar;
     try {
-      added = await addOwnerCalendar(api, location.id, { kind: 'link', ...body, titlesNotice: WEEKLY_TITLES_NOTICE });
+      ({ calendar: added } = await addOwnerCalendar(api, location.id, { kind: 'link', ...body, titlesNotice: WEEKLY_TITLES_NOTICE }));
     } catch (error) {
       onRefused(addRefusal(error, 'link', platform));
       return;
@@ -621,7 +622,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     for (const choice of picked) {
       let stop = false;
       try {
-        lines.push(...addedLines(await addOwnerCalendar(api, location.id, { kind: 'google', googleCalendarId: choice.id })));
+        lines.push(...addedLines((await addOwnerCalendar(api, location.id, { kind: 'google', googleCalendarId: choice.id })).calendar));
         added += 1;
       } catch (error) {
         refused = true;

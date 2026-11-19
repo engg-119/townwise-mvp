@@ -31,6 +31,7 @@ import {
   readConnectedCalendar, readGoogleSource, type GoogleCalendarRead,
 } from '../calendar/google-access.ts';
 import { GoogleCalendarError, type GoogleCalendarEntry } from '../calendar/google.ts';
+import { parseCalendarFile } from '../calendar/csv-events.ts';
 import { MAX_ICS_BYTES, parseIcs, WINDOW_DAYS, type IcsTown } from '../calendar/ics.ts';
 import { open, seal } from '../calendar/secret.ts';
 import { WEEKLY_TITLES_NOTICE } from '../calendar/titles-notice.ts';
@@ -39,7 +40,8 @@ import type { AuditDetails } from '../stores/audit-events.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import {
   ADDED_REPLACE, MANUAL_REFRESH_INTERVAL_MS, MAX_CALENDARS, MAX_LABEL_CHARS,
-  type CalendarFailure, type CalendarKind, type CalendarStatus, type NewCalendar, type OwnerCalendarEvent, type OwnerCalendarRecord, type ParsedCalendar,
+  type BookingCounts, type BookingsState, type CalendarFailure, type CalendarKind, type CalendarStatus, type NewCalendar, type OwnerCalendarEvent,
+  type OwnerCalendarRecord, type ParsedCalendar,
 } from '../stores/owner-calendars.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import {
@@ -69,6 +71,10 @@ export interface OwnerCalendarView {
    * read through their own connection; false for a file or a link, and for staff under view-as or open as admin.
    */
   mine: boolean;
+  /** A file's format, `ics` or `csv` (D58); null for a link or a Google calendar. */
+  format: 'ics' | 'csv' | null;
+  /** A file calendar's booking labels (D58): their state and counts; null for a link or a Google calendar. */
+  bookings: { state: BookingsState; sortedAt: string | null; confirmedAt: string | null; counts: BookingCounts } | null;
 }
 
 /**
@@ -133,7 +139,14 @@ function calendarLimit(): AppError {
   return new AppError(409, 'calendar_limit', `This location already has ${String(MAX_CALENDARS)} calendars`);
 }
 
-export function ownerCalendarView(calendar: OwnerCalendarRecord, mine: boolean): OwnerCalendarView {
+/** A file calendar with no labels read: every event unlabeled (a new calendar's). */
+function unlabeled(calendar: OwnerCalendarRecord): BookingCounts {
+  return { buyout: 0, party: 0, own_event: 0, other: 0, unlabeled: calendar.eventCount };
+}
+
+/** The calendar as answered; a file's bookings carry `counts`, or every event unlabeled when none are given. */
+export function ownerCalendarView(calendar: OwnerCalendarRecord, mine: boolean, counts?: BookingCounts): OwnerCalendarView {
+  const { bookings } = calendar;
   return {
     id: calendar.id,
     label: calendar.label,
@@ -146,6 +159,11 @@ export function ownerCalendarView(calendar: OwnerCalendarRecord, mine: boolean):
     lastAttemptAt: calendar.lastAttemptAt?.toISOString() ?? null,
     createdAt: calendar.createdAt.toISOString(),
     mine,
+    format: calendar.format,
+    bookings: bookings === null ? null : {
+      state: bookings.state, sortedAt: bookings.sortedAt?.toISOString() ?? null, confirmedAt: bookings.confirmedAt?.toISOString() ?? null,
+      counts: counts ?? unlabeled(calendar),
+    },
   };
 }
 
@@ -230,9 +248,9 @@ export function staffReads(caller: MemberPrincipal): boolean {
  * per organization, kept across a reconnect) and ending a connection removes its calendars, so the adder's connection
  * is the one that reads it. Never for staff: under view-as `userId` is the target's.
  */
-function shownView(calendar: OwnerCalendarRecord, caller: MemberPrincipal): OwnerCalendarView {
+function shownView(calendar: OwnerCalendarRecord, caller: MemberPrincipal, counts?: BookingCounts): OwnerCalendarView {
   const staff = staffReads(caller);
-  const view = ownerCalendarView(calendar, !staff && calendar.kind === 'google' && calendar.createdBy === caller.userId);
+  const view = ownerCalendarView(calendar, !staff && calendar.kind === 'google' && calendar.createdBy === caller.userId, counts);
   return staff && calendar.kind === 'google' ? { ...view, label: GOOGLE_CALENDAR_LABEL } : view;
 }
 
@@ -253,14 +271,20 @@ async function googleView(ctx: TownwiseContext, caller: MemberPrincipal): Promis
 
 /**
  * GET /api/org/locations/:locationId/owner-calendars: the location's calendars, oldest first, each with `mine` (a Google
- * calendar the caller added, which they can reconnect), and `google`: whether Google calendars are on, whether the
- * caller has a connection that is not revoked, and the public client id.
+ * calendar the caller added, which they can reconnect) and, for a file, its format and booking labels' state and counts
+ * (D58); `google`: whether Google calendars are on, whether the caller has a connection that is not revoked, and the
+ * public client id; and `bookingSort`: whether Sort with TownwiseAI is available (a model key is set).
  */
 export async function listOwnerCalendars(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
-  const calendars = await ctx.stores.ownerCalendars.list(caller.scope, location.id);
-  res.status(200).json({ calendars: calendars.map((calendar) => shownView(calendar, caller)), google: await googleView(ctx, caller) });
+  const [calendars, counts] = await Promise.all([
+    ctx.stores.ownerCalendars.list(caller.scope, location.id), ctx.stores.ownerCalendars.labelCounts(caller.scope, location.id),
+  ]);
+  res.status(200).json({
+    calendars: calendars.map((calendar) => shownView(calendar, caller, counts.get(calendar.id))), google: await googleView(ctx, caller),
+    bookingSort: { available: ctx.chat !== null },
+  });
 }
 
 function googleNotFound(): AppError {
@@ -344,13 +368,14 @@ async function googleToAdd(
 
 /**
  * POST /api/org/locations/:locationId/owner-calendars: `{ kind: 'file', label, ics }`, `{ kind: 'link', label, url }` or
- * `{ kind: 'google', googleCalendarId }`. A file of at most 1 MB (400 too_large) is parsed with the town's today and
- * time zone (400 not_calendar). A link needs the calendar key (503 calendar_links_unavailable), spends one of the
+ * `{ kind: 'google', googleCalendarId }`. A file of at most 1 MB (400 too_large), whose text `ics` carries whether it is
+ * an .ics file or a calendar CSV (D58; the field keeps its name for shipped builds), is parsed with the town's today and
+ * time zone in the file window (calendar/csv-events.ts parseCalendarFile; 400 not_calendar) and stored with its format. A link needs the calendar key (503 calendar_links_unavailable), spends one of the
  * account's link adds (429 rate_limited), and is fetched and parsed before anything is stored (400 with the failure's
  * code); its address is stored sealed, with its host. A Google calendar is checked and read as googleToAdd says, stored
  * with its Google calendar id sealed and its connection, and checked again after storing: a connection ended meanwhile
  * takes the new calendar with it (409 google_not_connected). A sixth calendar answers 409 calendar_limit. 201 with the
- * calendar.
+ * calendar and `skippedRows`, a CSV's rows whose start could not be read (0 otherwise).
  */
 export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -362,12 +387,16 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
   const town = townOf(location, now);
   let calendar: NewCalendar;
   let parsed: ParsedCalendar;
+  let skippedRows = 0;
   if (body.kind === 'file') {
     if (Buffer.byteLength(body.ics, 'utf8') > MAX_ICS_BYTES) throw new AppError(400, 'too_large', READ_FAILURES.too_large);
-    const read = parseIcs(body.ics, town);
+    const read = parseCalendarFile(body.ics, town);
     if ('error' in read) throw new AppError(400, read.error, READ_FAILURES[read.error]);
-    calendar = { kind: 'file', label: body.label, ...(body.titlesNotice === undefined ? {} : { titlesNotice: body.titlesNotice }) };
+    calendar = {
+      kind: 'file', label: body.label, format: read.format, ...(body.titlesNotice === undefined ? {} : { titlesNotice: body.titlesNotice }),
+    };
     parsed = read;
+    ({ skippedRows } = read);
   } else if (body.kind === 'link') {
     const key = linksKey(ctx);
     // Before the fetch, so a full location costs no request; the add itself holds the limit against concurrent adds.
@@ -393,7 +422,7 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
   // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none.
   await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
   await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
-  res.status(201).json({ calendar: shownView(added, caller) });
+  res.status(201).json({ calendar: shownView(added, caller), skippedRows });
 }
 
 /** 429 rate_limited until 5 minutes after the calendar's last "Refresh now". */

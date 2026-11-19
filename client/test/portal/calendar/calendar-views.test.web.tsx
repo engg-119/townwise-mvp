@@ -278,7 +278,7 @@ function chooseLargeFile(): void {
   fireEvent.change(input, { target: { files: [file] } });
 }
 
-const TOO_LARGE = 'This file is over 1 MB. Export a shorter range of your calendar.';
+const TOO_LARGE = 'This file is over 1 MB. Export a shorter range of your calendar, or a CSV with fewer columns.';
 const NOVEMBER_FORECAST = `${PATH}/forecast?from=2026-10-26&to=2026-12-06`;
 
 function viewButton(name: 'Month' | 'Week'): HTMLElement {

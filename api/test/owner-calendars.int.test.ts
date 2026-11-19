@@ -70,6 +70,18 @@ const FIRST = ics(
   vevent('UID:party@example.test', 'SUMMARY:Office party', 'DTSTART;VALUE=DATE:20260620', 'DTEND;VALUE=DATE:20260621'),
   vevent('UID:trivia@example.test', 'SUMMARY:Weekly trivia', 'DTSTART:20260602T190000', 'RRULE:FREQ=WEEKLY'),
 );
+/**
+ * A calendar CSV export (learn-from-calendar-bookings, D58), its columns as the owner's tool writes them: one event 700
+ * days before the test clock's today (2026-06-01), one ahead, one row whose start can't be read, and private columns
+ * that must never be kept. Made up.
+ */
+const CSV_EXPORT = [
+  'calendar_id,event_id,title,description,location,start_at,end_at,timezone,status,organizer_email,google_calendar_url',
+  'sentinel-calendar@group.example.test,csv-old,Summer reunion,"Call 603-555-0199\nSentinel-description",Sentinel-location,2024-07-01T18:00:00-04:00,2024-07-01T22:00:00-04:00,America/New_York,confirmed,sentinel-organizer@example.test,https://www.google.com/calendar/event?eid=SENTINEL',
+  'sentinel-calendar@group.example.test,csv-new,Graduation dinner,,,2026-06-12T19:00:00-04:00,2026-06-12T23:00:00-04:00,America/New_York,confirmed,,',
+  'sentinel-calendar@group.example.test,csv-bad,Unreadable,,,someday,,America/New_York,confirmed,,',
+].join('\r\n');
+
 /** What the same link answers later: three single events. */
 const SECOND = ics(
   vevent('UID:wine@example.test', 'SUMMARY:Wine tasting', 'DTSTART;VALUE=DATE:20260612'),
@@ -79,6 +91,12 @@ const SECOND = ics(
 const JUNE = '?from=2026-06-01&to=2026-06-30';
 /** The list's `google` while Google calendars are off (connect-google-calendar): no Google client is passed here. */
 const GOOGLE_OFF = { available: false, connected: false, clientId: null, canConnect: false };
+/** The list's `bookingSort` with no model here (learn-from-calendar-bookings, D58). */
+const SORT_OFF = { available: false };
+/** A new file calendar's bookings (D58): unsorted, every event unlabeled. */
+function unsorted(events: number): OwnerCalendarView['bookings'] {
+  return { state: 'unsorted', sortedAt: null, confirmedAt: null, counts: { buyout: 0, party: 0, own_event: 0, other: 0, unlabeled: events } };
+}
 
 /** FIRST padded to exactly `bytes` bytes with lines of 40 to 79 bytes that the parser passes over: about 26,000 CRLFs. */
 function padded(bytes: number): string {
@@ -224,10 +242,11 @@ describe('with the calendar key', () => {
     const calendar = calendarOf(added);
     expect(calendar).toEqual({
       id: expect.any(String) as string, label: LABEL, kind: 'file', host: null, eventCount: 2, skippedRepeating: 1, status: 'ok',
-      lastSuccessAt: now, lastAttemptAt: now, createdAt: now, mine: false,
+      lastSuccessAt: now, lastAttemptAt: now, createdAt: now, mine: false, format: 'ics', bookings: unsorted(2),
     });
+    expect(added.body.skippedRows).toBe(0);
     expect(sent).toEqual([]);
-    expect((await send(base(t), t.admin)).body).toEqual({ calendars: [calendar], google: GOOGLE_OFF });
+    expect((await send(base(t), t.admin)).body).toEqual({ calendars: [calendar], google: GOOGLE_OFF, bookingSort: SORT_OFF });
 
     // An event keeps its UID, title, dates and hours: never its description, location, attendees or organizer.
     const rows = await eventRows(calendar.id);
@@ -240,11 +259,11 @@ describe('with the calendar key', () => {
       events: [
         {
           calendarId: calendar.id, calendar: LABEL, uid: 'dinner@example.test', title: 'Rehearsal dinner', startDate: '2026-06-10',
-          endDate: '2026-06-10', startTime: '18:00', endTime: '21:00',
+          endDate: '2026-06-10', startTime: '18:00', endTime: '21:00', booking: null, bookingBy: null,
         },
         {
           calendarId: calendar.id, calendar: LABEL, uid: 'party@example.test', title: 'Office party', startDate: '2026-06-20',
-          endDate: '2026-06-20', startTime: null, endTime: null,
+          endDate: '2026-06-20', startTime: null, endTime: null, booking: null, bookingBy: null,
         },
       ],
     });
@@ -300,6 +319,41 @@ describe('with the calendar key', () => {
     expect(await sourceCount(t)).toBe(1);
   });
 
+  it('imports a calendar CSV (D58): its format stored, rows skipped counted, 700 days back readable, and its other columns kept nowhere', async () => {
+    const t = await tenant('Csv Diner');
+    const added = await addFile(t, 'Master calendar', CSV_EXPORT);
+    expect(added.status).toBe(201);
+    const calendar = calendarOf(added);
+    expect(calendar).toMatchObject({ kind: 'file', format: 'csv', eventCount: 2, skippedRepeating: 0, bookings: unsorted(2) });
+    expect(added.body.skippedRows).toBe(1);
+    const rows = await eventRows(calendar.id);
+    expect(rows.map((row) => row.uid as string).sort()).toEqual(['csv-new', 'csv-old']);
+    const source = await server.connection.collection('tw_calendar_sources').findOne({ _id: new Types.ObjectId(calendar.id) });
+    expect(source?.format).toBe('csv');
+    const kept = JSON.stringify([rows, source, answers.at(-1), await auditOf(calendar.id)]);
+    for (const text of ['Sentinel', 'sentinel', '603-555', 'google.com', 'Unreadable']) expect(kept).not.toContain(text);
+    // 700 days back, in the town's wall time.
+    expect(await titles(t, '?from=2024-07-01&to=2024-07-31')).toEqual(['Summer reunion']);
+    const [event] = await auditOf(calendar.id);
+    expect(event?.details).toEqual({ locationId: t.locationId, calendarId: calendar.id, kind: 'file', eventCount: 2, status: 'ok' });
+
+    // A sales export is not a calendar, and stores nothing.
+    const before = await sourceCount(t);
+    expect(await addFile(t, 'Sales', 'date,guests,net_sales\r\n2026-05-01,120,2400.00\r\n')).toMatchObject({ status: 400, body: { error: 'not_calendar' } });
+    expect(await addFile(t, 'Half', 'event_id,title,start_at\r\nx,Party,2026-06-10\r\n')).toMatchObject({ status: 400, body: { error: 'not_calendar' } });
+    expect(await sourceCount(t)).toBe(before);
+  });
+
+  it('with no model, Sort with TownwiseAI answers 503 chat_unavailable, and with the lab off a confirm says the refresh will learn (D58)', async () => {
+    const t = await tenant('Quiet Kitchen');
+    const calendar = calendarOf(await addFile(t, 'Master calendar', CSV_EXPORT));
+    const bookings = `${base(t)}/${calendar.id}/bookings`;
+    expect(await send(`${bookings}/sort`, t.admin, { method: 'POST' })).toMatchObject({ status: 503, body: { error: 'chat_unavailable' } });
+    expect(await send(bookings, t.admin, { method: 'PATCH', json: { uid: 'csv-new', booking: 'party' } })).toMatchObject({ status: 200 });
+    const confirmed = await send(`${bookings}/confirm`, t.admin, { method: 'POST' });
+    expect(confirmed).toMatchObject({ status: 200, body: { notesMade: 1, calibration: { status: 'lab_unavailable', id: null } } });
+  });
+
   it('adds a link: fetched through the guarded fetcher, stored sealed with its host, and shown by its label and host only', async () => {
     const t = await tenant('Link Bistro');
     const now = server.clock.now();
@@ -309,6 +363,7 @@ describe('with the calendar key', () => {
     expect(calendar).toEqual({
       id: expect.any(String) as string, label: LABEL, kind: 'link', host: 'calendar.google.com', eventCount: 2, skippedRepeating: 1,
       status: 'ok', lastSuccessAt: now.toISOString(), lastAttemptAt: now.toISOString(), createdAt: now.toISOString(), mine: false,
+      format: null, bookings: null,
     });
     // One request, to the address's path, naming itself only as the calendar reader.
     expect(sent.map((options) => [options.hostname, options.path, options.headers])).toEqual([
@@ -324,7 +379,7 @@ describe('with the calendar key', () => {
     expect(open(KEY, String(raw?.sealedAddress))).toEqual({ ok: true, text: ADDRESS });
 
     const listed = await send(base(t), t.member);
-    expect(listed.body).toEqual({ calendars: [calendar], google: GOOGLE_OFF });
+    expect(listed.body).toEqual({ calendars: [calendar], google: GOOGLE_OFF, bookingSort: SORT_OFF });
     expect(await titles(t)).toEqual(['Rehearsal dinner', 'Office party']);
     const [event] = await auditOf(calendar.id);
     expect(event?.action).toBe('owner_calendar.added');
@@ -475,7 +530,7 @@ describe('with the calendar key', () => {
     expect((await send(`${base(t)}/${gone.id}`, t.member, { method: 'DELETE' })).status).toBe(204);
     expect(await eventRows(gone.id)).toEqual([]);
     expect(await titles(t)).toEqual(['Kept event']);
-    expect((await send(base(t), t.member)).body).toEqual({ calendars: [kept], google: GOOGLE_OFF });
+    expect((await send(base(t), t.member)).body).toEqual({ calendars: [kept], google: GOOGLE_OFF, bookingSort: SORT_OFF });
     const removed = (await auditOf(gone.id)).at(-1);
     expect(removed).toMatchObject({ action: 'owner_calendar.removed', target: { type: 'owner_calendar', id: gone.id } });
     expect(removed?.details).toEqual({ locationId: t.locationId, calendarId: gone.id, kind: 'link', eventCount: 2 });
@@ -530,7 +585,7 @@ describe('with the calendar key', () => {
     await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: t.member.userId, orgId: t.orgId });
     const before = (await auditEvents(server)).length;
     sent.length = 0;
-    expect((await send(base(t), staff)).body).toEqual({ calendars: [calendar], google: GOOGLE_OFF });
+    expect((await send(base(t), staff)).body).toEqual({ calendars: [calendar], google: GOOGLE_OFF, bookingSort: SORT_OFF });
     expect((await send(`${base(t)}/events${JUNE}`, staff)).status).toBe(200);
     for (const [path, init] of [
       [base(t), { json: { kind: 'file', label: LABEL, ics: FIRST } }], [`${base(t)}/${calendar.id}/refresh`, { method: 'POST' }],
@@ -631,9 +686,12 @@ describe('with Google calendars on', () => {
     const calendar = calendarOf(added);
     expect(calendar).toMatchObject({ kind: 'google', host: null, eventCount: 1, skippedRepeating: 0, status: 'ok', mine: true });
     // Connected and mine are the caller's own: the admin, who never connected and added no Google calendar, reads false.
-    expect((await send(base(t), t.member)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID, canConnect: true } });
+    expect((await send(base(t), t.member)).body).toEqual({
+      calendars: [file, calendar], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID, canConnect: true }, bookingSort: SORT_OFF,
+    });
     expect((await send(base(t), t.admin)).body).toEqual({
       calendars: [file, { ...calendar, mine: false }], google: { available: true, connected: false, clientId: GOOGLE_CLIENT_ID, canConnect: true },
+      bookingSort: SORT_OFF,
     });
 
     google.state.events[SHARED_ID] = [allDay('shared-2', 'Book club', '2026-06-15'), allDay('shared-3', 'Graduation lunch', '2026-06-27')];

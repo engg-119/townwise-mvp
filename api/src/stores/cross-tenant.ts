@@ -292,7 +292,8 @@ export interface DeletedPersonRecords {
  * and their Google connections for calendars, in every organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
  * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
  * and from the forecasts switch they last set (the forecast lab), and from the weekly suggestions switch they last set
- * and the suggestions they decided. Their active days go too, in every organization (staff-overview). Never an active
+ * and the suggestions they decided, and from the file calendars whose bookings they confirmed (D58). Their active days go
+ * too, in every organization (staff-overview). Never an active
  * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
  * filter, so a retry completes the work. (U9: tw_agent_answers holds no person id, so nothing of it is the person's.)
  */
@@ -349,6 +350,8 @@ export async function deletePersonRecords(
   // And who last switched sending calendar event titles to TownwiseAI (calendar-event-suggestions). Not counted.
   await orgModel(connection).updateMany({ 'calendarTitlesToAi.by': userId }, { $set: { 'calendarTitlesToAi.by': null } });
   await agentSuggestionModel(connection).updateMany({ decidedBy: userId }, { $set: { decidedBy: null } });
+  // D58: the org admin who confirmed a file calendar's bookings; the confirmation stays. Not counted.
+  await calendarSourceModel(connection).updateMany({ 'bookings.confirmedBy': userId }, { $set: { 'bookings.confirmedBy': null } });
   // D42: the staff member who paused the weekly refresh, on its one schedule document; the pause stays. Not counted.
   await forecastScheduleModel(connection).updateOne({ 'paused.by': userId }, { $set: { 'paused.by': null, 'paused.email': DELETED_PERSON } });
   // Google access for calendars (connect-google-calendar): the handler has already ended any still found, revoking

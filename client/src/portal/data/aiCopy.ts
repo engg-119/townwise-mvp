@@ -67,6 +67,8 @@ const SKIPPED: Readonly<Record<string, string>> = {
   requester_gone: 'TownwiseAI added nothing from this file: the person who asked is no longer on your team.',
   too_complex: 'TownwiseAI didn’t read this file: it’s too complex to turn into text.',
   not_readable: 'TownwiseAI didn’t read this file: it couldn’t be opened, so it may be damaged.',
+  // D58: a calendar CSV is read whole by the calendar import instead, never half-read by a model.
+  calendar_export: 'TownwiseAI didn’t read this file: it’s a calendar export. Import it in Your calendars instead.',
 };
 const FAILED: Readonly<Record<string, string>> = {
   refused: 'TownwiseAI declined to read this file.',

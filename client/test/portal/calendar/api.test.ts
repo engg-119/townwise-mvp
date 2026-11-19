@@ -1,6 +1,6 @@
 import {
-  addOwnerCalendar, connectGoogleCalendars, dropGoogleConnection, fetchGoogleChoices, fetchOwnerCalendarEvents, fetchOwnerCalendars,
-  GOOGLE_OFF, refreshOwnerCalendar, removeOwnerCalendar,
+  addOwnerCalendar, confirmBookings, connectGoogleCalendars, dropGoogleConnection, fetchGoogleChoices, fetchOwnerCalendarEvents,
+  fetchOwnerCalendars, GOOGLE_OFF, labelBooking, refreshOwnerCalendar, removeOwnerCalendar, sortBookings,
 } from '../../../src/portal/calendar/api';
 import { WEEKLY_TITLES_NOTICE } from '../../../src/portal/calendar/calendars';
 import { ACCESS, fakePortalApi, meOf, refusal, writes } from '../../helpers/portal';
@@ -27,13 +27,15 @@ const FILE = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', host: nul
 const LINK = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1 });
 const GOOGLE = ownerCalendar({ id: 'c4', label: 'Google calendar', kind: 'google', host: null, eventCount: 40 });
 const GOOGLE_ON = { available: true, connected: true, clientId: CLIENT_ID, canConnect: true };
+/** What a list without `bookingSort`, from an API older than D58, reads as. */
+const SORT_OFF = { available: false };
 
 describe('owner calendar calls (spec 10.18)', () => {
   test('GET .../owner-calendars returns the calendars and `google`, a status the client has no words for included, stripping other keys', async () => {
     const { fake, routes } = api();
     const later = { ...LINK, id: 'c3', status: 'gone_quiet' };
     routes.gets[BASE] = () => ({ calendars: [{ ...FILE, slot: 0 }, LINK, later, GOOGLE], google: { ...GOOGLE_ON, scopes: ['openid'] } });
-    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE, LINK, later, GOOGLE], google: GOOGLE_ON });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE, LINK, later, GOOGLE], google: GOOGLE_ON, bookingSort: SORT_OFF });
     expect(fake.calls).toEqual([{ method: 'GET', path: BASE, body: undefined }]);
   });
 
@@ -41,7 +43,7 @@ describe('owner calendar calls (spec 10.18)', () => {
     const { fake, routes } = api();
     const later = { ...FILE, id: 'c5', kind: 'outlook' };
     routes.gets[BASE] = () => ({ calendars: [GOOGLE, later], google: GOOGLE_OFF });
-    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [GOOGLE, later], google: GOOGLE_OFF });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [GOOGLE, later], google: GOOGLE_OFF, bookingSort: SORT_OFF });
   });
 
   test('a calendar’s `mine` parses, and a calendar without it, from an API older than Reconnect, reads as not mine', async () => {
@@ -49,7 +51,7 @@ describe('owner calendar calls (spec 10.18)', () => {
     const older: Record<string, unknown> = { ...GOOGLE };
     delete older.mine;
     routes.gets[BASE] = () => ({ calendars: [{ ...GOOGLE, mine: true }, { ...older, id: 'c5' }], google: GOOGLE_ON });
-    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [{ ...GOOGLE, mine: true }, { ...GOOGLE, id: 'c5', mine: false }], google: GOOGLE_ON });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [{ ...GOOGLE, mine: true }, { ...GOOGLE, id: 'c5', mine: false }], google: GOOGLE_ON, bookingSort: SORT_OFF });
     routes.gets[BASE] = () => ({ calendars: [{ ...GOOGLE, mine: 'yes' }] });
     await expect(fetchOwnerCalendars(fake, 'l1')).rejects.toThrow();
   });
@@ -66,7 +68,34 @@ describe('owner calendar calls (spec 10.18)', () => {
   test('an answer without `google`, from an API older than Google calendars, reads as Google calendars off', async () => {
     const { fake, routes } = api();
     routes.gets[BASE] = () => ({ calendars: [FILE] });
-    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE], google: { available: false, connected: false, clientId: null, canConnect: false } });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE], google: { available: false, connected: false, clientId: null, canConnect: false }, bookingSort: SORT_OFF });
+  });
+
+  test('a file calendar’s format and bookings and the list’s bookingSort parse, and read as none from an older API (D58)', async () => {
+    const { fake, routes } = api();
+    const bookings = {
+      state: 'sorted', sortedAt: '2026-11-17T15:00:00.000Z', confirmedAt: null,
+      counts: { buyout: 2, party: 5, own_event: 9, other: 20, unlabeled: 4 },
+    };
+    const sorted = { ...FILE, format: 'csv', bookings };
+    routes.gets[BASE] = () => ({ calendars: [sorted, LINK], google: GOOGLE_OFF, bookingSort: { available: true } });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [sorted, LINK], google: GOOGLE_OFF, bookingSort: { available: true } });
+    const older: Record<string, unknown> = { ...FILE };
+    delete older.format;
+    delete older.bookings;
+    routes.gets[BASE] = () => ({ calendars: [older] });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE], google: GOOGLE_OFF, bookingSort: { available: false } });
+  });
+
+  test('an event’s booking label parses; a label the client doesn’t know, or none from an older API, reads as none (D58)', async () => {
+    const { fake, routes } = api();
+    const party = ownerEvent({ uid: 'e1', title: 'Retirement party', booking: 'party', bookingBy: 'ai' });
+    const older: Record<string, unknown> = { ...ownerEvent({ uid: 'e2' }) };
+    delete older.booking;
+    delete older.bookingBy;
+    routes.gets[`${BASE}/events?from=2026-11-01&to=2026-11-30`] = () => ({ events: [party, older, { ...ownerEvent({ uid: 'e3' }), booking: 'later_label' }] });
+    expect(await fetchOwnerCalendarEvents(fake, 'l1', { from: '2026-11-01', to: '2026-11-30' }))
+      .toEqual([party, ownerEvent({ uid: 'e2' }), ownerEvent({ uid: 'e3' })]);
   });
 
   test('a calendar or a `google` the client can’t read is an invalid response', async () => {
@@ -91,8 +120,8 @@ describe('owner calendar calls (spec 10.18)', () => {
     fake.answers[BASE] = (body) => ({ calendar: (body as { kind: string }).kind === 'file' ? FILE : LINK });
     const ics = 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n';
     const url = 'https://calendar.google.com/calendar/ical/example/basic.ics';
-    expect(await addOwnerCalendar(fake, 'l1', { kind: 'file', label: 'Kitchen', ics })).toEqual(FILE);
-    expect(await addOwnerCalendar(fake, 'l1', { kind: 'link', label: 'Bookings', url })).toEqual(LINK);
+    expect(await addOwnerCalendar(fake, 'l1', { kind: 'file', label: 'Kitchen', ics })).toEqual({ calendar: FILE, skippedRows: 0 });
+    expect(await addOwnerCalendar(fake, 'l1', { kind: 'link', label: 'Bookings', url })).toEqual({ calendar: LINK, skippedRows: 0 });
     fake.answers[BASE] = () => refusal(400, 'not_calendar');
     await expect(addOwnerCalendar(fake, 'l1', { kind: 'file', label: 'Notes', ics: 'date,guests' })).rejects.toMatchObject({ status: 400, code: 'not_calendar' });
     expect(writes(fake)).toEqual([
@@ -102,11 +131,20 @@ describe('owner calendar calls (spec 10.18)', () => {
     ]);
   });
 
+  test('a calendar CSV goes in `ics` too, and the add returns its skipped rows (D58)', async () => {
+    const { fake } = api();
+    const csv = 'event_id,title,start_at,end_at\nx1,Wine tasting,2026-11-21T18:00:00-05:00,2026-11-21T20:00:00-05:00\n';
+    const added = { ...FILE, format: 'csv' };
+    fake.answers[BASE] = () => ({ calendar: added, skippedRows: 2 });
+    expect(await addOwnerCalendar(fake, 'l1', { kind: 'file', label: 'Tastings', ics: csv })).toEqual({ calendar: added, skippedRows: 2 });
+    expect(writes(fake)).toEqual([{ method: 'POST', path: BASE, body: { kind: 'file', label: 'Tastings', ics: csv } }]);
+  });
+
   test('POST .../owner-calendars sends a Google calendar by its Google id alone; refusals pass through', async () => {
     const { fake } = api();
     fake.answers[BASE] = () => ({ calendar: GOOGLE });
     const googleCalendarId = ['owner', 'example.com'].join('@');
-    expect(await addOwnerCalendar(fake, 'l1', { kind: 'google', googleCalendarId })).toEqual(GOOGLE);
+    expect(await addOwnerCalendar(fake, 'l1', { kind: 'google', googleCalendarId })).toEqual({ calendar: GOOGLE, skippedRows: 0 });
     fake.answers[BASE] = () => refusal(409, 'calendar_already_added');
     await expect(addOwnerCalendar(fake, 'l1', { kind: 'google', googleCalendarId: 'primary' })).rejects.toMatchObject({ status: 409, code: 'calendar_already_added' });
     expect(writes(fake)).toEqual([
@@ -127,6 +165,25 @@ describe('owner calendar calls (spec 10.18)', () => {
       { method: 'POST', path: `${BASE}/c2/refresh`, body: undefined },
       { method: 'POST', path: `${BASE}/c2/refresh`, body: undefined },
       { method: 'POST', path: `${BASE}/c4/refresh`, body: undefined },
+    ]);
+  });
+
+  test('the bookings routes: sort and confirm send no body, a label sends its uid in the body only (D58)', async () => {
+    const { fake } = api();
+    const sorted = { ...FILE, bookings: { state: 'sorted', sortedAt: null, confirmedAt: null, counts: { buyout: 1, party: 0, own_event: 0, other: 2, unlabeled: 0 } } };
+    fake.answers[`${BASE}/c1/bookings/sort`] = () => ({ calendar: sorted, sent: 3, labeled: 3, batchesFailed: 0 });
+    fake.answers[`${BASE}/c1/bookings`] = () => ({ calendar: sorted, noteMade: false, noteKept: true });
+    fake.answers[`${BASE}/c1/bookings/confirm`] = () => ({ calendar: sorted, notesMade: 1, notesLeft: 0, calibration: { status: 'started', id: 'cal1' } });
+    expect(await sortBookings(fake, 'l1', 'c1')).toEqual({ calendar: sorted, sent: 3, labeled: 3, batchesFailed: 0 });
+    expect(await labelBooking(fake, 'l1', 'c1', { uid: 'x/1?', booking: 'other' })).toEqual({ calendar: sorted, noteMade: false, noteKept: true });
+    expect(await confirmBookings(fake, 'l1', 'c1')).toEqual({ calendar: sorted, notesMade: 1, notesLeft: 0, calibration: { status: 'started', id: 'cal1' } });
+    fake.answers[`${BASE}/c1/bookings/sort`] = () => refusal(409, 'chat_budget_exhausted');
+    await expect(sortBookings(fake, 'l1', 'c1')).rejects.toMatchObject({ status: 409, code: 'chat_budget_exhausted' });
+    expect(writes(fake)).toEqual([
+      { method: 'POST', path: `${BASE}/c1/bookings/sort`, body: undefined },
+      { method: 'PATCH', path: `${BASE}/c1/bookings`, body: { uid: 'x/1?', booking: 'other' } },
+      { method: 'POST', path: `${BASE}/c1/bookings/confirm`, body: undefined },
+      { method: 'POST', path: `${BASE}/c1/bookings/sort`, body: undefined },
     ]);
   });
 
@@ -223,10 +280,10 @@ describe('Google calendar calls (connect-google-calendar design decision 8)', ()
 describe('the Calendar page fake’s owner calendar routes', () => {
   test('the list answers `calendars` with no `google` (read as off), or rejects with its ApiError', async () => {
     const fake = calendarFake({ calendars: [FILE, LINK] });
-    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE, LINK], google: GOOGLE_OFF });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE, LINK], google: GOOGLE_OFF, bookingSort: SORT_OFF });
     fake.calendars = refusal(503, null);
     await expect(fetchOwnerCalendars(fake, 'l1')).rejects.toMatchObject({ status: 503 });
-    expect(await fetchOwnerCalendars(calendarFake(), 'l1')).toEqual({ calendars: [], google: GOOGLE_OFF });
+    expect(await fetchOwnerCalendars(calendarFake(), 'l1')).toEqual({ calendars: [], google: GOOGLE_OFF, bookingSort: SORT_OFF });
     expect(fake.paths).toEqual([BASE, BASE]);
   });
 

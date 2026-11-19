@@ -18,10 +18,12 @@ const DESIGN_TABLE = {
   notes: [
     'note.created', 'note.updated', 'note.deleted', 'rule.created', 'rule.updated', 'rule.deleted', 'owner_calendar.added',
     'owner_calendar.removed', 'owner_calendar.refreshed', 'google_calendar.connected', 'google_calendar.disconnected',
+    'owner_calendar.booking_labeled', 'owner_calendar.bookings_confirmed',
   ],
   townwiseAi: [
     'chat.turn_completed', 'chat.conversation_deleted', 'agent.question_answered', 'agent.suggestion_accepted', 'agent.suggestion_dismissed',
     'file.ai_read_requested', 'file.ai_undone', 'order.setup_read', 'order.card_saved', 'order.card_dismissed', 'calibration.requested',
+    'owner_calendar.bookings_sorted',
   ],
   orders: ['order.setup_saved', 'order.count_saved', 'order.decision_saved', 'order.rule_saved', 'order.rule_turned_off'],
   team: [

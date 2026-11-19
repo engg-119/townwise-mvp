@@ -25,6 +25,13 @@ describe('labelOfFile', () => {
     expect(labelOfFile(`${'D'.repeat(59)} tail.ics`)).toBe('D'.repeat(59));
   });
 
+  test('takes a final .csv off as it takes .ics, and nothing else (D58)', () => {
+    expect(labelOfFile('Master calendar.csv')).toBe('Master calendar');
+    expect(labelOfFile('Master calendar.CSV')).toBe('Master calendar');
+    expect(labelOfFile('export.csv.ics')).toBe('export.csv');
+    expect(labelOfFile('.csv')).toBe('Calendar file');
+  });
+
   test('a name that is only .ics is “Calendar file”', () => {
     expect(labelOfFile('.ics')).toBe('Calendar file');
     expect(labelOfFile('   .ics')).toBe('Calendar file');
@@ -33,9 +40,9 @@ describe('labelOfFile', () => {
 
 describe('addRefusal', () => {
   test('a file’s refusals', () => {
-    expect(addRefusal(refusal(400, 'too_large'), 'file', 'web')).toBe('This file is over 1 MB. Export a shorter range of your calendar.');
-    expect(addRefusal(refusal(413, null), 'file', 'web')).toBe('This file is over 1 MB. Export a shorter range of your calendar.');
-    expect(addRefusal(refusal(400, 'not_calendar'), 'file', 'web')).toBe('This doesn’t look like a calendar file (.ics).');
+    expect(addRefusal(refusal(400, 'too_large'), 'file', 'web')).toBe('This file is over 1 MB. Export a shorter range of your calendar, or a CSV with fewer columns.');
+    expect(addRefusal(refusal(413, null), 'file', 'web')).toBe('This file is over 1 MB. Export a shorter range of your calendar, or a CSV with fewer columns.');
+    expect(addRefusal(refusal(400, 'not_calendar'), 'file', 'web')).toBe('That isn’t a calendar. Import an .ics file, or a CSV with event_id, title, start_at and end_at columns.');
     expect(addRefusal(refusal(409, 'calendar_limit'), 'file', 'web'))
       .toBe('This location has 5 calendars, the most it can hold. Remove one to add another.');
     expect(addRefusal(refusal(429, 'rate_limited', 120), 'file', 'web')).toBe('Too many attempts. Try again in 2 minutes.');
@@ -230,6 +237,14 @@ describe('the result messages', () => {
     expect(addedLines(ownerCalendar({ label: 'Bookings', eventCount: 1 }))).toEqual(['Added Bookings: 1 event.']);
   });
 
+  test('a calendar CSV’s add says how many rows it skipped, and nothing for none (D58)', () => {
+    expect(addedLines(ownerCalendar({ label: 'Master', eventCount: 40 }), 3))
+      .toEqual(['Added Master: 40 events.', 'Skipped 3 rows Townwise couldn’t read.']);
+    expect(addedLines(ownerCalendar({ label: 'Master', eventCount: 40 }), 1))
+      .toEqual(['Added Master: 40 events.', 'Skipped 1 row Townwise couldn’t read.']);
+    expect(addedLines(ownerCalendar({ label: 'Master', eventCount: 40 }), 0)).toEqual(['Added Master: 40 events.']);
+  });
+
   test('a refresh and a removal name the calendar', () => {
     expect(refreshedLine('Bookings')).toBe('Refreshed Bookings.');
     expect(removedLine('Kitchen')).toBe('Removed Kitchen.');
@@ -239,11 +254,11 @@ describe('the result messages', () => {
 describe('CALENDARS_COPY', () => {
   test('the help says the calendars are kept, and what Townwise keeps of them, naming Google calendars only while they are on', () => {
     expect(helpText(true)).toBe(
-      'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Or add a Google calendar by signing in with Google, which Townwise reads about every 6 hours, repeating events included. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.',
+      'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or a calendar CSV with event_id, title, start_at and end_at columns, or add its iCal link, which Townwise reads again about every 6 hours. Or add a Google calendar by signing in with Google, which Townwise reads about every 6 hours, repeating events included. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. From a CSV, Townwise keeps each event’s title, dates and hours and never reads its other columns. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.',
     );
     // Off (production until the owner turns them on), the help is as it was before Google calendars.
     expect(helpText(false)).toBe(
-      'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.',
+      'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or a calendar CSV with event_id, title, start_at and end_at columns, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. From a CSV, Townwise keeps each event’s title, dates and hours and never reads its other columns. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.',
     );
   });
 
@@ -253,8 +268,8 @@ describe('CALENDARS_COPY', () => {
   });
 
   test('keeps the import’s words and adds the panel’s', () => {
-    expect(CALENDARS_COPY.tooLarge).toBe('This file is over 1 MB. Export a shorter range of your calendar.');
-    expect(CALENDARS_COPY.notCalendar).toBe('This doesn’t look like a calendar file (.ics).');
+    expect(CALENDARS_COPY.tooLarge).toBe('This file is over 1 MB. Export a shorter range of your calendar, or a CSV with fewer columns.');
+    expect(CALENDARS_COPY.notCalendar).toBe('That isn’t a calendar. Import an .ics file, or a CSV with event_id, title, start_at and end_at columns.');
     expect(CALENDARS_COPY.unreadable).toBe('Couldn’t read this file. Choose it again.');
     expect(CALENDARS_COPY.none).toBe('No calendars yet.');
     expect(CALENDARS_COPY.nameLabel).toBe('Name');

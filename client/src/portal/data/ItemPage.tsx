@@ -12,7 +12,7 @@ import { useLoad } from '../hooks';
 import { shownLocationName } from '../locations/naming';
 import { useOrgRefreshOnLeave } from '../locations/parts';
 import { usePortal, useReadOnly } from '../PortalProvider';
-import { itemHref, locationHref } from '../routing';
+import { calendarHref, itemHref, locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
@@ -38,7 +38,8 @@ import { RenameForm } from './item/RenameForm';
 // actions the person may take, and what it holds (item/ItemContent: an upload's days on every platform, and on web a
 // stored file drawn in the browser). An item that is gone (deleted, or replaced by an edit, whose ref changed) says
 // so, with the way back. Opening is a read, so it works under view-as, which sends no name and opens no file; there
-// Turn off and Delete are disabled in place under the read-only line, as Your data's rows once had them.
+// Turn off and Delete are disabled in place under the read-only line, as Your data's rows once had them. A file kept
+// as a calendar export (D58, `calendar_export`) links under its status to the Calendar, where Your calendars imports it.
 //
 // The actions Your data's rows used to carry are here (the list's rows only open this page): Turn off or on (acts at
 // once), the downloads (web), then, in a Delete section of their own below the item, as Sales data's Delete sales
@@ -339,6 +340,9 @@ function Item(props: {
           <Small>{statusLine(item)}</Small>
           {days === null ? null : <Small>{days}</Small>}
         </View>
+        {item.state === 'kept' && item.outcome === 'calendar_export'
+          ? <LinkButton variant="link" href={calendarHref(item.locationId)} label={ITEM.importCalendar} />
+          : null}
         {item.fromAiRead === null ? null : <LinkButton href={itemHref(item.locationId, item.fromAiRead)} label={AI.madeBy} />}
         {props.viewAs ? <ReadOnlyLine text={line} nativeID={READ_ONLY_ID} /> : null}
         {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{DATA.nativeDownload}</Small> : null}

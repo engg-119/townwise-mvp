@@ -150,6 +150,7 @@ async function readText(begin: Extract<ThreadIn, { type: 'begin' }>): Promise<Fi
   try {
     const outcome = await readTable(pass, {
       answers: begin.answers['0'] ?? {}, locationName: begin.locationName, latest: begin.latest, delimiter: () => found.delimiter, choose,
+      text: true,
     });
     if (outcome.kind === 'kept') return { kind: 'kept', outcome: outcome.outcome, report: null };
     if (outcome.kind === 'question') return { kind: 'question', question: { ...outcome.question, sheet: 0 } };

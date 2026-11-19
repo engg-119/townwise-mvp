@@ -1,8 +1,9 @@
 import { ApiError } from '../../../src/api/client';
 import { KEPT_CODES } from '../../../src/portal/files/api';
 import { DATA_STATES, DATA_VIAS } from '../../../src/portal/data/api';
-import { rowAiLine } from '../../../src/portal/data/aiCopy';
+import { rowAiLine, settledLine } from '../../../src/portal/data/aiCopy';
 import * as copy from '../../../src/portal/data/copy';
+import { bookingsStateLine, emptyFilterLine, sortedLines } from '../../../src/portal/data/item/bookingWords';
 import { dailyTotalsOf, itemOf } from './fakes';
 
 // Every state and way an item arrived has words, and each refusal an action can get says what to do.
@@ -20,6 +21,24 @@ test('every state has a status line, and a kept item says why', () => {
   expect(copy.stateLine({ state: 'failed', outcome: null })).toBe('Couldn’t read it');
   expect(copy.stateLine({ state: 'not_finished', outcome: null })).toBe('Didn’t finish');
   expect(copy.stateLine({ state: 'waiting', outcome: null })).toBe('Waiting for an answer');
+});
+
+test('a calendar export says it was kept for Your calendars, and TownwiseAI skipping it says the same (D58)', () => {
+  expect(KEPT_CODES).toContain('calendar_export');
+  expect(copy.stateLine({ state: 'kept', outcome: 'calendar_export' }))
+    .toBe('Kept, not used: it’s a calendar export. Import it in Your calendars to see its events and let TownwiseAI read them all.');
+  expect(settledLine({ status: 'skipped', reason: 'calendar_export' }))
+    .toBe('TownwiseAI didn’t read this file: it’s a calendar export. Import it in Your calendars instead.');
+});
+
+test('a file calendar’s bookings state, a sort with nothing to send, and an empty filter have words (D58)', () => {
+  expect(bookingsStateLine({ state: 'unsorted', confirmedAt: null })).toBe('Not sorted yet, and not used for forecasts.');
+  expect(bookingsStateLine({ state: 'a_state_from_later', confirmedAt: null })).toBe('Not sorted yet, and not used for forecasts.');
+  expect(bookingsStateLine({ state: 'confirmed', confirmedAt: null })).toBe('Used for forecasts.');
+  expect(sortedLines({ sent: 0, labeled: 0, batchesFailed: 0 })).toEqual(['Every event already has a label.']);
+  expect(sortedLines({ sent: 250, labeled: 240, batchesFailed: 0 })).toEqual(['TownwiseAI labeled 240 of 250 events.']);
+  expect(emptyFilterLine('none', '2026-11')).toBe('No events without a label in November 2026.');
+  expect(emptyFilterLine('party', '2026-11')).toBe('No events labeled Party in November 2026.');
 });
 
 test('a row’s Status names what TownwiseAI did with its file, and nothing without a read, once undone or for a later status (D34)', () => {
