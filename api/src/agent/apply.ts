@@ -85,6 +85,12 @@ export interface ApplyResult {
   readonly change: AgentChangeRecord | null;
 }
 
+/** Whether TownwiseAI works on its own for the organization now: TOWNWISE_AGENT_AUTO and its own switch both on. */
+export async function agentAutoOn(ctx: Pick<TownwiseContext, 'config' | 'stores'>, orgId: string): Promise<boolean> {
+  if (!ctx.config.agentAuto) return false;
+  return (await ctx.stores.orgs.findById(orgId))?.agentAuto.on ?? false;
+}
+
 /** Lower case, each run of white space one space, trimmed. */
 function folded(text: string): string {
   return text.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();

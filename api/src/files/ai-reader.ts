@@ -324,7 +324,8 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
       fileId: file.id, kind: result.kind, confidence: result.confidence, events: result.eventCount, days: result.dayCount,
       daysCut: result.daysCut, partial: read.partial, costMicroUsd: read.costMicroUsd,
       ...(done === null ? {} : {
-        notes: done.notes.length, notesSkipped: done.notesSkipped, daysWritten: done.daysWritten, daysAlreadyHad: done.daysAlreadyHad,
+        notes: done.notes.length, notesSkipped: done.notesSkipped, notesSuggested: done.notesSuggested?.length ?? 0,
+        daysWritten: done.daysWritten, daysAlreadyHad: done.daysAlreadyHad,
         daysReason: done.daysReason, item: done.itemId !== null, itemReason: done.itemReason, calibration: done.calibration.status,
         rulesSuggested: done.rulesSuggested?.length ?? 0, rulesSkipped: done.rulesSkipped ?? { duplicate: 0, cap: 0, invalid: 0 },
       }),

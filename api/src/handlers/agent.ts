@@ -31,7 +31,9 @@ import { localDay, timeZoneOf } from '../time-zones.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { addNote, noteContent, noteView, type NoteView } from './notes.ts';
 import { actorOf } from './team.ts';
-import { ruleSuggestionViews, type RuleSuggestionView } from '../agent/rule-suggestion-views.ts';
+import {
+  noteSuggestionViews, ruleSuggestionViews, type NoteSuggestionView, type RuleSuggestionView,
+} from '../agent/rule-suggestion-views.ts';
 import { suggestionsPanel, type SuggestionView, type WeeklySuggestionsView } from './weekly-suggestions.ts';
 
 /** A question id: dates and a weekday number only, never text. */
@@ -48,6 +50,10 @@ export interface AgentPanel {
   ruleSuggestions: RuleSuggestionView[];
   /** D59: whether TownwiseAI works on its own here, and whether the caller turns it. */
   agentAuto: AgentAutoView;
+  /** D59: the events files stated that TownwiseAI was not sure of, waiting for a member. */
+  noteSuggestions: NoteSuggestionView[];
+  /** D59: how many things TownwiseAI was not sure of are waiting: these note suggestions and the suggested rules. */
+  waiting: number;
 }
 
 export interface AnswerResult {
@@ -97,13 +103,16 @@ export async function getAgent(ctx: TownwiseContext, req: Request, res: Response
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const { questions, notes, answers } = await currentQuestions(ctx, caller, location);
-  const [activity, suggested, ruleSuggestions, agentAuto] = await Promise.all([
+  const [activity, suggested, ruleSuggestions, agentAuto, noteSuggestions] = await Promise.all([
     activityFor({ ctx, scope: caller.scope, locationId: location.id, userId: caller.userId, caller, notes, answers }),
     suggestionsPanel(ctx, caller, location),
     ruleSuggestionViews(ctx, caller, location),
     agentAutoView(ctx, caller),
+    noteSuggestionViews(ctx, caller, location),
   ]);
-  const body: AgentPanel = { questions, activity, ...suggested, ruleSuggestions, agentAuto };
+  const body: AgentPanel = {
+    questions, activity, ...suggested, ruleSuggestions, agentAuto, noteSuggestions, waiting: noteSuggestions.length + ruleSuggestions.length,
+  };
   res.status(200).json(body);
 }
 

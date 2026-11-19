@@ -21,14 +21,30 @@
 // can be deleted (or its original purged) while it is read. An audit event is recorded after its write: a crash
 // between the two loses the event (a known limit, api/README.md). Nothing here logs a title, a name or a figure; the
 // reader's log line and audit event carry the outcome's counts.
+//
+// D59 (openspec change auto-apply-agent-reads, design decisions 5, 6, 7 and 13): while TownwiseAI works on its own
+// (TOWNWISE_AGENT_AUTO and the organization's switch), and for every automatic read, each note, the days and the
+// summary item go through the one writer (agent/apply.ts) with `sourceKind: 'file'`, each a ledger row a member can undo.
+// A note is applied only when the event and the read are both `high`, it passes the checks above, conflicts with no note
+// or rule a person made on its days, and its dedupe key was never used at the location; an event below that bar, or in
+// conflict, becomes an open note suggestion from the file (tw_agent_suggestions, `source: 'file'`, `type: 'note'`),
+// which any member decides as a file's suggested rule, at most 20 open per location from files and only while it ends
+// today or later. [CONFIRM: TownwiseAI applies only what the model rated high and the code checks pass; everything else
+// waits] [CONFIRM: a read someone asked for follows the same confidence bar] [CONFIRM: 20 open note suggestions from
+// files per location] An automatic read writes as TownwiseAI (`createdBy: 'townwise_ai'`, the audit actor TownwiseAI),
+// on behalf of the file's adder, whose seat is still checked first; it starts no calibration, and what it changed on
+// training days wants a refit instead (agent/refit.ts). A pressed read keeps its requester as the author and its
+// calibration. While the switch is off a pressed read is exactly D34's.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Types } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import { agentAutoOn, applyChange, TOWNWISE_AI_AUTHOR, type PersonsEntries } from '../agent/apply.ts';
+import { wantRefitFor } from '../agent/refit.ts';
 import { closureKeyOf, closureRuleText, isSuggestable } from '../agent/closure-suggestions.ts';
 import type { Role } from '../access/resolve.ts';
 import type { TownwiseContext } from '../app.ts';
-import { recordAfter } from '../audit.ts';
+import { recordAfter, TOWNWISE_AI_ACTOR } from '../audit.ts';
 import { utcDay } from '../dates.ts';
 import { MAX_NOTES, readNoteContent, readRuleSchedule } from '../handlers/notes.ts';
 import { checkStart, launch, type StartRefusal, type StartRequest } from '../lab/service.ts';
@@ -40,11 +56,12 @@ import type {
   AiReadResult, AiRulesSkipped, FileAiRead, FileRecord,
 } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
+import type { UploadRecord } from '../stores/uploads.ts';
 import { MAX_NOTE_TITLE_CHARS, type NoteContent, type NoteEffect, type NoteRecord } from '../stores/notes.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { OnAiRead } from './ai-reader.ts';
 import { salesDayOf } from './ai-verify.ts';
-import { CLOSED_PATTERNS_MAX } from './extract/reader-prompt.ts';
+import { CLOSED_PATTERNS_MAX, eventConfidence } from './extract/reader-prompt.ts';
 import { saveTextItem, TEXT_ITEM_TITLE_MAX } from './items.ts';
 
 /** A note's detail, at most (spec 12). */
@@ -58,6 +75,8 @@ const CLOSED_SPAN_DAYS = 14;
 const CLOSED_DAYS_PER_READ = 31;
 /** D46: a read stores no suggested closure rule while the location has this many open from files. */
 const OPEN_FILE_SUGGESTIONS = 10;
+/** D59: and no note suggestion while it has this many open from files. */
+const OPEN_FILE_NOTE_SUGGESTIONS = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const EFFECTS: Readonly<Record<AiEventEffect, NoteEffect>> = {
@@ -181,6 +200,16 @@ interface Written {
   readonly notesSkipped: AiActionsOutcome['notesSkipped'];
   /** D46: closures the guard refused only for their span, ending today or later: suggestions under their note ids. */
   readonly spans: Candidate[];
+  /** D59: the events kept as note suggestions, under their note ids; absent while TownwiseAI does not work on its own. */
+  readonly notesSuggested?: string[];
+}
+
+/** D46: a closure the guard refused only for its span, as the closure rule a read suggests instead. */
+function spanSchedule(content: NoteContent): RuleSchedule {
+  return {
+    kind: 'closure', startDate: content.startDate, endDate: content.endDate, weekdays: content.weekdays, effect: 'closed',
+    expectedGuests: null, startTime: null, endTime: null,
+  };
 }
 
 /** The Monday that starts `day`'s week. */
@@ -189,8 +218,11 @@ function mondayOf(day: string): string {
   return utcDay(new Date(`${day}T00:00:00.000Z`), -((weekday + 6) % 7));
 }
 
-/** The person who asked, and their role now (org_admin for Townwise staff open as admin). */
-interface Requester { readonly ai: FileAiRead; readonly role: Role }
+/**
+ * The person who asked (or, D59, the file's adder an automatic read reads for), and their role now (org_admin for
+ * Townwise staff open as admin). `ledger`: TownwiseAI works on its own, so writes go through agent/apply.ts.
+ */
+interface Requester { readonly ai: FileAiRead; readonly role: Role; readonly ledger: boolean }
 
 /** The read's file, re-read, while the read is still held under this claim with its original; else null. */
 type Held = () => Promise<FileRecord | null>;
@@ -200,6 +232,8 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
 
   /** The person who asked, as the actor of the events a read records (as staff: superadmin, with the grant). */
   async function actorOf({ ai, role }: Requester): Promise<Pick<AuditEventInput, 'actorUserId' | 'actorEmail' | 'actorRole' | 'viewAsGrantId'>> {
+    // D59: an automatic read's writes are TownwiseAI's own.
+    if (ai.auto) return TOWNWISE_AI_ACTOR;
     const email = (await ctx.authStores.users.findById(ai.requestedBy))?.email ?? DELETED_PERSON;
     return { actorUserId: ai.requestedBy, actorEmail: email, actorRole: ai.requestedByStaff ? 'superadmin' : role, viewAsGrantId: ai.requestedGrantId };
   }
@@ -221,41 +255,88 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
    * past 31 closed days this read (the guard), and any past the location's 1,000 notes are skipped and counted. Each
    * new note first checks the read is still held; once it is not, no more is written. D46: a closure (kind closure) the
    * guard refuses for its span, ending on or after the town's today, is handed on as a suggestion under its note id
-   * instead, on a plan that has suggestion ids; it is not counted as skipped.
+   * instead, on a plan that has suggestion ids; it is not counted as skipped. D59, with `requester.ledger`: each note
+   * goes through applyChange under its planned id, and an event below the bar, or in conflict with a person's note or
+   * rule, is kept as an open note suggestion under that id (suggestNote); a duplicate key is a duplicate.
    */
   async function writeNotes(
     scope: OrgScope, file: FileRecord, requester: Requester, result: AiReadResult, plan: AiActionPlan, held: Held, townToday: string,
   ): Promise<Written> {
-    const { ai } = requester;
+    const { ai, ledger } = requester;
     const existing = await stores.notes.list(scope, file.locationId);
     const ids = new Set(existing.map((note) => note.id));
     const notes: string[] = [];
     const spans: Candidate[] = [];
-    const skipped = { duplicate: 0, cap: 0, invalid: 0, guard: 0 };
+    const suggested: string[] = [];
+    const skipped = { duplicate: 0, cap: 0, invalid: 0, guard: 0, notKept: 0 };
     let closedDays = 0;
     const today = utcDay(ctx.now());
+    const actor = ledger ? await actorOf(requester) : null;
+    const persons: PersonsEntries | null = ledger ? {
+      notes: existing,
+      rules: (await stores.businessRules.scheduled(scope, file.locationId)).flatMap((rule) => (rule.schedule === null ? [] : [rule.schedule])),
+    } : null;
+    let openNotes = ledger ? (await stores.agentSuggestions.listOpenFileNotes(scope, file.locationId, townToday)).length : 0;
+    /** D59: the event as an open note suggestion from the file, or not kept (ended, or the location's 20 open). */
+    const suggestNote = async (id: string, content: NoteContent): Promise<void> => {
+      if (content.endDate < townToday || openNotes >= OPEN_FILE_NOTE_SUGGESTIONS) {
+        skipped.notKept += 1;
+        return;
+      }
+      const stored = await stores.agentSuggestions.insertFileNote(scope, {
+        id, locationId: file.locationId, week: mondayOf(townToday), fileId: file.id, note: content, now: ctx.now(),
+      });
+      if (stored.created) openNotes += 1;
+      suggested.push(id);
+    };
+    /** D59: the note through the one writer, as TownwiseAI (an automatic read) or as the person who asked. */
+    const apply = async (id: string, content: NoteContent, event: AiReadEvent) => applyChange(ctx, scope, {
+      action: 'note.add', locationId: file.locationId, sourceKind: 'file', sourceId: file.id, targetId: id,
+      confidence: eventConfidence(event, result), why: event.detail === '' ? null : event.detail, onBehalfOf: ai.requestedBy,
+      actor: actor ?? TOWNWISE_AI_ACTOR, note: content, createdBy: ai.auto ? TOWNWISE_AI_AUTHOR : ai.requestedBy,
+      ...(!ai.auto && ai.requestedByStaff ? { byStaff: true } : {}), source: { via: 'ai_file', fileId: file.id },
+    }, persons ?? undefined);
     for (const [index, event] of result.events.entries()) {
       const id = plan.noteIds[index];
       if (id === undefined) break;
       const content = noteContentOf(event, today);
       const closed = content !== null && closes(content) ? spanDays(content.startDate, content.endDate) : 0;
       if (ids.has(id)) {
+        // An earlier attempt wrote it: its change (D59) is finished too.
+        if (ledger && content !== null) await apply(id, content, event);
         notes.push(id);
         closedDays += closed;
+        continue;
+      }
+      if (ledger && (await stores.agentSuggestions.find(scope, file.locationId, id))?.type === 'note') {
+        // An earlier attempt kept it as a note suggestion.
+        suggested.push(id);
         continue;
       }
       if (content === null) skipped.invalid += 1;
       else if (existing.some((note) => duplicates(note, event))) skipped.duplicate += 1;
       else if (closed > CLOSED_SPAN_DAYS && content.kind === 'closure' && content.endDate >= townToday && plan.suggestionIds !== undefined) {
-        spans.push({
-          id, schedule: {
-            kind: 'closure', startDate: content.startDate, endDate: content.endDate, weekdays: content.weekdays, effect: 'closed',
-            expectedGuests: null, startTime: null, endTime: null,
-          },
-        });
+        spans.push({ id, schedule: spanSchedule(content) });
       } else if (closed > CLOSED_SPAN_DAYS || closedDays + closed > CLOSED_DAYS_PER_READ) skipped.guard += 1;
       else if (existing.length >= MAX_NOTES) skipped.cap += 1;
-      else {
+      else if (ledger) {
+        if (await held() === null) break;
+        if (eventConfidence(event, result) !== 'high') {
+          await suggestNote(id, content);
+          continue;
+        }
+        const applied = await apply(id, content, event);
+        if (applied.outcome === 'conflict') await suggestNote(id, content);
+        else if (applied.outcome === 'duplicate') skipped.duplicate += 1;
+        else if (applied.outcome === 'invalid') skipped.invalid += 1;
+        else {
+          const written = await stores.notes.find(scope, file.locationId, id);
+          if (written !== null) existing.push(written);
+          ids.add(id);
+          notes.push(id);
+          closedDays += closed;
+        }
+      } else {
         if (await held() === null) break;
         try {
           existing.push(await stores.notes.create(scope, file.locationId, content, {
@@ -271,7 +352,10 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
         closedDays += closed;
       }
     }
-    return { notes, notesSkipped: skipped, spans };
+    const { notKept, ...counts } = skipped;
+    return ledger
+      ? { notes, notesSkipped: notKept > 0 ? { ...counts, notKept } : counts, spans, notesSuggested: suggested }
+      : { notes, notesSkipped: counts, spans };
   }
 
   /**
@@ -333,7 +417,8 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
    * replaced and no null is written over a figure, so it is left out and counted, and when every one is already there
    * no upload is made (`already_had_days`). The upload holds the planned id, so a retry finds it: one still `applying`
    * is applied again (the same days, so the same result), one `applied` is left as it is. Undo then removes exactly the
-   * days this upload added.
+   * days this upload added. Applying it wants a refit (D59). With `requester.ledger` the upload is a `sales_days.add`
+   * change through applyChange, keyed by the file, so a file whose days were undone never adds them again (`duplicate`).
    */
   async function writeDays(
     scope: OrgScope, file: FileRecord, requester: Requester, result: AiReadResult, plan: AiActionPlan,
@@ -355,43 +440,59 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
     const firstDate = dates[0] ?? '';
     const lastDate = dates.at(-1) ?? '';
     const { ai } = requester;
-    let upload = await stores.uploads.get(scope, file.locationId, plan.uploadId);
-    if (upload === null) {
-      try {
-        upload = await stores.uploads.start(scope, file.locationId, {
-          id: plan.uploadId, uploadedBy: ai.requestedBy, uploadedAt: now, dayCount: days.length, firstDate, lastDate,
-          hasGuests: days.some((day) => day.guests !== null), hasNetSales: days.some((day) => day.netSalesCents !== null),
-          ...(ai.requestedByStaff ? { byStaff: true } : {}), source: { via: 'ai_file', fileId: file.id },
-        });
-      } catch (err) {
-        upload = isDuplicateKeyError(err) ? await stores.uploads.get(scope, file.locationId, plan.uploadId) : null;
-        if (upload === null) throw err;
+    const writeUpload = async (): Promise<UploadRecord> => {
+      let upload = await stores.uploads.get(scope, file.locationId, plan.uploadId);
+      if (upload === null) {
+        try {
+          upload = await stores.uploads.start(scope, file.locationId, {
+            id: plan.uploadId, uploadedBy: ai.requestedBy, uploadedAt: now, dayCount: days.length, firstDate, lastDate,
+            hasGuests: days.some((day) => day.guests !== null), hasNetSales: days.some((day) => day.netSalesCents !== null),
+            ...(ai.requestedByStaff ? { byStaff: true } : {}), source: { via: 'ai_file', fileId: file.id },
+          });
+        } catch (err) {
+          upload = isDuplicateKeyError(err) ? await stores.uploads.get(scope, file.locationId, plan.uploadId) : null;
+          if (upload === null) throw err;
+        }
       }
-    }
-    if (upload.status === 'applying') {
-      // Add-only: a day already stored is matched and left as it is, whoever wrote it.
-      await stores.salesDays.apply(scope, file.locationId, { uploadId: upload.id, days, replace: false, now });
-      // Applied again after a retry, its own days read as already there, so its counts come from the days it holds.
-      const held = (await stores.salesDays.ownedDayCounts(scope, [upload.id])).get(upload.id) ?? 0;
-      const counts = { inserted: held, replaced: 0, kept: days.length - held };
-      await stores.uploads.finish(scope, upload.id, counts);
-      ctx.logger.info({ orgId: scope.orgId, locationId: file.locationId, uploadId: upload.id, dayCount: days.length }, 'townwise.upload_applied');
-      await recordAfter(ctx, {
-        ...await actorOf(requester), at: ctx.now(), orgId: scope.orgId, action: 'sales.uploaded', target: { type: 'upload', id: upload.id },
-        details: {
-          locationId: file.locationId, dayCount: days.length, inserted: counts.inserted, replaced: 0, firstDate, lastDate,
-          fileId: file.id, via: 'townwise_ai',
-        },
+      if (upload.status === 'applying') {
+        // Add-only: a day already stored is matched and left as it is, whoever wrote it.
+        await stores.salesDays.apply(scope, file.locationId, { uploadId: upload.id, days, replace: false, now });
+        // Applied again after a retry, its own days read as already there, so its counts come from the days it holds.
+        const held = (await stores.salesDays.ownedDayCounts(scope, [upload.id])).get(upload.id) ?? 0;
+        const counts = { inserted: held, replaced: 0, kept: days.length - held };
+        await stores.uploads.finish(scope, upload.id, counts);
+        ctx.logger.info({ orgId: scope.orgId, locationId: file.locationId, uploadId: upload.id, dayCount: days.length }, 'townwise.upload_applied');
+        await recordAfter(ctx, {
+          ...await actorOf(requester), at: ctx.now(), orgId: scope.orgId, action: 'sales.uploaded', target: { type: 'upload', id: upload.id },
+          details: {
+            locationId: file.locationId, dayCount: days.length, inserted: counts.inserted, replaced: 0, firstDate, lastDate,
+            fileId: file.id, via: 'townwise_ai',
+          },
+        });
+        await wantRefitFor(ctx, scope, file.locationId, 'always');
+      }
+      return upload;
+    };
+    let uploadId = plan.uploadId;
+    if (requester.ledger) {
+      const applied = await applyChange(ctx, scope, {
+        action: 'sales_days.add', locationId: file.locationId, sourceKind: 'file', sourceId: file.id, targetId: plan.uploadId,
+        confidence: result.confidence, why: null, onBehalfOf: ai.requestedBy, actor: await actorOf(requester), key: `file:${file.id}`,
+        dates: { startDate: firstDate, endDate: lastDate }, write: async () => (await writeUpload()).uploadedAt,
       });
+      if (applied.outcome === 'duplicate') return none('duplicate', had.size);
+    } else {
+      uploadId = (await writeUpload()).id;
     }
-    const daysWritten = (await stores.salesDays.ownedDayCounts(scope, [upload.id])).get(upload.id) ?? 0;
-    return { uploadId: upload.id, daysWritten, daysAlreadyHad: had.size, daysReason: null };
+    const daysWritten = (await stores.salesDays.ownedDayCounts(scope, [uploadId])).get(uploadId) ?? 0;
+    return { uploadId, daysWritten, daysAlreadyHad: had.size, daysReason: null };
   }
 
   /**
    * The summary and facts as a reference text item under the planned id (saveTextItem answers the item a retry finds),
    * added by the person who asked, `townwise_ai`, naming the file it was read from by its name now (`file` is re-read:
-   * a rename while it was read counts). A cap that refuses it skips it.
+   * a rename while it was read counts). A cap that refuses it skips it. With `requester.ledger` (D59) it is an
+   * `item.add` change through applyChange, keyed by the file.
    */
   async function keepSummary(
     scope: OrgScope, file: FileRecord, requester: Requester, result: AiReadResult, plan: AiActionPlan,
@@ -400,21 +501,40 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
     if (blobs === null) throw new Error('stored files are off');
     if (result.summary.trim() === '') return { itemId: null, itemReason: 'no_summary' };
     const { ai } = requester;
-    const saved = await saveTextItem(stores, blobs, scope, file.locationId, {
-      id: plan.itemId, title: summaryTitle(file.name), text: summaryText(result), uploadedBy: ai.requestedBy, uploaderRole: requester.role,
-      ...(ai.requestedByStaff && ai.requestedGrantId !== null ? { openAsAdminGrantId: ai.requestedGrantId } : {}),
-      addedVia: 'townwise_ai', source: { via: 'ai_file', fileId: file.id }, now: ctx.now(),
-    });
-    if (saved === 'storage_full' || saved === 'daily_upload_limit') return { itemId: null, itemReason: saved satisfies AiItemReason };
-    if (saved.created) {
-      const item = saved.file;
-      await recordAfter(ctx, {
-        ...await actorOf(requester), at: ctx.now(), orgId: scope.orgId, action: 'file.uploaded', target: { type: 'file', id: item.id },
-        details: { locationId: item.locationId, kind: item.kind, sizeBytes: item.sizeBytes, purpose: item.purpose, via: 'townwise_ai' },
+    const save = async (): Promise<Pick<AiActionsOutcome, 'itemId' | 'itemReason'> & { at: Date | null }> => {
+      const saved = await saveTextItem(stores, blobs, scope, file.locationId, {
+        id: plan.itemId, title: summaryTitle(file.name), text: summaryText(result), uploadedBy: ai.requestedBy, uploaderRole: requester.role,
+        ...(ai.requestedByStaff && ai.requestedGrantId !== null ? { openAsAdminGrantId: ai.requestedGrantId } : {}),
+        addedVia: 'townwise_ai', source: { via: 'ai_file', fileId: file.id }, now: ctx.now(),
       });
-      ctx.logger.info({ fileId: item.id, kind: item.kind, sizeBytes: item.sizeBytes, purpose: item.purpose, durationMs: 0 }, 'townwise.file_stored');
+      if (saved === 'storage_full' || saved === 'daily_upload_limit') return { itemId: null, itemReason: saved satisfies AiItemReason, at: null };
+      if (saved.created) {
+        const item = saved.file;
+        await recordAfter(ctx, {
+          ...await actorOf(requester), at: ctx.now(), orgId: scope.orgId, action: 'file.uploaded', target: { type: 'file', id: item.id },
+          details: { locationId: item.locationId, kind: item.kind, sizeBytes: item.sizeBytes, purpose: item.purpose, via: 'townwise_ai' },
+        });
+        ctx.logger.info({ fileId: item.id, kind: item.kind, sizeBytes: item.sizeBytes, purpose: item.purpose, durationMs: 0 }, 'townwise.file_stored');
+      }
+      return { itemId: saved.file.id, itemReason: null, at: saved.file.uploadedAt };
+    };
+    if (!requester.ledger) {
+      const saved = await save();
+      return { itemId: saved.itemId, itemReason: saved.itemReason };
     }
-    return { itemId: saved.file.id, itemReason: null };
+    let refused: AiItemReason | null = null;
+    const applied = await applyChange(ctx, scope, {
+      action: 'item.add', locationId: file.locationId, sourceKind: 'file', sourceId: file.id, targetId: plan.itemId,
+      confidence: result.confidence, why: null, onBehalfOf: ai.requestedBy, actor: await actorOf(requester), key: `file:${file.id}`,
+      dates: null, write: async () => {
+        const saved = await save();
+        refused = saved.itemReason;
+        return saved.at;
+      },
+    });
+    if (applied.outcome === 'duplicate') return { itemId: null, itemReason: 'duplicate' };
+    if (applied.outcome === 'invalid') return { itemId: null, itemReason: refused ?? 'storage_full' };
+    return { itemId: plan.itemId, itemReason: null };
   }
 
   /**
@@ -428,6 +548,8 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
   ): Promise<AiCalibration> {
     const { ai } = requester;
     if (!wrote) return { status: 'not_needed', id: null };
+    // D59: an automatic read starts no calibration; what it changed on training days wants a refit (agent/refit.ts).
+    if (ai.auto) return { status: 'refit_wanted', id: null };
     if (requester.role !== 'org_admin') return { status: 'not_admin', id: null };
     const earlier = await stores.calibrations.find(scope, plan.calibrationId);
     if (earlier !== null) return earlier.failure === 'start_failed' ? { status: 'start_failed', id: null } : { status: 'started', id: earlier.id };
@@ -461,7 +583,8 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
     if (ai === null || (ai.actions?.outcome ?? null) !== null) return null;
     const role = await roleNow(scope, ai);
     if (role === null) return 'requester_gone';
-    const requester: Requester = { ai, role };
+    // D59: through the one writer while TownwiseAI works on its own, and always for a read it started on its own.
+    const requester: Requester = { ai, role, ledger: ai.auto || await agentAutoOn(ctx, scope.orgId) };
     const attempt = ai.attempts;
     const plan = (await stores.files.planAiActions(scope, file.id, attempt, newPlan(read.result.events.length)))?.ai?.actions?.plan;
     if (plan === undefined) return null;

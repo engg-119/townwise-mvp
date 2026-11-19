@@ -107,6 +107,8 @@ interface ContentFields {
   endTime: string | null;
   /** A rule schedule's yearly season (D46); absent otherwise. */
   season?: { repeat: 'yearly'; from: string; to: string };
+  /** D59: a file note suggestion's title, the event's (D49); absent on every other row. */
+  title?: string | null;
 }
 
 interface DateFields {
@@ -193,6 +195,7 @@ function contentSchema(): Schema<ContentFields> {
     startTime: { type: String, default: null },
     endTime: { type: String, default: null },
     season: { type: seasonSchema(), required: false },
+    title: { type: String, default: undefined },
   }, { _id: false, strict: 'throw', versionKey: false });
 }
 
@@ -316,6 +319,16 @@ export type SuggestionRecord = SuggestionContent & {
   readonly closureKey: string | null;
 };
 
+/** D59: an event a file read was not sure of, as a note suggestion from that file, under its planned note id. */
+export interface NewFileNoteSuggestion {
+  readonly id: string;
+  readonly locationId: string;
+  readonly week: string;
+  readonly fileId: string;
+  readonly note: NoteContent;
+  readonly now: Date;
+}
+
 /** A suggested closure rule to store (D46): a file or sales row, under a given id. */
 export interface NewRuleSuggestion {
   readonly id: string;
@@ -387,6 +400,13 @@ export interface AgentSuggestionStore {
    * it). Null when another row holds its closure key (in any status).
    */
   insertOne(scope: OrgScope, input: NewRuleSuggestion): Promise<{ readonly record: SuggestionRecord; readonly created: boolean } | null>;
+  /**
+   * D59: stores an open note suggestion from a file (source `file`, type `note`) under its planned id, which a member
+   * decides as a file's rule suggestion; a retry finds the one stored (`created` false).
+   */
+  insertFileNote(scope: OrgScope, input: NewFileNoteSuggestion): Promise<{ readonly record: SuggestionRecord; readonly created: boolean }>;
+  /** D59: the location's open note suggestions from files whose end is today or later, oldest first. */
+  listOpenFileNotes(scope: OrgScope, locationId: string, today: string): Promise<SuggestionRecord[]>;
   /** The open weekly suggestions whose first date is after `today`, soonest first (never a file or sales row). */
   listOpen(scope: OrgScope, locationId: string, today: string): Promise<SuggestionRecord[]>;
   /** D46: the open file and sales suggestions whose end is null or not before `today`, oldest first. */
@@ -475,7 +495,8 @@ function contentOf(doc: SuggestionDoc): SuggestionContent {
   if (doc.type === 'rule') return { type: 'rule', text: doc.text ?? '', schedule: { ...shared, endDate: c.endDate, ...seasonOf(c.season) } };
   // No suggestion carries a title (D49; openspec change calendar-event-suggestions, design decision 10): the weekly
   // pass proposes none, a spotted event's title is never stored, and a follow-up's snapshot leaves the note's to the note.
-  const note: NoteContent = { ...shared, endDate: c.endDate ?? c.startDate, detail: c.detail, title: null };
+  // D59: a file's note suggestion keeps its event's title, as the note D34 would have written.
+  const note: NoteContent = { ...shared, endDate: c.endDate ?? c.startDate, detail: c.detail, title: c.title ?? null };
   if (doc.type === 'event' && doc.event !== undefined) {
     const { event } = doc;
     return { type: 'event', note, event: { calendarId: event.calendarId.toHexString(), uid: event.uid, ...datesOf(event) } };
@@ -635,13 +656,36 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
         return written === null ? null : { record: toSuggestion(written), created: false };
       }
     },
+    async insertFileNote(scope, input) {
+      const id = new Types.ObjectId(input.id);
+      const fields = contentFields({ type: 'note', note: input.note });
+      try {
+        const doc = await Suggestion.create({
+          _id: id, ...of(scope, input.locationId), week: input.week, ...fields, content: { ...fields.content, title: input.note.title },
+          why: null, calendarIds: [], status: 'open', decidedBy: null, decidedAt: null, createdAt: input.now, updatedAt: input.now,
+          source: 'file', fileId: new Types.ObjectId(input.fileId),
+        });
+        return { record: toSuggestion(doc.toObject<SuggestionDoc>()), created: true };
+      } catch (err) {
+        if (!isDuplicateKeyError(err)) throw err;
+        const written = await Suggestion.findOne({ ...of(scope, input.locationId), _id: id }).lean();
+        if (written === null) throw err;
+        return { record: toSuggestion(written), created: false };
+      }
+    },
+    async listOpenFileNotes(scope, locationId, today) {
+      const docs = await Suggestion.find({ ...of(scope, locationId), source: 'file', type: 'note', status: 'open', ...live(today) })
+        .sort({ createdAt: 1, _id: 1 }).lean();
+      return docs.map(toSuggestion);
+    },
     async listOpen(scope, locationId, today) {
       const docs = await Suggestion.find({ ...of(scope, locationId), ...weeklyRows(), status: 'open', 'content.startDate': trusted({ $gt: today }) })
         .sort({ 'content.startDate': 1, _id: 1 }).lean();
       return docs.map(toSuggestion);
     },
     async listOpenRules(scope, locationId, today) {
-      const docs = await Suggestion.find({ ...of(scope, locationId), ...ruleRows(), status: 'open', ...live(today) })
+      // D59: a file's note suggestions share the rows' source, so only rules are listed here.
+      const docs = await Suggestion.find({ ...of(scope, locationId), ...ruleRows(), type: 'rule', status: 'open', ...live(today) })
         .sort({ createdAt: 1, _id: 1 }).lean();
       return docs.map(toSuggestion);
     },

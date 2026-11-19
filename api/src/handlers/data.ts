@@ -9,6 +9,7 @@ import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+import { wantRefitFor } from '../agent/refit.ts';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
@@ -27,7 +28,7 @@ import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord } from '../stores/notes.ts';
 import { fileView, isUploaderOrAdmin, removeWholeFile } from './files.ts';
 import { loadLocation, memberOf } from './locations.ts';
-import { finishAccepted } from './rule-suggestions.ts';
+import { finishAccepted, finishAcceptedNote } from './rule-suggestions.ts';
 import { filesUnavailable } from './sales.ts';
 import { actorOf } from './team.ts';
 
@@ -779,7 +780,10 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
   let suggestions = 0;
   for (const open of await ctx.stores.agentSuggestions.openFromFile(scope, location.id, file.id)) {
     const rule = await ctx.stores.businessRules.find(scope, location.id, open.id);
+    // D59: a note suggestion whose note an accept already wrote under its id is finished as accepted, as a rule is.
+    const accepted = open.type === 'note' ? await ctx.stores.notes.find(scope, location.id, open.id) : null;
     if (rule !== null && open.type === 'rule') await finishAccepted(ctx, member, location, open, rule);
+    else if (accepted !== null && open.type === 'note') await finishAcceptedNote(ctx, member, location, open);
     else if (await ctx.stores.agentSuggestions.removeOpen(scope, location.id, open.id)) suggestions += 1;
   }
   let days = 0;
@@ -792,6 +796,9 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
     ctx.logger.info({ fileId: summary.id }, 'townwise.file_deleted');
     items += 1;
   }
+  // D59: the file's changes in TownwiseAI's ledger read as undone, so none of them is ever made again.
+  await ctx.stores.agentChanges.markSourceUndone(scope, location.id, { kind: 'file', id: file.id }, { by: member.userId, now: ctx.now() });
+  if (notes > 0 || days > 0) await wantRefitFor(ctx, scope, location.id, 'always');
   if (await ctx.stores.files.finishAiUndo(scope, location.id, file.id)) {
     await recordAfter(ctx, {
       ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'file.ai_undone',

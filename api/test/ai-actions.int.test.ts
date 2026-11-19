@@ -1082,3 +1082,138 @@ describe('a read whose original is deleted', () => {
     expect((logLines(server).filter((line) => line.msg === 'townwise.originals_deleted').at(-1)?.deletedSummaries as number)).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ---- D59: TownwiseAI works on its own ------------------------------------------------------------------------------
+
+describe('TownwiseAI works on its own (D59)', () => {
+  async function changesOf(locationId: string): Promise<Record<string, unknown>[]> {
+    return server.connection.collection('tw_agent_changes').find({ locationId: oid(locationId) }).sort({ _id: 1 }).toArray();
+  }
+
+  async function fileNoteSuggestions(locationId: string): Promise<Record<string, unknown>[]> {
+    return server.connection.collection('tw_agent_suggestions').find({ locationId: oid(locationId), source: 'file', type: 'note' }).toArray();
+  }
+
+  function switchTo(on: boolean): Promise<Response> {
+    return call(server, '/api/org/agent-auto', { method: 'PATCH', session: team.admin, json: { on } });
+  }
+
+  it('applies a high event through the one writer, with a ledger row for the note and the summary item, as the person who asked', async () => {
+    const l1 = await newLocation();
+    const fileId = await seedStored(l1);
+    answers = [answer({ events: [{ ...EVENT, confidence: 'high' }] })];
+    await readAs(team.member, l1, fileId);
+    const outcome = await outcomeOf(fileId);
+    const [noteId] = outcome.notes as string[];
+    const note = await server.connection.collection('tw_notes').findOne({ _id: oid(String(noteId)) });
+    expect(note).toMatchObject({ createdBy: team.member.userId, source: { via: 'ai_file', fileId: oid(fileId) } });
+    expect((note?.agent as { at: Date }).at).toEqual(note?.updatedAt);
+    const changes = await changesOf(l1);
+    expect(changes.map(({ action, status, sourceKind, sourceId, onBehalfOf }) => ({ action, status, sourceKind, sourceId, onBehalfOf }))).toEqual([
+      { action: 'note.add', status: 'applied', sourceKind: 'file', sourceId: fileId, onBehalfOf: team.member.userId },
+      { action: 'item.add', status: 'applied', sourceKind: 'file', sourceId: fileId, onBehalfOf: team.member.userId },
+    ]);
+    expect(changes[0]).toMatchObject({ targetId: oid(String(noteId)), why: 'Back room', confidence: 'high' });
+    const applied = (await eventsOf('agent.change_applied')).filter((event) => (event.details as { locationId: string }).locationId === l1);
+    expect(applied.map((event) => [event.actorUserId, (event.details as { action: string }).action])).toEqual([
+      [team.member.userId, 'note.add'], [team.member.userId, 'item.add'],
+    ]);
+    expect(JSON.stringify(applied)).not.toContain(SENTINEL);
+    expect(await fileNoteSuggestions(l1)).toEqual([]);
+  });
+
+  it('keeps an event it is not sure of, or one in conflict with a person’s note, as an open note suggestion from the file', async () => {
+    const l1 = await newLocation();
+    // A person's closure on the 15th: TownwiseAI's party that day conflicts with it.
+    expect((await call(server, `/api/org/locations/${l1}/notes`, {
+      session: team.member, json: { kind: 'closure', startDate: '2026-06-15', endDate: '2026-06-15', effect: 'closed', detail: null },
+    })).status).toBe(201);
+    const fileId = await seedStored(l1);
+    const unsure = { ...EVENT, confidence: 'medium' };
+    const conflicting = { ...EVENT, title: 'Brunch party', startDate: '2026-06-15', endDate: '2026-06-15', confidence: 'high' };
+    answers = [answer({ events: [unsure, conflicting] })];
+    await readAs(team.member, l1, fileId);
+    const outcome = await outcomeOf(fileId);
+    expect(outcome.notes).toEqual([]);
+    const suggested = await fileNoteSuggestions(l1);
+    expect(outcome.notesSuggested).toEqual(suggested.map((row) => String(row._id)));
+    expect(suggested.map((row) => [row.status, row.fileId, (row.content as { title: string }).title, (row.content as { startDate: string }).startDate]))
+      .toEqual([['open', oid(fileId), 'Wedding dinner', '2026-06-14'], ['open', oid(fileId), 'Brunch party', '2026-06-15']]);
+    expect((await changesOf(l1)).map((row) => row.action)).toEqual(['item.add']);
+    // The panel lists them with their file, and counts them as waiting.
+    const panel = await (await call(server, `/api/org/locations/${l1}/agent`, { session: team.member })).json() as { noteSuggestions: unknown[]; waiting: number };
+    expect(panel.noteSuggestions).toHaveLength(2);
+    expect(panel.waiting).toBe(2);
+    // A read the model was not sure of as a whole applies no event, whatever each event says.
+    const l2 = await newLocation();
+    const second = await seedStored(l2);
+    answers = [answer({ confidence: 'medium', events: [{ ...EVENT, confidence: 'high' }] })];
+    await readAs(team.member, l2, second);
+    expect((await outcomeOf(second)).notes).toEqual([]);
+    expect(await fileNoteSuggestions(l2)).toHaveLength(1);
+  });
+
+  it('with the organization’s switch off, a pressed read writes every event as D34 does, with no ledger row or suggestion', async () => {
+    const l1 = await newLocation();
+    expect((await switchTo(false)).status).toBe(200);
+    try {
+      const fileId = await seedStored(l1);
+      answers = [answer({ confidence: 'medium', events: [{ ...EVENT, confidence: 'low' }] })];
+      await readAs(team.member, l1, fileId);
+      expect((await outcomeOf(fileId)).notes).toHaveLength(1);
+      expect((await outcomeOf(fileId)).notesSuggested).toBeUndefined();
+      expect(await changesOf(l1)).toEqual([]);
+      expect(await fileNoteSuggestions(l1)).toEqual([]);
+      const [note] = await server.connection.collection('tw_notes').find({ locationId: oid(l1) }).toArray();
+      expect(note?.agent).toBeUndefined();
+    } finally {
+      expect((await switchTo(true)).status).toBe(200);
+    }
+  });
+
+  it('an automatic read writes as TownwiseAI on the adder’s behalf, starts no calibration, and wants a refit for a history day', async () => {
+    const l1 = await newLocation();
+    await seedHistory(server, { orgId: team.orgId, locationId: l1, from: '2024-09-01', to: '2026-05-31' });
+    const fileId = await seedStored(l1, { by: team.admin });
+    await server.connection.collection('tw_files').updateOne({ _id: oid(fileId) }, {
+      $set: {
+        ai: {
+          status: 'queued', requestedBy: team.admin.userId, requestedByRole: 'org_admin', requestedByStaff: false, requestedGrantId: null,
+          requestedAt: server.clock.now(), attempts: 0, leaseUntil: null, startedAt: null, finishedAt: null, reason: null, partial: false,
+          costMicroUsd: 0, result: null, auto: true, chargedAt: null,
+        },
+      },
+    });
+    const past = { ...EVENT, title: 'Rehearsal dinner', startDate: '2026-05-16', endDate: '2026-05-16', confidence: 'high' };
+    answers = [answer({ events: [past] })];
+    await runReader();
+    const outcome = await outcomeOf(fileId);
+    expect(outcome.calibration).toEqual({ status: 'refit_wanted', id: null });
+    expect(await count('tw_calibrations', { locationId: oid(l1) })).toBe(0);
+    const [note] = await server.connection.collection('tw_notes').find({ locationId: oid(l1) }).toArray();
+    expect(note).toMatchObject({ createdBy: 'townwise_ai', startDate: '2026-05-16' });
+    const applied = (await eventsOf('agent.change_applied')).filter((event) => (event.details as { locationId: string }).locationId === l1);
+    expect(applied.every((event) => event.actorUserId === 'townwise_ai' && event.actorRole === 'system')).toBe(true);
+    expect((await changesOf(l1))[0]).toMatchObject({ onBehalfOf: team.admin.userId, action: 'note.add' });
+    const location = await server.connection.collection('tw_locations').findOne({ _id: oid(l1) });
+    expect((location?.refit as { wantedAt?: Date } | undefined)?.wantedAt).toEqual(server.clock.now());
+  });
+
+  it('undoing the file’s read marks its ledger rows undone and removes its suggestions still waiting, so nothing comes back', async () => {
+    const l1 = await newLocation();
+    const fileId = await seedStored(l1);
+    answers = [answer({ events: [{ ...EVENT, confidence: 'high' }, { ...EVENT, title: 'Unsure brunch', startDate: '2026-06-20', endDate: '2026-06-20', confidence: 'low' }] })];
+    await readAs(team.member, l1, fileId);
+    expect(await fileNoteSuggestions(l1)).toHaveLength(1);
+    expect((await undo(team.member, l1, `f_${fileId}`)).status).toBe(200);
+    expect((await changesOf(l1)).map((row) => row.status)).toEqual(['undone', 'undone']);
+    expect(await fileNoteSuggestions(l1)).toEqual([]);
+    expect(await count('tw_notes', { locationId: oid(l1) })).toBe(0);
+    // Read again, the same event is a duplicate of the change someone undid: nothing comes back.
+    answers = [answer({ events: [{ ...EVENT, confidence: 'high' }] })];
+    await readAs(team.member, l1, fileId);
+    expect(await count('tw_notes', { locationId: oid(l1) })).toBe(0);
+    expect((await outcomeOf(fileId)).notesSkipped).toMatchObject({ duplicate: 1 });
+    expect((await outcomeOf(fileId)).itemReason).toBe('duplicate');
+  });
+});

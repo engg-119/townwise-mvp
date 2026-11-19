@@ -168,9 +168,11 @@ export interface AiActionPlan {
 
 /** Why the read wrote no days. `already_had_days`: every verified day was already stored (AI days never replace one). */
 export type AiDaysReason =
-  | 'not_sales' | 'no_days' | 'file_wrote_days' | 'picture' | 'not_high_confidence' | 'days_not_verified' | 'already_had_days';
+  | 'not_sales' | 'no_days' | 'file_wrote_days' | 'picture' | 'not_high_confidence' | 'days_not_verified' | 'already_had_days'
+  // D59: this file's days were added once already (and undone since): TownwiseAI never adds them again.
+  | 'duplicate';
 /** Why the read kept no summary item. */
-export type AiItemReason = 'no_summary' | 'storage_full' | 'daily_upload_limit';
+export type AiItemReason = 'no_summary' | 'storage_full' | 'daily_upload_limit' | 'duplicate';
 /**
  * The model update after a read: `started` (with the calibration's id), `not_needed` (no note or day was written),
  * `not_admin` (the person who asked is not an org admin), or the lab's refusal (lab/service.ts StartRefusal, renamed),
@@ -178,7 +180,9 @@ export type AiItemReason = 'no_summary' | 'storage_full' | 'daily_upload_limit';
  */
 export type AiCalibrationStatus =
   | 'started' | 'not_needed' | 'not_admin' | 'lab_unavailable' | 'not_enough_history' | 'regime' | 'budget_spent'
-  | 'in_progress' | 'daily_limit' | 'org_not_active' | 'start_failed';
+  | 'in_progress' | 'daily_limit' | 'org_not_active' | 'start_failed'
+  // D59: an automatic read starts no calibration: what it changed on past days wants a refit, which the hourly pass makes.
+  | 'refit_wanted';
 export interface AiCalibration { readonly status: AiCalibrationStatus; readonly id: string | null }
 
 /** What a read's actions did, recorded once every write is done. */
@@ -189,7 +193,16 @@ export interface AiActionsOutcome {
    * past 31 closed days a read).
    */
   readonly notes: readonly string[];
-  readonly notesSkipped: { readonly duplicate: number; readonly cap: number; readonly invalid: number; readonly guard: number };
+  readonly notesSkipped: {
+    readonly duplicate: number; readonly cap: number; readonly invalid: number; readonly guard: number;
+    /** D59: events below the confidence bar (or in conflict) kept as no suggestion: ended already, or past the cap. */
+    readonly notKept?: number;
+  };
+  /**
+   * D59: while TownwiseAI works on its own, the events it was not sure of (or that conflict with a person's note or rule),
+   * stored as open note suggestions under their planned note ids. Absent on an outcome recorded before, or with it off.
+   */
+  readonly notesSuggested?: readonly string[];
   /** The upload it wrote days through, and the days that upload held once written; null and 0 with a reason otherwise. */
   readonly uploadId: string | null;
   readonly daysWritten: number;

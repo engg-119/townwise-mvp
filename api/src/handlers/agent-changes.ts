@@ -55,12 +55,6 @@ export async function agentAutoView(ctx: TownwiseContext, caller: MemberPrincipa
   };
 }
 
-/** Whether automatic work runs for the organization now: TOWNWISE_AGENT_AUTO and its own switch are both on. */
-export async function agentAutoOn(ctx: Pick<TownwiseContext, 'config' | 'stores'>, orgId: string): Promise<boolean> {
-  if (!ctx.config.agentAuto) return false;
-  return (await ctx.stores.orgs.findById(orgId))?.agentAuto.on ?? false;
-}
-
 /**
  * PATCH /api/org/agent-auto { on, orgId? } (org admin, outside view-as): 200 { agentAuto: { on } }. A change records
  * `org.agent_auto_switched` before it is applied; the same state again writes nothing. Turning it on is the

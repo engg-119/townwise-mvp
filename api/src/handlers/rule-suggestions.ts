@@ -12,6 +12,12 @@
 // finishes the accept instead. A suggestion whose end has passed in the town is gone (404), as an unknown id or another
 // organization's is. 409 rule_limit and rule_exists leave it open. Logs and audit events carry ids, the source and
 // whether it was edited only: never the rule's words, its schedule or the file's name.
+//
+// D59 (openspec change auto-apply-agent-reads, design decision 7): a note suggestion from a file (an event TownwiseAI
+// was not sure of, or one in conflict with a person's note or rule) is decided by any member through the same two
+// routes. Confirm (an empty body) writes the note through the notes code as the caller, with the suggestion's id as the
+// note's, then marks it accepted by compare-and-set; a dismiss that finds the note written finishes the accept instead.
+// Its title and detail are the file's, and never reach a log or an audit event.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -28,8 +34,9 @@ import { authorEmail } from '../people.ts';
 import type { SuggestionRecord } from '../stores/agent-suggestions.ts';
 import type { BusinessRuleRecord, RuleSchedule } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
+import type { NoteRecord } from '../stores/notes.ts';
 import { loadLocation, memberOf } from './locations.ts';
-import { readRuleSchedule } from './notes.ts';
+import { addNote, noteView, readRuleSchedule, type NoteView } from './notes.ts';
 import { addRule, ruleTextOf, ruleView, sameSchedule, type RuleView } from './rules.ts';
 import { actorOf } from './team.ts';
 
@@ -47,6 +54,14 @@ export interface RuleDecideResult {
 
 /** A file or sales suggestion: its rule's words and schedule. */
 type RuleRecord = SuggestionRecord & { type: 'rule' };
+/** D59: a note suggestion from a file. */
+type FileNoteRecord = SuggestionRecord & { type: 'note' };
+
+/** D59: what deciding a file's note suggestion answers: its id and status, and the note an accept wrote (null otherwise). */
+export interface NoteDecideResult {
+  suggestion: { id: string; status: 'accepted' | 'dismissed' };
+  note: NoteView | null;
+}
 
 function notFound(): AppError {
   return new AppError(404, 'not_found', 'Not found');
@@ -78,6 +93,79 @@ export async function finishAccepted(
     },
   });
   return true;
+}
+
+/**
+ * D59: marks a file's note suggestion accepted by compare-and-set, from open or dismissed, and only when it lands
+ * records `agent.suggestion_accepted` with its type and source. Undoing the file's read uses it too (handlers/data.ts).
+ */
+export async function finishAcceptedNote(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, record: FileNoteRecord): Promise<boolean> {
+  const { scope } = caller;
+  if (!(await ctx.stores.agentSuggestions.markAccepted(scope, location.id, record.id, { by: caller.userId, now: ctx.now() }))) return false;
+  await recordAfter(ctx, {
+    ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'agent.suggestion_accepted', target: { type: 'location', id: location.id },
+    details: { locationId: location.id, suggestionId: record.id, type: 'note', source: 'file', edited: false },
+  });
+  return true;
+}
+
+/** D59: a file's note suggestion of this location, or null when the id is not one (a rule, a weekly row, unknown). */
+async function fileNoteOf(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, rawId: unknown): Promise<FileNoteRecord | null> {
+  const id = parseInput(suggestionIdSchema, rawId);
+  if (SALES_ID.test(id)) return null;
+  const record = await ctx.stores.agentSuggestions.find(caller.scope, location.id, id);
+  return record?.type === 'note' && record.source === 'file' ? record : null;
+}
+
+async function noteViewOf(ctx: TownwiseContext, caller: MemberPrincipal, note: NoteRecord | null): Promise<NoteView | null> {
+  return note === null ? null : noteView(note, await authorEmail(ctx, note.createdBy, note.byStaff), caller);
+}
+
+/** D59: accepting a file's note suggestion (see the top); an edit body is refused (400), as notes are edited on Notes. */
+async function acceptFileNote(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, record: FileNoteRecord, edited: boolean, res: Response,
+): Promise<void> {
+  const { scope } = caller;
+  if (edited) throw invalid();
+  let note = await ctx.stores.notes.find(scope, location.id, record.id);
+  if (note === null) {
+    if (record.status === 'accepted') {
+      const accepted: NoteDecideResult = { suggestion: { id: record.id, status: 'accepted' }, note: null };
+      res.status(200).json(accepted);
+      return;
+    }
+    if (record.status !== 'open' || (record.note.endDate < townToday(ctx, location))) throw notFound();
+    note = await addNote(ctx, caller, location, record.note, { id: record.id });
+  }
+  if (record.status !== 'accepted') await finishAcceptedNote(ctx, caller, location, record);
+  ctx.logger.info({
+    orgId: scope.orgId, locationId: location.id, suggestionId: record.id, decision: 'accepted', source: 'file', type: 'note',
+  }, 'townwise.agent_suggestion');
+  const result: NoteDecideResult = { suggestion: { id: record.id, status: 'accepted' }, note: await noteViewOf(ctx, caller, note) };
+  res.status(200).json(result);
+}
+
+/** D59: dismissing a file's note suggestion; one whose note an accept wrote is finished as accepted instead. */
+async function dismissFileNote(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, record: FileNoteRecord, res: Response): Promise<void> {
+  const { scope } = caller;
+  if (record.status === 'expired' || (record.status === 'open' && record.note.endDate < townToday(ctx, location))) throw notFound();
+  const written = record.status === 'accepted' ? null : await ctx.stores.notes.find(scope, location.id, record.id);
+  if (written !== null) await finishAcceptedNote(ctx, caller, location, record);
+  else if (await ctx.stores.agentSuggestions.markDismissed(scope, location.id, record.id, { by: caller.userId, now: ctx.now() })) {
+    await recordAfter(ctx, {
+      ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'agent.suggestion_dismissed', target: { type: 'location', id: location.id },
+      details: { locationId: location.id, suggestionId: record.id, type: 'note', source: 'file' },
+    });
+    const raced = await ctx.stores.notes.find(scope, location.id, record.id);
+    if (raced !== null) await finishAcceptedNote(ctx, caller, location, record);
+  }
+  const now = await ctx.stores.agentSuggestions.find(scope, location.id, record.id);
+  if (now === null) throw notFound();
+  const status = now.status === 'accepted' ? 'accepted' : 'dismissed';
+  ctx.logger.info({ orgId: scope.orgId, locationId: location.id, suggestionId: record.id, decision: status, source: 'file', type: 'note' }, 'townwise.agent_suggestion');
+  const note = status === 'accepted' ? await ctx.stores.notes.find(scope, location.id, record.id) : null;
+  const result: NoteDecideResult = { suggestion: { id: record.id, status }, note: await noteViewOf(ctx, caller, note) };
+  res.status(200).json(result);
 }
 
 /** The Monday that starts `day`'s week. */
@@ -150,6 +238,11 @@ export async function acceptRuleSuggestion(ctx: TownwiseContext, req: Request, r
     return { text, schedule };
   })();
   const location = await loadLocation(ctx, scope, req.params.locationId);
+  const fileNote = await fileNoteOf(ctx, caller, location, req.params.suggestionId);
+  if (fileNote !== null) {
+    await acceptFileNote(ctx, caller, location, fileNote, edit !== null, res);
+    return;
+  }
   const record = await suggestionOf(ctx, caller, location, req.params.suggestionId);
   const wanted = edit ?? { text: record.text, schedule: record.schedule };
   let rule = await ctx.stores.businessRules.find(scope, location.id, record.id);
@@ -190,6 +283,11 @@ export async function dismissRuleSuggestion(ctx: TownwiseContext, req: Request, 
   const { scope } = caller;
   parseInput(dismissBody, req.body);
   const location = await loadLocation(ctx, scope, req.params.locationId);
+  const fileNote = await fileNoteOf(ctx, caller, location, req.params.suggestionId);
+  if (fileNote !== null) {
+    await dismissFileNote(ctx, caller, location, fileNote, res);
+    return;
+  }
   const record = await suggestionOf(ctx, caller, location, req.params.suggestionId);
   if (record.status === 'expired' || (record.status === 'open' && !isLive(record, townToday(ctx, location)))) throw notFound();
   const written = record.status === 'accepted' ? null : await ctx.stores.businessRules.find(scope, location.id, record.id);
