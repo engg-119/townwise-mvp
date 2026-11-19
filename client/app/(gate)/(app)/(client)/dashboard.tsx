@@ -25,7 +25,7 @@ import { theme } from '../../../../src/theme';
 // Several: one row per location with its town, sales history, calibration in words, notes and the next step,
 // then the public profile of each of their towns. While a location's forecast updates (D65), its Calibration cell
 // adds a second line in plain words (15.6: a client's own data state is words, not a tag), linked to the runs in its
-// TownwiseAI activity, and the page re-reads the organization in place every 30 seconds until none is updating. None: org admins get the Add location form inline; members
+// TownwiseAI activity while one runs (a waiting first forecast has none yet, so its words aren't a link), and the page re-reads the organization in place every 30 seconds until none is updating. None: org admins get the Add location form inline; members
 // get a line saying their admin hasn't added one. After a join, the notice names who added them (F1). When a press
 // of the inline form adds some places and leaves rows (P10), the form stays, through the organization's reload,
 // until a press adds the rest or one is added by hand.
@@ -63,7 +63,11 @@ function SalesHistory(props: { location: LocationSummary }): React.JSX.Element {
   );
 }
 
-/** The calibration state's heading, and (D65) while its forecast updates, a second line linked to its runs. */
+/**
+ * The calibration state's heading, and (D65) while its forecast updates, a second line: linked to its runs while one
+ * runs, plain words while a first forecast waits, since its activity has no run yet (design decision 4: never point at
+ * an empty activity).
+ */
 function calibrationCell(location: LocationSummary): React.ReactNode {
   const heading = calibrationHeading(location.calibration);
   const updating = dashboardUpdatingLine(location.calibration);
@@ -71,7 +75,9 @@ function calibrationCell(location: LocationSummary): React.ReactNode {
   return (
     <View>
       <Text style={styles.cell}>{heading}</Text>
-      <Link href={activityHref(location.id)} style={styles.updating}>{updating}</Link>
+      {updatingOf(location.calibration)?.stage === 'waiting'
+        ? <Text style={styles.note}>{updating}</Text>
+        : <Link href={activityHref(location.id)} style={styles.updating}>{updating}</Link>}
     </View>
   );
 }

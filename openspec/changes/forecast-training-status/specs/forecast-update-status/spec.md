@@ -50,7 +50,7 @@ Every calibration object the API answers (GET /api/org's location summaries, GET
 - **THEN** `updating` is null until the pass starts another calibration
 
 ### Requirement: Owners see updating where they look
-While `updating` is not null, the model card (P24) SHALL show a sentence saying the forecast is updating, or the first forecast is next or being built, with the days and the time it started when running; Home (P11) SHALL replace its no-forecast line with a first-forecast line for a location with no published run; the dashboard's Calibration cell (P9) SHALL add a second line in plain words, never a StatusTag, linked to the location's TownwiseAI activity; the upload result SHALL say the forecast is updating or the first forecast is next; and TownwiseAI's overview tool SHALL include the model card's sentence. A time SHALL be shown in the viewer's time zone, with the date added when it is not the viewer's today; the overview tool, which has no viewer's time zone, SHALL use the town's. The TownwiseAI page SHALL open its panel at What it's been doing when its address carries `?panel=activity`, at web and phone width. [CONFIRM: every updating sentence in design decision 3] [CONFIRM: no separate run-history page; the dashboard shows updating as words in the Calibration cell, linked to TownwiseAI's activity]
+While `updating` is not null, the model card (P24) SHALL show a sentence saying the forecast is updating, or the first forecast is next or being built, with the days and the time it started when running; Home (P11) SHALL replace its no-forecast line with a first-forecast line for a location with no published run; the dashboard's Calibration cell (P9) SHALL add a second line in plain words, never a StatusTag, linked to the location's TownwiseAI activity while a run is running and not linked while a first forecast is waiting, whose activity has no run yet; the upload result SHALL say the forecast is updating or the first forecast is next; and TownwiseAI's overview tool SHALL include the model card's sentence. A time SHALL be shown in the viewer's time zone, with the date added when it is not the viewer's today; the overview tool, which has no viewer's time zone, SHALL use the town's. The TownwiseAI page SHALL open its panel at What it's been doing when its address carries `?panel=activity`, at web and phone width. [CONFIRM: every updating sentence in design decision 3] [CONFIRM: no separate run-history page; the dashboard shows updating as words in the Calibration cell, linked to TownwiseAI's activity while a run is running]
 
 #### Scenario: Model card while a refit runs
 - **WHEN** a stale location with 6 newer days has a calibration running since 2:14 PM
@@ -60,6 +60,10 @@ While `updating` is not null, the model card (P24) SHALL show a sentence saying 
 #### Scenario: Dashboard with two locations
 - **WHEN** one of an organization's two locations is updating
 - **THEN** its Calibration cell shows its heading and "Updating now" beneath it, in plain text, linking to that location's TownwiseAI page with its activity open
+
+#### Scenario: Dashboard while a first forecast waits
+- **WHEN** a location's first forecast is waiting
+- **THEN** its Calibration cell shows "First forecast next" beneath its heading as plain words, not a link, since its activity has no run yet
 
 #### Scenario: The activity link on a phone
 - **WHEN** the TownwiseAI page opens at 390px wide with `?panel=activity`
