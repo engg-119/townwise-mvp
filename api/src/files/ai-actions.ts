@@ -39,7 +39,9 @@ import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Types } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
-import { agentAutoOn, applyChange, isAgentRule, TOWNWISE_AI_AUTHOR, type PersonsEntries } from '../agent/apply.ts';
+import {
+  agentAutoOn, applyChange, CLOSED_DAYS_PER_READ, CLOSED_SPAN_DAYS, isAgentRule, TOWNWISE_AI_AUTHOR, type PersonsEntries,
+} from '../agent/apply.ts';
 import { wantRefitFor } from '../agent/refit.ts';
 import { closureKeyOf, closureRuleText, isSuggestable } from '../agent/closure-suggestions.ts';
 import type { Role } from '../access/resolve.ts';
@@ -70,9 +72,6 @@ const NOTE_DETAIL_CHARS = 280;
 const MAX_EXPECTED_GUESTS = 20_000;
 /** The share of the answer's days the file's text must bear out before any is written. [CONFIRM: 95%] */
 const VERIFIED_SHARE_PERCENT = 95;
-/** A closed note (a closure, or closed) a read makes spans at most this many days, and all of them this many together. */
-const CLOSED_SPAN_DAYS = 14;
-const CLOSED_DAYS_PER_READ = 31;
 /** D46: a read stores no suggested closure rule while the location has this many open from files. */
 const OPEN_FILE_SUGGESTIONS = 10;
 /** D59: and no note suggestion while it has this many open from files. */

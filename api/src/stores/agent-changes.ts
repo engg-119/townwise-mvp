@@ -184,6 +184,8 @@ export interface AgentChangeStore {
    * rule still counts toward the week's 2).
    */
   countSince(scope: OrgScope, locationId: string, input: { action: AgentChangeAction; since: Date }): Promise<number>;
+  /** D59 slice 3: the location's changes still `applying` whose status was set at or before `before`, oldest first. */
+  listApplying(scope: OrgScope, locationId: string, input: { before: Date }): Promise<AgentChangeRecord[]>;
   /** The location's changes newest first, `limit` a page, older than `before` when given. */
   page(scope: OrgScope, locationId: string, input: { before?: { at: Date; id: string }; limit: number }): Promise<AgentChangePage>;
   /** Deleting a location (D44). Resolves the number deleted. */
@@ -299,6 +301,11 @@ export function createAgentChangeStore(connection: Connection): AgentChangeStore
     },
     countSince(scope, locationId, input) {
       return Change.countDocuments({ ...of(scope, locationId), action: input.action, appliedAt: trusted({ $gte: input.since }) });
+    },
+    async listApplying(scope, locationId, input) {
+      const docs = await Change.find({ ...of(scope, locationId), status: 'applying', statusAt: trusted({ $lte: input.before }) })
+        .sort({ appliedAt: 1, _id: 1 }).lean();
+      return docs.map(toChange);
     },
     async page(scope, locationId, input) {
       const before = input.before;

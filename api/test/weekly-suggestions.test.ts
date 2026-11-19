@@ -444,6 +444,13 @@ describe('confidence and what TownwiseAI is sure of (D59 slice 3)', () => {
     expect(sure(spot({ effect: 'more_guests', confidence: 'high', expectedGuests: 12 }), { ownerEvents })).toBeNull();
     expect(sure(spot({ effect: 'unknown', confidence: 'high' }), { ownerEvents })).toBeNull();
     expect(sure(spot({ effect: 'closed', confidence: 'medium' }), { ownerEvents })).toBeNull();
+    // Design decision 7's 14-day guard: a closed note over 14 days, or a rule closing more than 14 days in a row, waits.
+    expect(sure({ ...CLOSURE, endDate: '2026-12-09', confidence: 'high' })).toMatchObject({ type: 'note' });
+    expect(sure({ ...CLOSURE, endDate: '2026-12-10', confidence: 'high' })).toBeNull();
+    const rule = { ...CLOSURE, type: 'rule', ruleText: 'Closed for winter', confidence: 'high' };
+    expect(sure({ ...rule, endDate: null })).toBeNull();
+    expect(sure({ ...rule, endDate: null, weekdays: [1, 2, 3, 4, 5, 6] })).toMatchObject({ type: 'rule' });
+    expect(sure({ ...rule, endDate: null, weekdays: [0, 1, 2, 3, 4, 5, 6] })).toBeNull();
   });
 });
 

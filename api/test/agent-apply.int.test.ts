@@ -3,14 +3,18 @@
 // a retry with one note; two sources racing write one note; a person's covering note blocks; an undone change is never
 // made again; a writer that adds nothing frees its key; (slice 2) a calendar's labels are one change whose retry writes at
 // the time planned first; (slice 3) a rule is added as TownwiseAI's, a person's rule blocks a conflicting one, D31's
-// limit and words refuse one, and an undone closure is never added again from another start. Synthetic notes and days only.
+// limit and words refuse one, an undone closure is never added again from another start, TownwiseAI's own unedited rule
+// blocks nothing, a standing rule from a past start is checked up to 400 days from today, and a weekly or sales row a
+// pass left `applying` is finished, or its key freed, an hour on. Synthetic notes and days only.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
-import { applyChange, dedupeKeyOf, TOWNWISE_AI_AUTHOR, type NoteCandidate, type RuleCandidate } from '../src/agent/apply.ts';
+import {
+  applyChange, dedupeKeyOf, finishStaleChanges, TOWNWISE_AI_AUTHOR, type NoteCandidate, type RuleCandidate,
+} from '../src/agent/apply.ts';
 import { TOWNWISE_AI_ACTOR } from '../src/audit.ts';
 import { MAX_RULES, type RuleSchedule } from '../src/stores/business-rules.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
@@ -316,5 +320,79 @@ describe('applyChange, slice 3: rules', () => {
     await addSalesDay(server, { orgId: q.orgId, locationId: q.locationId, date: '2026-05-31', guests: 100, netSalesCents: null });
     expect((await applyChange(server.ctx, q.scope, ruleCandidate(q, { schedule: { ...MONDAYS, startDate: '2026-05-04' } }))).outcome).toBe('applied');
     expect(await refitOf(q)).toEqual({ wantedAt: server.clock.now() });
+  });
+
+  it('TownwiseAI’s own rule nobody edited blocks no candidate; once a person edits it, it is theirs and does', async () => {
+    const p = await place();
+    expect((await applyChange(server.ctx, p.scope, ruleCandidate(p))).outcome).toBe('applied');
+    const [rule] = await rulesOf(p);
+    // A buyout on a Monday the rule closes: TownwiseAI's rule is not a person's, so it is applied.
+    const buyout = (day: string) => candidate(p, {
+      note: content({ startDate: day, endDate: day, title: `${SENTINEL} buyout ${day}` }),
+    });
+    expect((await applyChange(server.ctx, p.scope, buyout('2026-06-15'))).outcome).toBe('applied');
+    server.clock.advance(1_000);
+    try {
+      await server.ctx.stores.businessRules.update(p.scope, p.locationId, String(rule?._id), { text: 'Shut on Mondays' }, server.clock.now());
+      expect(await applyChange(server.ctx, p.scope, buyout('2026-06-22'))).toEqual({ outcome: 'conflict', change: null });
+    } finally {
+      server.clock.advance(-1_000);
+    }
+  });
+
+  it('a standing rule from a past start is checked against a person’s rule and note up to 400 days from today', async () => {
+    // The sales history's closure starts a year back; the person's open Mondays begin in August, past 400 days from that start.
+    const old = { ...MONDAYS, startDate: '2025-06-02' };
+    const p = await place();
+    await server.ctx.stores.businessRules.create(p.scope, p.locationId, {
+      text: 'Busy Mondays from August', addedVia: 'page', createdBy: 'person', now: server.clock.now(),
+      schedule: { ...MONDAYS, startDate: '2026-08-03', kind: 'opening', effect: 'more_guests', expectedGuests: 20 },
+    });
+    expect(await applyChange(server.ctx, p.scope, ruleCandidate(p, { schedule: old }))).toEqual({ outcome: 'conflict', change: null });
+    const q = await place();
+    await server.ctx.stores.notes.create(q.scope, q.locationId, {
+      kind: 'private_event', startDate: '2027-03-01', endDate: '2027-03-01', weekdays: null, effect: 'more_guests', expectedGuests: 30,
+      detail: null, title: null, startTime: null, endTime: null,
+    }, { createdBy: 'person', now: server.clock.now() });
+    expect(await applyChange(server.ctx, q.scope, ruleCandidate(q, { schedule: old }))).toEqual({ outcome: 'conflict', change: null });
+    expect(await rulesOf(p)).toHaveLength(1);
+    expect(await rulesOf(q)).toEqual([]);
+  });
+
+  it('finishStaleChanges finishes a weekly or sales row left applying for an hour whose target was written, and frees one with none', async () => {
+    const p = await place();
+    const at = server.clock.now();
+    const applying = async (over: { sourceKind: 'sales' | 'weekly' | 'file'; action: 'rule.add' | 'note.add'; key: string; targetId?: string }) =>
+      (await server.ctx.stores.agentChanges.insertApplying(p.scope, {
+        id: id(), locationId: p.locationId, sourceKind: over.sourceKind, sourceId: null, action: over.action, targetId: over.targetId ?? id(),
+        dedupeKey: over.key, confidence: 'high', why: null, onBehalfOf: null, startDate: '2026-06-08', endDate: null, noteKind: 'closure', now: at,
+      })).record;
+    // A sales rule written before its pass died; a weekly note never written; a file row, which its read retries itself.
+    const rule = ruleCandidate(p);
+    const ruleRow = await applying({ sourceKind: 'sales', action: 'rule.add', key: dedupeKeyOf({ action: 'rule.add', schedule: MONDAYS }), targetId: rule.targetId });
+    await server.ctx.stores.businessRules.create(p.scope, p.locationId, {
+      text: rule.text, schedule: MONDAYS, addedVia: 'townwise_ai', createdBy: TOWNWISE_AI_AUTHOR, now: at, id: rule.targetId, agent: { changeId: ruleRow.id },
+    });
+    const noteRow = await applying({ sourceKind: 'weekly', action: 'note.add', key: dedupeKeyOf({ action: 'note.add', note: content() }) });
+    const fileRow = await applying({ sourceKind: 'file', action: 'note.add', key: 'file-row' });
+    // Within the hour they may still be running: nothing changes.
+    server.clock.advance(59 * 60_000);
+    try {
+      await finishStaleChanges(server.ctx, p.scope, p.locationId);
+      expect((await rowsOf(p)).map((each) => each.status)).toEqual(['applying', 'applying', 'applying']);
+      server.clock.advance(60_000);
+      await finishStaleChanges(server.ctx, p.scope, p.locationId);
+      const rows = await rowsOf(p);
+      expect(rows.map((each) => [String(each._id), each.status])).toEqual([[ruleRow.id, 'applied'], [fileRow.id, 'applying']]);
+      expect(rows[0]?.targetUpdatedAt).toEqual(at);
+      expect(await rulesOf(p)).toHaveLength(1);
+      expect(rows.some((each) => String(each._id) === noteRow.id)).toBe(false);
+      const events = (await auditEvents(server)).filter((event) => event.action === 'agent.change_applied' && String(event.orgId) === p.orgId);
+      expect(events.map((event) => [event.actorUserId, event.details])).toEqual([
+        ['townwise_ai', { locationId: p.locationId, action: 'rule.add', sourceKind: 'sales' }],
+      ]);
+    } finally {
+      server.clock.advance(-60 * 60_000);
+    }
   });
 });

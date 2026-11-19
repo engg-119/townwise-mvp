@@ -1276,4 +1276,63 @@ describe('suggestions TownwiseAI is sure of (D59 slice 3)', () => {
     expect(await server.connection.collection('tw_business_rules').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
     expect((await panel(t, t.member)).ruleSuggestions).toEqual([]);
   });
+
+  it('a closure over 14 days, a closure rule closing every day with no end, and a closed note past 31 closed days a pass wait open', async () => {
+    const t = await team();
+    const note = (from: string, to: string) => ({ ...ITEM, startDate: from, endDate: to, why: `Closed ${from} to ${to}.`, confidence: 'high' });
+    const outcome = await passWith(t, [
+      note('2026-06-10', '2026-06-29'),
+      { ...closureRule('2026-06-08', 'Closed for the season'), endDate: null },
+      note('2026-07-21', '2026-08-01'), note('2026-08-02', '2026-08-13'), note('2026-08-14', '2026-08-25'),
+    ]);
+    expect(outcome).toMatchObject({ applied: 2, suggested: 3 });
+    const notes = await server.connection.collection('tw_notes').find({ locationId: new Types.ObjectId(t.locationId) }).sort({ startDate: 1 }).toArray();
+    expect(notes.map((each): unknown[] => [each.startDate, each.endDate])).toEqual([['2026-07-21', '2026-08-01'], ['2026-08-02', '2026-08-13']]);
+    expect(await server.connection.collection('tw_business_rules').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+  });
+
+  it('a weekly closure rule someone dismissed is not saved when the model words it again from a later start', async () => {
+    const t = await team();
+    const schedule = {
+      kind: 'closure', startDate: '2026-06-08', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+    } as const;
+    const [earlier] = await stored(t, [{ content: { type: 'rule', text: 'Closed on Mondays', schedule }, why: 'You close Mondays.', calendarIds: [] }]);
+    expect((await decide(t, t.admin, earlier?.id ?? '', 'dismiss')).status).toBe(200);
+    const outcome = await passWith(t, [{ ...closureRule('2026-06-15', 'Closed Mondays'), endDate: null, weekdays: [1] }], '2026-06-08');
+    expect(outcome).toMatchObject({ applied: 0 });
+    expect(await changesOf(t)).toEqual([]);
+    expect(await server.connection.collection('tw_business_rules').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+  });
+
+  it('the 2 rules a week count the sales history’s and undone ones too', async () => {
+    const t = await team();
+    await closedMondays(t);
+    // The sales history's rule and one weekly rule; the second weekly rule waits.
+    const outcome = await passWith(t, [closureRule('2026-07-08', 'Closed for a deep clean'), closureRule('2026-07-09', 'Closed for staff training')]);
+    expect(outcome).toMatchObject({ applied: 2, suggested: 1 });
+    expect((await changesOf(t)).map((row) => row.sourceKind)).toEqual(['sales', 'weekly']);
+    // Both undone: a later pass that week still adds none.
+    for (const row of await changesOf(t)) {
+      const undo = await call(server, `/api/org/locations/${t.locationId}/agent/changes/${String(row._id)}/undo`, { session: t.member, method: 'POST' });
+      expect(undo.status).toBe(200);
+    }
+    expect(await passWith(t, [closureRule('2026-07-15', 'Closed for a wedding')], '2026-06-02')).toMatchObject({ applied: 0, suggested: 1 });
+  });
+
+  it('a sales rule whose pass died mid-apply is finished by a later pass, so it shows with Undo and can be undone', async () => {
+    const t = await team();
+    await closedMondays(t);
+    await passWith(t, []);
+    const [change] = await changesOf(t);
+    // As if that pass had died after writing the rule, before marking its row applied.
+    await server.connection.collection('tw_agent_changes').updateOne({ _id: change?._id as Types.ObjectId }, {
+      $set: { status: 'applying', targetUpdatedAt: null, statusAt: new Date(server.clock.now().getTime() - 2 * 60 * MINUTE) },
+    });
+    await passWith(t, [], '2026-06-08');
+    expect(await changesOf(t)).toEqual([expect.objectContaining({ _id: change?._id, status: 'applied', targetId: change?.targetId })]);
+    expect((await panel(t, t.member)).activity.find((item) => item.kind === 'agent_change')).toMatchObject({ action: 'rule.add', undoable: true });
+    const undo = await call(server, `/api/org/locations/${t.locationId}/agent/changes/${String(change?._id)}/undo`, { session: t.member, method: 'POST' });
+    expect(undo.status).toBe(200);
+    expect(await server.connection.collection('tw_business_rules').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+  });
 });

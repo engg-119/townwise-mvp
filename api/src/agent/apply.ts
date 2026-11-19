@@ -9,8 +9,10 @@
 // every status; the target is written under that id (a second create fails on its primary key and counts as done); the
 // row is set `applied` with the target's updatedAt by compare-and-set; the audit event is recorded only by the call
 // whose compare-and-set lands; then the location is marked as wanting a refit when the change touches a training day. A
-// retry finds the row by its key, sees its own planned target, and finishes the steps left. A key another change holds,
-// in any status (an undone one included), is a duplicate, so nothing undone is ever made again. Before the row, a note
+// retry finds the row by its key, sees its own planned target, and finishes the steps left. A weekly or sales change
+// plans a new target id each pass, so no later candidate retries one: each pass first finishes the location's weekly and
+// sales rows left `applying` for an hour or more (finishStaleChanges). A key another change holds, in any status (an
+// undone one included), is a duplicate, so nothing undone is ever made again. Before the row, a note
 // or a rule is checked against the notes and scheduled rules a person made on its days: one that decides a day
 // differently is a conflict, and the candidate waits as a suggestion instead (the caller's choice). Logs and audit events carry ids,
 // the action and the source kind only: never a title, a why, a file name or a figure.
@@ -21,7 +23,7 @@ import { Types } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
-import { recordAfter } from '../audit.ts';
+import { recordAfter, TOWNWISE_AI_ACTOR } from '../audit.ts';
 import { isBuyout, isClosure, saysOpen, type Entry } from '../closed-days.ts';
 import { utcDay } from '../dates.ts';
 import { isAgentNote } from '../forecasts/adjust.ts';
@@ -174,21 +176,40 @@ export interface PersonsEntries {
   readonly rules: readonly RuleSchedule[];
 }
 
-/** A candidate is checked on at most this many days (a closure TownwiseAI writes spans at most 14; a standing rule, its first 400). */
+/**
+ * A closed note TownwiseAI saves spans at most this many days, and those one read or weekly pass saves at most this
+ * many together (design decision 7's closure guards); a closure rule it adds closes at most CLOSED_SPAN_DAYS in a row.
+ */
+export const CLOSED_SPAN_DAYS = 14;
+export const CLOSED_DAYS_PER_READ = 31;
+
+/**
+ * A candidate is checked on at most this many days from its start, or from today when that is later (a closure
+ * TownwiseAI writes spans at most 14; a standing rule, up to 400 from today, its past days included).
+ */
 const CONFLICT_DAYS = 400;
+/** A weekly or sales row `applying` this long is an attempt that died (a pass takes minutes); finishStaleChanges finishes it. */
+export const STALE_APPLYING_MS = 60 * 60_000;
+
+/** The last day a candidate's conflict check reads: its end, or at most 400 days from its start or `today`, the later. */
+function conflictEnd(candidate: Pick<NoteContent, 'startDate'> & { readonly endDate: string | null }, today: string): string {
+  const from = today > candidate.startDate ? today : candidate.startDate;
+  const limit = utcDay(new Date(`${from}T00:00:00.000Z`), CONFLICT_DAYS - 1);
+  return candidate.endDate === null || candidate.endDate > limit ? limit : candidate.endDate;
+}
 
 /**
  * Whether a note (slice 3: or a rule's schedule) conflicts with a person's (design decision 7): on a day it covers (a
- * schedule with no end, its first 400), a note a person made (not one TownwiseAI saved and nobody edited) or a person's
- * scheduled rule decides the day differently than the candidate does (closed, booked or open). A candidate that decides
- * nothing (an `other` note with an unknown effect) never conflicts. Pure.
+ * schedule with no end, from its start to 400 days from its start or `today`, the later), a note a person made (not one
+ * TownwiseAI saved and nobody edited) or a person's scheduled rule decides the day differently than the candidate does
+ * (closed, booked or open). A candidate that decides nothing (an `other` note with an unknown effect) never conflicts.
+ * Pure.
  */
-export function conflictsWith(candidate: NoteContent | RuleSchedule, persons: PersonsEntries): boolean {
+export function conflictsWith(candidate: NoteContent | RuleSchedule, persons: PersonsEntries, today: string = candidate.startDate): boolean {
   const own = decisionOf(candidate);
   if (own === null) return false;
   const notes = persons.notes.filter((each) => !isAgentNote(each));
-  const limit = utcDay(new Date(`${candidate.startDate}T00:00:00.000Z`), CONFLICT_DAYS - 1);
-  const last = candidate.endDate === null || candidate.endDate > limit ? limit : candidate.endDate;
+  const last = conflictEnd(candidate, today);
   const days = eachDay(candidate.startDate, last).filter((day) => noteCovers(candidate, day));
   return days.some((day) => [...notes.filter((each) => noteCovers(each, day)), ...persons.rules.filter((rule) => noteCovers(rule, day))]
     .some((entry) => {
@@ -288,14 +309,15 @@ export async function applyChange(
   if (row === null) {
     if (candidate.action === 'note.add' || candidate.action === 'rule.add') {
       const checked = candidate.action === 'note.add' ? candidate.note : candidate.schedule;
-      const to = checked.endDate ?? utcDay(new Date(`${checked.startDate}T00:00:00.000Z`), CONFLICT_DAYS - 1);
+      const today = utcDay(ctx.now());
+      const to = conflictEnd(checked, today);
       const entries = persons ?? {
         notes: await stores.notes.overlapping(scope, candidate.locationId, { from: checked.startDate, to }),
         // A person's rules: one TownwiseAI added and nobody edited since is not a person's (slice 3).
         rules: (await stores.businessRules.scheduled(scope, candidate.locationId))
           .flatMap((rule) => (rule.schedule === null || isAgentRule(rule) ? [] : [rule.schedule])),
       };
-      if (conflictsWith(checked, entries)) return { outcome: 'conflict', change: null };
+      if (conflictsWith(checked, entries, today)) return { outcome: 'conflict', change: null };
     }
     const dates = datesOf(candidate);
     const inserted = await stores.agentChanges.insertApplying(scope, {
@@ -352,4 +374,42 @@ export async function applyChange(
   }
   const after = await stores.agentChanges.find(scope, candidate.locationId, row.id);
   return { outcome: 'applied', change: after ?? row };
+}
+
+/**
+ * The location's weekly and sales changes left `applying` for an hour or more (their pass died mid-apply; those sources
+ * plan a new target id each pass, so no later candidate retries one): one whose note or rule was written, as it was
+ * written, is finished through applyChange under its own target (marked applied, its audit event as TownwiseAI, its
+ * refit); any other (nothing written, or changed since) is removed, which frees its key. A weekly pass runs it first.
+ */
+export async function finishStaleChanges(ctx: ApplyContext, scope: OrgScope, locationId: string): Promise<void> {
+  const { stores } = ctx;
+  const before = new Date(ctx.now().getTime() - STALE_APPLYING_MS);
+  for (const row of await stores.agentChanges.listApplying(scope, locationId, { before })) {
+    if (row.sourceKind !== 'weekly' && row.sourceKind !== 'sales') continue;
+    const base = {
+      locationId, sourceKind: row.sourceKind, sourceId: row.sourceId, targetId: row.targetId, confidence: row.confidence, why: row.why,
+      onBehalfOf: row.onBehalfOf, actor: TOWNWISE_AI_ACTOR,
+    };
+    let candidate: NoteCandidate | RuleCandidate | null = null;
+    if (row.action === 'rule.add') {
+      const rule = await stores.businessRules.find(scope, locationId, row.targetId);
+      if (rule?.schedule != null) candidate = { ...base, action: 'rule.add', text: rule.text, schedule: rule.schedule };
+    } else if (row.action === 'note.add') {
+      const note = await stores.notes.find(scope, locationId, row.targetId);
+      if (note !== null) {
+        candidate = {
+          ...base, action: 'note.add', createdBy: note.createdBy, ...(note.fromEvent === null ? {} : { fromEvent: note.fromEvent }),
+          note: {
+            kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
+            expectedGuests: note.expectedGuests, detail: note.detail, title: note.title, startTime: note.startTime, endTime: note.endTime,
+          },
+        };
+      }
+    }
+    const key = candidate === null ? null : dedupeKeyOf(candidate.action === 'note.add'
+      ? { action: candidate.action, note: candidate.note } : { action: candidate.action, schedule: candidate.schedule });
+    if (candidate !== null && key === row.dedupeKey) await applyChange(ctx, scope, candidate);
+    else await stores.agentChanges.removeApplying(scope, locationId, row.id);
+  }
 }

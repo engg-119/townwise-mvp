@@ -12,7 +12,7 @@
 // calendar ids it rests on. Each is checked by the note rules (spec 12) or D31's schedule rules, and dropped when it
 // fails them, starts before tomorrow in the town or after the 91 days, decides the same days the same way as a note, a
 // rule or an earlier suggestion of the location, or repeats a rule's words, or (D46) is a rule whose closure key a file or
-// sales suggestion holds (those are never sent: nothing new reaches Anthropic). Kept ones are stored open
+// sales suggestion, or an earlier weekly closure rule, holds (those are never sent: nothing new reaches Anthropic). Kept ones are stored open
 // (stores/agent-suggestions.ts) and change nothing until an org admin accepts one.
 //
 // Bounds: the organization's switch is read again right before each location (an org admin's off stops the locations
@@ -55,7 +55,11 @@
 // writer (agent/apply.ts, `sourceKind: 'weekly'`) as TownwiseAI, before storing the rest open: a note rated `high`; a
 // spotted event rated `high` whose effect the model chose, as a private-event note linked to the event (a party alongside
 // regular service only with the guest count its title states); and a closure rule rated `high`, at most 2 rules a week
-// per location (counted on the ledger, both sources). Each applied one is stored `accepted` by TownwiseAI under its
+// per location (counted on the ledger, both sources). Design decision 7's closure guards hold as for a file read: a
+// closed note over 14 days, or a closure rule closing more than 14 days in a row (one with no end that closes every day
+// included), waits open, and so does a closed note past 31 closed days the pass saved. An earlier weekly closure rule's
+// closure key, in any status (a dismissed one included), drops a rule with that key, as a file or sales suggestion's
+// does, so one reworded or moved to a later start is not asked or saved again. Each applied one is stored `accepted` by TownwiseAI under its
 // target's id, so it is never suggested or sent again; one the writer refuses (a person's note or rule decides its days
 // differently, its key was used, D31's limit or words) waits open as before. Before the call, a closed weekday the sales
 // history shows (D46) is added as a rule too, when its evidence is sure (salesEvidenceSure) and no row holds its key
@@ -69,7 +73,9 @@ import { z } from 'zod';
 import { Types } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
-import { agentAutoOn, applyChange, TOWNWISE_AI_AUTHOR } from '../agent/apply.ts';
+import {
+  agentAutoOn, applyChange, CLOSED_DAYS_PER_READ, CLOSED_SPAN_DAYS, finishStaleChanges, TOWNWISE_AI_AUTHOR,
+} from '../agent/apply.ts';
 import { closureKeyOf, closureRuleText, salesEvidenceSure } from '../agent/closure-suggestions.ts';
 import { salesSuggestions } from '../agent/rule-suggestion-views.ts';
 import { noteCovers } from '../agent/questions.ts';
@@ -78,9 +84,10 @@ import { TOWNWISE_AI_ACTOR } from '../audit.ts';
 import type { ChatModel } from '../chat/model.ts';
 import { ceilingCostMicroUsd, costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from '../chat/pricing.ts';
 import { CHAT_MODEL } from '../chat/turn.ts';
-import { closureOf, typicalByDate } from '../closed-days.ts';
+import { closureOf, isClosure, typicalByDate } from '../closed-days.ts';
 import { utcDay } from '../dates.ts';
 import { effectHistory, reasonEffects } from '../forecasts/effects.ts';
+import { eachDay } from '../forecasts/file.ts';
 import { townCalendarOf, townTermEntries } from '../forecasts/reasons.ts';
 import { readNoteContent, readRuleSchedule } from '../handlers/notes.ts';
 import { ruleTextOf } from '../handlers/rules.ts';
@@ -356,8 +363,9 @@ export interface SuggestionChecks {
   /** The owner-calendar events the request sent, by ref; empty when it sent none. */
   readonly ownerEvents: ReadonlyMap<string, SentOwnerEvent>;
   /**
-   * D46: the closure keys of the location's file and sales suggestions (any status): a rule with one is dropped, since
-   * sameDays compares starts and would miss a standing rule. They are never sent.
+   * D46: the closure keys of the location's file and sales suggestions (any status), and (D59 slice 3) of its earlier
+   * weekly closure rules (any status): a rule with one is dropped, since sameDays compares starts and would miss a
+   * standing rule. They are never sent.
    */
   readonly closureKeys?: ReadonlySet<string>;
 }
@@ -634,14 +642,41 @@ export type SureChange =
   | { readonly type: 'note'; readonly note: NoteContent; readonly event: SuggestedEvent | null }
   | { readonly type: 'rule'; readonly text: string; readonly schedule: RuleSchedule };
 
+/** A closure rule's days read for its longest run in a row: its first 400 (one with no end closing every day is longer than any guard). */
+const RUN_DAYS = 400;
+
+/**
+ * D59 slice 3: the most days in a row a sure change closes (design decision 7's 14-day guard): a closed note's whole span
+ * (a closure, or a buyout); a closure rule's longest run of covered days in its first 400; 0 for anything else. Pure.
+ */
+export function closedRunOf(sure: SureChange): number {
+  if (sure.type === 'note') return isClosure(sure.note) ? eachDay(sure.note.startDate, sure.note.endDate).length : 0;
+  const { schedule } = sure;
+  if (!isClosure(schedule)) return 0;
+  const limit = utcDay(new Date(`${schedule.startDate}T00:00:00.000Z`), RUN_DAYS - 1);
+  let run = 0;
+  let longest = 0;
+  for (const day of eachDay(schedule.startDate, schedule.endDate === null || schedule.endDate > limit ? limit : schedule.endDate)) {
+    run = noteCovers(schedule, day) ? run + 1 : 0;
+    longest = Math.max(longest, run);
+  }
+  return longest;
+}
+
 /**
  * D59 slice 3: what a kept suggestion writes when TownwiseAI is sure of it, or null when it waits for a person. Only one
  * rated `high`: a note as it is; a rule only when it is a closure (with or without hours), D59's `rule.add`; a spotted
  * event only when the model chose its effect, as a private-event note with that effect (alongside regular service only
- * with the guest count its title states), checked again by the note rules. Never a follow-up. Pure. [CONFIRM: TownwiseAI
- * saves a weekly suggestion it rated high on its own: a note, a closure rule, or a spotted private event whose effect it chose]
+ * with the guest count its title states), checked again by the note rules. Never a follow-up, and never one closing more
+ * than 14 days in a row (closedRunOf). Pure. [CONFIRM: TownwiseAI saves a weekly suggestion it rated high on its own: a
+ * note, a closure rule, or a spotted private event whose effect it chose]
  */
 export function sureChangeOf(kept: KeptSuggestion, today: string): SureChange | null {
+  const sure = sureOf(kept, today);
+  return sure === null || closedRunOf(sure) > CLOSED_SPAN_DAYS ? null : sure;
+}
+
+function sureOf(kept: KeptSuggestion, today: string): SureChange | null {
   if (kept.confidence !== 'high') return null;
   const { content } = kept;
   if (content.type === 'note') return { type: 'note', note: content.note, event: null };
@@ -665,12 +700,16 @@ function mondayOf(day: string): string {
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 
-/** D59 slice 3: what one pass applied so far, and how many rules it may still add this week. */
-interface Tally { applied: number; rulesLeft: number }
+/**
+ * D59 slice 3: what one pass applied so far, how many rules it may still add this week, and how many days the closed
+ * notes it saved cover together.
+ */
+interface Tally { applied: number; rulesLeft: number; closedDays: number }
 
 /**
  * D59 slice 3: each kept suggestion TownwiseAI is sure of (sureChangeOf), written through the one writer as TownwiseAI,
- * a rule only while the week allows one more; resolves what to store, an applied one `accepted` under its target's id.
+ * a rule only while the week allows one more and a closed note only while the pass's closed notes stay within 31 days;
+ * resolves what to store, an applied one `accepted` under its target's id.
  */
 async function applySure(
   ctx: SuggestionsContext, scope: OrgScope, locationId: string, kept: readonly KeptSuggestion[], today: string, tally: Tally,
@@ -678,7 +717,8 @@ async function applySure(
   const out: NewSuggestion[] = [];
   for (const each of kept) {
     const sure = sureChangeOf(each, today);
-    if (sure === null || (sure.type === 'rule' && tally.rulesLeft <= 0)) {
+    const closed = sure?.type === 'note' ? closedRunOf(sure) : 0;
+    if (sure === null || (sure.type === 'rule' && tally.rulesLeft <= 0) || tally.closedDays + closed > CLOSED_DAYS_PER_READ) {
       out.push(toStore(each));
       continue;
     }
@@ -698,6 +738,7 @@ async function applySure(
       continue;
     }
     tally.applied += 1;
+    tally.closedDays += closed;
     if (sure.type === 'rule') tally.rulesLeft -= 1;
     out.push({ ...toStore(each), applied: { id: targetId } });
   }
@@ -942,7 +983,7 @@ export async function suggestFor(
   /** The owner-calendar events the call sent, once it is made. */
   let ownerEvents = 0;
   /** D59 slice 3: what TownwiseAI saved on its own, and how many rules it may still add this week. */
-  const tally: Tally = { applied: 0, rulesLeft: 0 };
+  const tally: Tally = { applied: 0, rulesLeft: 0, closedDays: 0 };
   /** Set once the row is finished, so an error after that does not finish (and charge) it twice. */
   const row = { finished: false };
   const finish = async (outcome: RecordedOutcome): Promise<SuggestionsOutcome> => {
@@ -967,6 +1008,8 @@ export async function suggestFor(
   const today = localDay(now, timeZoneOf(location.town).timeZone);
   try {
     await stores.agentSuggestions.expire(scope, location.id, today, now);
+    // D59 slice 3: a weekly or sales change an earlier pass left half applied is finished (or its key freed) first.
+    await finishStaleChanges(ctx, scope, location.id);
     // D59 slice 3: TownwiseAI works on its own here (read once a pass); the sales history's sure rules go first, so the
     // request reads them as rules.
     const auto = await agentAutoOn(ctx, scope.orgId);
@@ -984,9 +1027,11 @@ export async function suggestFor(
       if (record.type === 'note') return [{ type: 'note', note: record.note }];
       return record.type === 'rule' ? [{ type: 'rule', text: record.text, schedule: record.schedule }] : [];
     });
-    // The sales history's suggestions not stored yet (computed on read) count too, so one pattern is asked once.
+    // The sales history's suggestions not stored yet (computed on read) count too, so one pattern is asked once; so do
+    // the earlier weekly closure rules in any status (a dismissed one included), which store no key of their own.
     const closureKeys = new Set([
       ...recent.flatMap((record) => (record.closureKey === null ? [] : [record.closureKey])),
+      ...earlier.flatMap((content) => (content.type === 'rule' && content.schedule.kind === 'closure' ? [closureKeyOf(content.schedule)] : [])),
       ...(await salesSuggestions(ctx, scope, location.id)).map((each) => closureKeyOf(each.schedule)),
     ]);
     const { input, checks } = await suggestionsInput(ctx, scope, location, today, earlier, on, closureKeys);
