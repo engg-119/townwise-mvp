@@ -189,6 +189,22 @@ describe('the merge claim', () => {
     expect((await stores.researchLocations.findRun(a.scope, open.id))?.status).toBe('running');
   });
 
+  it('claims no run while a thread it planned has no row yet (a plan that crashed between its thread rows)', async () => {
+    const t = await tenant();
+    const run = await stores.researchLocations.insertRun(t.scope, {
+      locationId: t.locationId, key: `w:${randomUUID()}`, trigger: 'weekly', placeId: null, town: 'hanover-nh', threads: ['neighborhood', 'competitors'], now: NOW,
+    });
+    if (run === null) throw new Error('run not inserted');
+    await stores.researchLocations.insertThreads(t.scope, run, [{ thread: 'neighborhood', notBefore: NOW }], NOW);
+    await stores.researchLocations.markRunRunning(t.scope, run.id, NOW);
+    await endThreads(t, run.id, 1);
+    expect(await merge('lane-a', run.id)).toBeNull();
+    expect(await merge('sweep')).toBeNull();
+    await stores.researchLocations.insertThreads(t.scope, run, [{ thread: 'competitors', notBefore: NOW }], NOW);
+    await endThreads(t, run.id, 2);
+    expect(await merge('sweep')).toEqual({ runId: run.id, orgId: t.orgId, locationId: t.locationId });
+  });
+
   it('never claims a queued or an ended run', async () => {
     const t = await tenant();
     const run = await queuedRun(t);

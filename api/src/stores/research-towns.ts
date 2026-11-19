@@ -14,8 +14,8 @@ import type { ThreadId } from '../research/threads.ts';
 import type { EntityType, SourceRef } from '../research/verify.ts';
 import type { TownId } from '../towns.ts';
 import {
-  entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc, runFields,
-  runMoves, SCHEMA_OPTIONS, TERMINAL_THREAD_STATUSES, threadFields, threadMoves, toEntityBase, toEventBase, toRunBase,
+  allThreadsEnded, entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc, runFields,
+  runMoves, SCHEMA_OPTIONS, threadFields, threadMoves, toEntityBase, toEventBase, toRunBase,
   toThreadBase, type EntityDoc, type EntityRecordBase, type EventDoc, type EventInsertBase, type EventRecordBase,
   type EventUpdate, type RunDoc, type RunEnd, type RunRecordBase, type ThreadDoc, type ThreadEnd,
   type ThreadRecordBase, type ThreadTallyWrite,
@@ -215,8 +215,8 @@ export function createTownResearchStore(connection: Connection): TownResearchSto
     },
     markRunRunning: (runId, now) => runMoves.markRunning(runs, {}, runId, now),
     async claimMerge(input) {
-      const open = await Thread.countDocuments({ runId: id(input.runId), status: trusted({ $nin: [...TERMINAL_THREAD_STATUSES] }) });
-      if (open > 0) return false;
+      const run = await Run.findById(id(input.runId), { threads: 1 }).lean();
+      if (run === null || !await allThreadsEnded(threads, {}, run._id, run.threads.length)) return false;
       const set = { $set: { status: 'merging', mergeOwner: input.owner, mergeUntil: new Date(input.now.getTime() + input.leaseMs) } };
       if ((await Run.updateOne({ _id: id(input.runId), status: 'running' }, set)).modifiedCount === 1) return true;
       return (await Run.updateOne({ _id: id(input.runId), status: 'merging', mergeUntil: trusted({ $lte: input.now }) }, set)).modifiedCount === 1;

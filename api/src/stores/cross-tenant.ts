@@ -20,7 +20,7 @@
 // runner (research/plan.ts, research/runner.ts) import this file
 // (test/isolation.test.ts enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { trusted, Types, type Connection } from 'mongoose';
+import { trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
@@ -51,7 +51,7 @@ import { calendarSourceModel } from './owner-calendars.ts';
 import { profileModel } from './profiles.ts';
 import { locationResearchRunModel, locationResearchThreadModel } from './research-locations.ts';
 import { researchRevisionModel } from './research-revisions.ts';
-import { TERMINAL_THREAD_STATUSES } from './research-shared.ts';
+import { allThreadsEnded, type ThreadDoc } from './research-shared.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { uploadDayModel } from './upload-days.ts';
 import { UPLOADS_COLLECTION } from './uploads.ts';
@@ -1104,12 +1104,12 @@ export async function claimLocationResearchMerge(
   const due = { $or: [{ status: 'running' as const }, { status: 'merging' as const, mergeUntil: trusted({ $lte: input.now }) }] };
   const candidates = await Run.find(
     input.runId === undefined ? due : { _id: new Types.ObjectId(input.runId), ...due },
-    { _id: 1, status: 1, mergeUntil: 1 },
+    { _id: 1, status: 1, mergeUntil: 1, threads: 1 },
   ).sort({ createdAt: 1, _id: 1 }).limit(input.runId === undefined ? 50 : 1).lean();
   const set = { $set: { status: 'merging', mergeOwner: input.owner, mergeUntil: new Date(input.now.getTime() + input.leaseMs) } };
   for (const run of candidates) {
-    const open = await Thread.countDocuments({ runId: run._id, status: trusted({ $nin: [...TERMINAL_THREAD_STATUSES] }) });
-    if (open > 0) continue;
+    // Every thread the run planned has a row and has ended (a plan that crashed between its thread rows waits for them).
+    if (!await allThreadsEnded(Thread as unknown as Model<ThreadDoc>, {}, run._id, run.threads.length)) continue;
     // The claim compares the status (and, for a stale merge, the lease) it read.
     const filter = run.status === 'running'
       ? { _id: run._id, status: 'running' as const }

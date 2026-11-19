@@ -186,6 +186,25 @@ describe('town runs', () => {
     expect((await stores.researchTowns.threadsOf(run.id)).find((thread) => thread.status === 'recorded')?.drops?.events.no_source).toBe(1);
   });
 
+  it('claims no merge of a run while a thread it planned has no row yet (a plan that crashed between its thread rows)', async () => {
+    await server.connection.collection('tw_town_research_threads').deleteMany({});
+    const townKey = await freshTown();
+    const run = await stores.researchTowns.insertRun({ townKey, key: 'w:2026-11-16', threads: ['civic', 'sports'], now: NOW });
+    if (run === null) throw new Error('not inserted');
+    await stores.researchTowns.insertThreads(run, [{ thread: 'civic', notBefore: NOW }], NOW);
+    await stores.researchTowns.markRunRunning(run.id, NOW);
+    const civic = await stores.researchTowns.claimThread({ owner: 'lane', now: NOW, leaseMs: 90_000 });
+    if (civic?.runId !== run.id) throw new Error('not claimed');
+    await stores.researchTowns.finishThread(civic.id, 'lane', recorded());
+    expect(await stores.researchTowns.claimMerge({ runId: run.id, owner: 'lane', now: later(1), leaseMs: 90_000 })).toBe(false);
+    // The planner's next tick completes the row; once it ends too, the run merges.
+    await stores.researchTowns.insertThreads(run, [{ thread: 'sports', notBefore: NOW }], NOW);
+    const sports = await stores.researchTowns.claimThread({ owner: 'lane', now: later(1), leaseMs: 90_000 });
+    if (sports?.runId !== run.id) throw new Error('not claimed');
+    await stores.researchTowns.finishThread(sports.id, 'lane', recorded());
+    expect(await stores.researchTowns.claimMerge({ runId: run.id, owner: 'lane', now: later(2), leaseMs: 90_000 })).toBe(true);
+  });
+
   it('stores events and entities by town, updates a row without touching its title, dates or suppression, and upserts an entity by name key', async () => {
     const townKey = await freshTown();
     await server.connection.collection('tw_town_events').deleteMany({ townKey });

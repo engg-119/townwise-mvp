@@ -328,6 +328,19 @@ export async function insertUnlessDuplicate<T>(model: Model<T>, doc: Filter): Pr
   }
 }
 
+/**
+ * Whether a run is ready to merge (decision 8): every thread it planned has a row and that row is terminal. A plan that
+ * crashed between the run and its last thread rows (insertThreads writes them one at a time) leaves rows missing; the
+ * planner's next tick completes them, and until then the run is not ready, so it never merges without them.
+ */
+export async function allThreadsEnded(model: Model<ThreadDoc>, base: Filter, runId: Id, planned: number): Promise<boolean> {
+  const [open, ended] = await Promise.all([
+    model.countDocuments({ ...base, runId, status: trusted({ $nin: [...TERMINAL_THREAD_STATUSES] }) }),
+    model.countDocuments({ ...base, runId, status: trusted({ $in: [...TERMINAL_THREAD_STATUSES] }) }),
+  ]);
+  return open === 0 && ended >= planned;
+}
+
 /** A thread row's first values. */
 export function newThreadDoc(input: { runId: string; thread: ThreadId; notBefore: Date; now: Date }): Filter {
   return {
