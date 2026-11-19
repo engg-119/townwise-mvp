@@ -1,10 +1,12 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { useReducedMotion } from '../../motion';
 import { theme } from '../../theme';
 import { WEEK_ORDER, WEEKDAY_NAMES } from '../analytics/words';
 import { useBreakpoint } from '../hooks';
 import { MARK } from '../home/MonthKey';
-import { CELL_GAP, cellSize, entryLines, slotOf, WEEKDAY_ROW, type DayCell, type GridSlot, type MonthBounds } from './grid';
+import { CELL_GAP, cellSize, columnGrow, entryLines, selectedColumn, slotOf, WEEKDAY_ROW, type DayCell, type GridSlot, type MonthBounds } from './grid';
 import { figureTone, markedFigure, statusTakesFigure, statusWord, topRightOf, type CalendarCell, type TooltipLines } from './model';
 
 // The Calendar's month grid on native (P28, spec 16.3): always 42 days in 6 rows, Monday first, a Pressable per day.
@@ -17,8 +19,10 @@ import { figureTone, markedFigure, statusTakesFigure, statusWord, topRightOf, ty
 // outline for an event from the owner's calendar). Below 641px every status takes the figure's place and "+70" and the
 // caption leave the cell. The days of the months either side are muted (no fill, a `border` outline, `text3`) and
 // selected in place; a day outside the 25 months is a disabled element with its number only; a day whose reads are
-// still in flight shows its number only. Today's week is outlined in `line`, the selected day in `mint`. Each cell's
-// label says everything it shows. Web has its own file (CalendarGrid.web.tsx): one tab stop with the keys, and a hover
+// still in flight shows its number only. Today's week is outlined in `line`. The selected day (D64) has a 2px `mint`
+// border over the `state` fill, and its weekday column grows to 1.3 times the others' in every row and the weekday head,
+// easing over 150ms (at once under Reduce Motion), so the grid's height never moves; today keeps its own number. Each
+// cell's label says everything it shows, and the selected one has its selected state. Web has its own file (CalendarGrid.web.tsx): one tab stop with the keys, and a hover
 // tooltip.
 
 export interface CalendarGridProps {
@@ -44,6 +48,32 @@ export interface CalendarGridProps {
 }
 
 const WEEKDAY_HEAD = WEEK_ORDER.map((day) => (WEEKDAY_NAMES[day] ?? '').slice(0, 3));
+
+/**
+ * Each weekday column's flex grow, the selected one's 1.3 (grid.ts columnGrow), easing to a new selection over 150ms;
+ * set at once while Reduce Motion is on or not yet known.
+ */
+function useColumnGrow(selected: number): Animated.Value[] {
+  const reduced = useReducedMotion();
+  const [grow] = useState(() => Array.from({ length: 7 }, (_, column) => new Animated.Value(columnGrow(column, selected))));
+  // The column the values were last sent to, so a render that keeps it (or Reduce Motion's answer) moves nothing.
+  const shown = useRef(selected);
+  useEffect(() => {
+    if (shown.current === selected) return undefined;
+    shown.current = selected;
+    if (reduced !== false) {
+      grow.forEach((value, column) => { value.setValue(columnGrow(column, selected)); });
+      return undefined;
+    }
+    const easing = Easing.bezier(...theme.motion.easeInOut);
+    const run = Animated.parallel(grow.map((value, column) => Animated.timing(value, {
+      toValue: columnGrow(column, selected), duration: theme.motion.select, easing, useNativeDriver: false,
+    })));
+    run.start();
+    return () => { run.stop(); };
+  }, [grow, reduced, selected]);
+  return grow;
+}
 
 function dayNumber(date: string): string {
   return String(Number(date.slice(8, 10)));
@@ -106,20 +136,23 @@ export function CalendarGrid(props: CalendarGridProps): React.JSX.Element {
   const { rows, selected } = props;
   const { width } = useBreakpoint();
   const size = cellSize(width);
+  const grow = useColumnGrow(selectedColumn(selected));
+  const column = (at: number, child: React.ReactNode, key: string): React.JSX.Element => (
+    <Animated.View key={key} testID={`calendar-column-${key}`} style={[styles.column, { flexGrow: grow[at] ?? 1 }]}>{child}</Animated.View>
+  );
   return (
     <View accessibilityLabel={props.label} accessibilityState={{ busy: props.busy }} style={[styles.grid, props.busy ? styles.busy : null]}>
       <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={styles.row}>
-        {WEEKDAY_HEAD.map((day) => <Text key={day} style={styles.head}>{day}</Text>)}
+        {WEEKDAY_HEAD.map((day, at) => column(at, <Text style={styles.head}>{day}</Text>, day))}
       </View>
       {rows.map((row, index) => (
         <View key={index} style={styles.row}>
           {row.map((each, col) => {
-            if (each === null) return <View key={col} style={[styles.blank, { height: size.height }]} />;
+            if (each === null) return column(col, <View style={{ height: size.height }} />, `blank-${String(index)}-${String(col)}`);
             const slot = slotOf(each);
             if (slot.kind === 'inert') {
-              return (
+              return column(col, (
                 <Pressable
-                  key={slot.date}
                   role="button"
                   disabled
                   accessibilityLabel={slot.label}
@@ -128,9 +161,9 @@ export function CalendarGrid(props: CalendarGridProps): React.JSX.Element {
                 >
                   <Text style={[styles.number, styles.muted]}>{dayNumber(slot.date)}</Text>
                 </Pressable>
-              );
+              ), slot.date);
             }
-            return <Day key={slot.date} cell={slot} selected={slot.date === selected} width={width} onSelect={props.onSelect} />;
+            return column(col, <Day cell={slot} selected={slot.date === selected} width={width} onSelect={props.onSelect} />, slot.date);
           })}
         </View>
       ))}
@@ -144,14 +177,16 @@ const styles = StyleSheet.create({
   grid: { gap: CELL_GAP, width: '100%' },
   busy: { opacity: 0.6 },
   row: { flexDirection: 'row', gap: CELL_GAP },
-  head: { ...theme.type.mono, lineHeight: WEEKDAY_ROW, color: c.text3, flex: 1, textAlign: 'center' },
-  blank: { flex: 1 },
+  // A weekday's column in every row: its share of the row grows for the selected day's weekday.
+  column: { flexBasis: 0, flexShrink: 1, minWidth: 0 },
+  head: { ...theme.type.mono, lineHeight: WEEKDAY_ROW, color: c.text3, textAlign: 'center' },
   cell: {
-    flex: 1, minWidth: 0, backgroundColor: c.raised, padding: 4, position: 'relative', borderWidth: 1, borderColor: c.raised, gap: 2, overflow: 'hidden',
+    minWidth: 0, backgroundColor: c.raised, padding: 4, position: 'relative', borderWidth: 1, borderColor: c.raised, gap: 2, overflow: 'hidden',
   },
   outside: { backgroundColor: 'transparent', borderColor: c.border },
   week: { borderColor: c.line },
-  selected: { borderColor: c.mint },
+  // 2px, its padding 1px less, so nothing inside moves.
+  selected: { borderColor: c.mint, borderWidth: 2, padding: 3, backgroundColor: c.state },
   top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', columnGap: 4, height: 16 },
   number: { ...theme.type.mono, fontSize: 13, color: c.text2, fontVariant: ['tabular-nums'] },
   muted: { color: c.text3 },
