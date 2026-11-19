@@ -1,12 +1,15 @@
 // checkStart's history rule (D42; a person's start since 2026-11-19): every start, staff's Calibrate, TownwiseAI's
 // (chat, or a file it read, D34) and the weekly refresh's, needs a 230-day span from the first to the last day with
 // guests, so under 595 days the lab runs the baseline alone; 229 days is not_enough_history. Who pays is unchanged: a
-// spent month refuses a person's start and not the weekly refresh's. Stores are fakes; every number is synthetic.
+// spent month refuses a person's start and not the weekly refresh's. A person's start under 595 days against a current
+// forecast from the model (an imported one included) is not_enough_history too: the gate could only answer
+// model_not_run, so it would be charged $0.10 for nothing. Stores are fakes; every number is synthetic.
 import { describe, expect, it } from 'vitest';
 
 import { utcDay } from '../src/dates.ts';
 import { GATE } from '../src/lab/gate.ts';
 import { checkStart, SYSTEM_REQUESTER, type LabStartContext, type StartRequest } from '../src/lab/service.ts';
+import type { ForecastRunRecord } from '../src/stores/forecasts.ts';
 import type { SalesDay } from '../src/stores/sales-days.ts';
 
 const TODAY = '2026-06-01';
@@ -20,8 +23,18 @@ const REQUESTERS: readonly StartRequest['requester'][] = [
   SYSTEM_REQUESTER,
 ];
 
-/** A context whose location holds a guest on every day of a `span`-day span ending LAST, with `spentMicroUsd` used this month. */
-function contextWith(span: number, spentMicroUsd = 0): LabStartContext {
+/** A published run of `family` made on TODAY, reaching `to` (its forecast tier reaches it too, D52). */
+function publishedRun(family: string, to = '2026-08-30'): ForecastRunRecord {
+  return {
+    id: `run-${family}`, status: 'published', model: { family }, lab: null, madeAt: TODAY, dataThrough: LAST, range: { from: TODAY, to },
+  } as unknown as ForecastRunRecord;
+}
+
+/**
+ * A context whose location holds a guest on every day of a `span`-day span ending LAST, with `spentMicroUsd` used this
+ * month and `published` its published runs.
+ */
+function contextWith(span: number, spentMicroUsd = 0, published: readonly ForecastRunRecord[] = []): LabStartContext {
   const first = utcDay(new Date(`${LAST}T00:00:00.000Z`), -span);
   const days: SalesDay[] = [];
   for (let date = first; date <= LAST; date = utcDay(new Date(`${date}T00:00:00.000Z`), 1)) days.push({ date, guests: 10, netSalesCents: null });
@@ -37,6 +50,7 @@ function contextWith(span: number, spentMicroUsd = 0): LabStartContext {
       },
       chatUsage: { costMicroUsd: () => Promise.resolve(spentMicroUsd) },
       calibrations: { live: () => Promise.resolve(null) },
+      forecasts: { published: () => Promise.resolve(published) },
     },
   } as unknown as LabStartContext;
 }
@@ -65,6 +79,31 @@ describe('checkStart’s history (D42, 2026-11-19)', () => {
     const spent = contextWith(300, 5_000_000);
     for (const requester of REQUESTERS) {
       expect(await checkStart(spent, requestBy(requester))).toBe(requester.role === 'system' ? null : 'budget_exhausted');
+    }
+  });
+});
+
+describe('a person’s start under 595 days against a current forecast from the model (D42, 2026-11-19)', () => {
+  const MODEL = 'hybrid_linear_xgboost';
+
+  it('is not_enough_history for a person, uncharged, since the gate could only answer model_not_run; the weekly refresh still starts', async () => {
+    for (const span of [230, 553, 594]) {
+      const ctx = contextWith(span, 0, [publishedRun(MODEL)]);
+      for (const requester of REQUESTERS) {
+        expect(await checkStart(ctx, requestBy(requester))).toBe(requester.role === 'system' ? null : 'not_enough_history');
+      }
+    }
+  });
+
+  it('starts at 595 days, against a current baseline, or once the model run no longer reaches 28 days past today', async () => {
+    const lapsed = publishedRun(MODEL, utcDay(new Date(`${TODAY}T00:00:00.000Z`), GATE.currentHorizonDays - 1));
+    for (const ctx of [
+      contextWith(595, 0, [publishedRun(MODEL)]),
+      contextWith(553, 0, [publishedRun('seasonal_baseline')]),
+      contextWith(553, 0, [lapsed]),
+      contextWith(553),
+    ]) {
+      for (const requester of REQUESTERS) expect(await checkStart(ctx, requestBy(requester))).toBeNull();
     }
   });
 });

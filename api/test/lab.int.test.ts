@@ -217,7 +217,7 @@ describe('starting a calibration', () => {
     const res = await start(short);
     expect(await res.clone().json()).toMatchObject({
       error: 'not_enough_history',
-      message: 'Calibration needs at least 230 days from the first to the last day of sales history, for Townwise’s baseline. Its demand model also runs from 595 days.',
+      message: 'Calibration needs at least 230 days from the first to the last day of sales history, for Townwise’s baseline. Its demand model also runs from 595 days, which a location needs while its current forecast is from the demand model.',
     });
     expect(res.status).toBe(409);
     expect(runner.jobs).toHaveLength(jobs);
