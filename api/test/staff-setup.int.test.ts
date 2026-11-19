@@ -229,7 +229,8 @@ describe('in setup', () => {
     let res: Response | undefined;
     const writes = await writesDuring(server, async () => { res = await upload(org.orgId, location.id); });
     expect(res?.status).toBe(201);
-    expect(writes).toEqual(['insert tw_audit_events', 'insert tw_uploads', 'update tw_sales_days', 'update tw_uploads']);
+    // D59: the new days mark the location as wanting a refit.
+    expect(writes).toEqual(['insert tw_audit_events', 'insert tw_uploads', 'update tw_sales_days', 'update tw_uploads', 'update tw_locations']);
     const text = await res?.text() ?? '';
     for (const figure of FIGURES) expect(text).not.toMatch(figure);
     const answer = JSON.parse(text) as UploadAnswer;

@@ -7,7 +7,7 @@ import type { Request } from 'express';
 import type { ListedBlob } from '../files/blobs.ts';
 import type {
   ClaimedAiRead, ClaimedCalendar, ClaimedGoogleConnection, ClaimedImport, JoinedSeat, LabCallbackClaim, LiveScheduledCalibration,
-  StaleChatTurn, StaleStartingWeek, StaleSuggestionPass, SweptFile, SweptImport, UntitledAiNote, WeeklyCandidate,
+  RefitCandidate, StaleChatTurn, StaleStartingWeek, StaleSuggestionPass, SweptFile, SweptImport, UntitledAiNote, WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import type { OrgRecord, OrgStore } from '../stores/orgs.ts';
 import type { OpenAsAdminGrantRecord } from '../stores/view-as-grants.ts';
@@ -72,9 +72,12 @@ export function scopeForGoogleCheck(claim: ClaimedGoogleConnection): OrgScope {
 /**
  * The weekly refresh only (lab/schedule.ts, D42), for the organization of a location it considers (for a calibration or,
  * from suggestionCandidates, for weekly suggestions), a live calibration it started, a week row it left starting, or a
- * weekly suggestions pass row a dead pass left running, each found by a cross-tenant lookup.
+ * weekly suggestions pass row a dead pass left running, or (D59) a location a training change marked as wanting a refit,
+ * each found by a cross-tenant lookup.
  */
-export function scopeForWeeklyRefresh(found: WeeklyCandidate | LiveScheduledCalibration | StaleStartingWeek | StaleSuggestionPass): OrgScope {
+export function scopeForWeeklyRefresh(
+  found: WeeklyCandidate | LiveScheduledCalibration | StaleStartingWeek | StaleSuggestionPass | RefitCandidate,
+): OrgScope {
   return mint(found.orgId);
 }
 

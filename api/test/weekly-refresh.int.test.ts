@@ -1097,3 +1097,118 @@ describe('weekly suggestions', () => {
     });
   });
 });
+
+// ---- D59: refits after training changes -----------------------------------------------------------------------------
+
+describe('refits after training changes (D59)', () => {
+  /** Monday's refresh starts the location and its job finishes, so it has a reference calibration and a week row. */
+  async function settled(): Promise<Place> {
+    const p = await place();
+    expect(await pass()).toMatchObject({ started: 1 });
+    const [job] = jobs();
+    await finishJob(job?.calibrationId ?? '');
+    start = runner.jobs.length;
+    return p;
+  }
+
+  /** A person's closure on a history day (what the lab reads changes), and the mark it wants, at the clock's now. */
+  async function changed(p: Place, date: string): Promise<void> {
+    await server.ctx.stores.notes.create(p.scope, p.locationId, {
+      kind: 'closure', startDate: date, endDate: date, weekdays: null, effect: 'closed', expectedGuests: null, detail: null, title: null,
+      startTime: null, endTime: null,
+    }, { createdBy: 'person', now: server.clock.now() });
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now());
+  }
+
+  async function refitOf(p: Place): Promise<{ wantedAt: Date | null; startedAt: Date | null }> {
+    return server.ctx.stores.locations.refitState(p.scope, p.locationId);
+  }
+
+  it('a burst of changes starts one refit as the system, at the first pass 15 quiet minutes after the last of them', async () => {
+    const p = await settled();
+    for (const date of ['2026-05-10', '2026-05-11', '2026-05-12']) {
+      await changed(p, date);
+      server.clock.advance(5 * MINUTE);
+    }
+    // The last change was 5 minutes ago: not quiet yet.
+    expect((await pass()).refits).toEqual({ started: 0, cleared: 0, held: 0, failed: 0 });
+    server.clock.advance(11 * MINUTE);
+    const result = await pass();
+    expect(result.refits).toEqual({ started: 1, cleared: 0, held: 0, failed: 0 });
+    expect(jobs()).toHaveLength(1);
+    expect(await calibration(jobs()[0]?.calibrationId ?? '')).toMatchObject({ requestedBy: SYSTEM_REQUESTER, chargedMicroUsd: 0 });
+    expect(await refitOf(p)).toEqual({ wantedAt: null, startedAt: server.clock.now() });
+    expect(logLines(server).filter((line) => line.msg === 'townwise.refit_pass').at(-1)).toMatchObject({ started: 1 });
+    // Nothing more is wanted: the next pass starts nothing.
+    expect((await pass()).refits.started).toBe(0);
+  });
+
+  it('a mark whose lab input did not change is cleared, with no start', async () => {
+    const p = await settled();
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now());
+    server.clock.advance(16 * MINUTE);
+    expect((await pass()).refits).toEqual({ started: 0, cleared: 1, held: 0, failed: 0 });
+    expect(jobs()).toHaveLength(0);
+    expect((await refitOf(p)).wantedAt).toBeNull();
+  });
+
+  it('a location refits at most once a day: a change after a refit keeps its mark until a day after that start', async () => {
+    const p = await settled();
+    await changed(p, '2026-05-10');
+    server.clock.advance(16 * MINUTE);
+    expect((await pass()).refits.started).toBe(1);
+    await finishJob(jobs()[0]?.calibrationId ?? '');
+    const startedAt = server.clock.now();
+    server.clock.advance(2 * HOUR);
+    await changed(p, '2026-05-11');
+    server.clock.advance(HOUR);
+    expect((await pass()).refits.started).toBe(0);
+    expect((await refitOf(p)).wantedAt).not.toBeNull();
+    server.clock.advance(startedAt.getTime() + DAY - server.clock.now().getTime() + MINUTE);
+    expect((await pass()).refits.started).toBe(1);
+    expect(jobs()).toHaveLength(2);
+  });
+
+  it('a location with a live calibration, or past the live cap, keeps its mark for a later pass', async () => {
+    const p = await settled();
+    await changed(p, '2026-05-10');
+    server.clock.advance(16 * MINUTE);
+    const person = await personStart(p);
+    expect((await pass()).refits).toMatchObject({ started: 0, held: 1 });
+    expect((await refitOf(p)).wantedAt).not.toBeNull();
+    await finishJob(person.id);
+    // Three other locations' Monday starts are live: the cap of 3 holds this one too.
+    for (let i = 0; i < SCHEDULE_LIVE_CAP; i += 1) await place();
+    start = runner.jobs.length;
+    const result = await pass();
+    expect(result).toMatchObject({ started: SCHEDULE_LIVE_CAP });
+    expect(result.refits).toMatchObject({ started: 0, held: 1 });
+    expect((await refitOf(p)).wantedAt).not.toBeNull();
+  });
+
+  it('a change landing while the refit starts keeps its newer mark', async () => {
+    const p = await settled();
+    await changed(p, '2026-05-10');
+    server.clock.advance(16 * MINUTE);
+    const newer = new Date(server.clock.now().getTime() + 1000);
+    runner.onStart = async () => { await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, newer); };
+    expect((await pass()).refits.started).toBe(1);
+    expect(await refitOf(p)).toEqual({ wantedAt: newer, startedAt: server.clock.now() });
+  });
+
+  it('starts no refit while TOWNWISE_WEEKLY_FORECASTS is false or the schedule is paused, and keeps the mark', async () => {
+    const p = await settled();
+    await changed(p, '2026-05-10');
+    server.clock.advance(16 * MINUTE);
+    expect((await pass({ config: { weeklyForecasts: false } })).refits.started).toBe(0);
+    await server.ctx.stores.forecastSchedule.setPaused({ at: server.clock.now(), by: 'staff-0000', email: 'staff@townwise.test' }, server.clock.now());
+    try {
+      expect((await pass()).refits.started).toBe(0);
+    } finally {
+      await server.ctx.stores.forecastSchedule.setPaused(null, server.clock.now());
+    }
+    expect(jobs()).toHaveLength(0);
+    expect((await refitOf(p)).wantedAt).not.toBeNull();
+    expect((await pass()).refits.started).toBe(1);
+  });
+});

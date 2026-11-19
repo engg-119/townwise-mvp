@@ -740,6 +740,40 @@ export async function weeklyCandidates(connection: Connection): Promise<WeeklyCa
   return docs.map((doc) => ({ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString() }));
 }
 
+/** D59: a location a training change marked as wanting a refit, and the mark the pass read (its clear compares it). */
+export interface RefitCandidate {
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly wantedAt: Date;
+}
+
+/**
+ * D59 (openspec change auto-apply-agent-reads, design decision 12): the hourly pass's refit candidates, across
+ * organizations: every location of an active organization whose forecasts are on (as weeklyCandidates) whose mark is
+ * at least as old as `quietBefore` (15 quiet minutes) and which had no refit start after `startedBefore` (24 hours).
+ * Ids and the mark only, oldest mark first; scoped by access/policy.ts's scopeForWeeklyRefresh.
+ */
+export async function refitCandidates(connection: Connection, input: { quietBefore: Date; startedBefore: Date }): Promise<RefitCandidate[]> {
+  const orgs = await orgModel(connection).find(
+    { status: 'active', $or: [{ forecasts: trusted({ $exists: false }) }, { forecasts: null }, { 'forecasts.on': true }] },
+    { _id: 1 },
+  ).lean();
+  if (orgs.length === 0) return [];
+  const docs = await locationModel(connection).find({
+    orgId: trusted({ $in: orgs.map((org) => org._id) }), 'refit.wantedAt': trusted({ $lte: input.quietBefore }),
+    $or: [{ 'refit.startedAt': trusted({ $exists: false }) }, { 'refit.startedAt': trusted({ $lte: input.startedBefore }) }],
+  }, { _id: 1, orgId: 1, refit: 1 }).sort({ 'refit.wantedAt': 1, _id: 1 }).lean();
+  return docs.flatMap((doc) => {
+    const wantedAt = doc.refit?.wantedAt;
+    return wantedAt === undefined ? [] : [{ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString(), wantedAt }];
+  });
+}
+
+/** D59: how many refits the hourly pass started at or after `since`, across organizations (the weekly cap counts them). */
+export async function countRefitStartsSince(connection: Connection, since: Date): Promise<number> {
+  return locationModel(connection).countDocuments({ 'refit.startedAt': trusted({ $gte: since }) });
+}
+
 /**
  * The weekly suggestions' candidates (openspec change weekly-forecast-suggestions), across organizations: every location
  * of an active organization whose weekly suggestions are on, an organization with no `weeklySuggestions` field counting

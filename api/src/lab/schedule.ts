@@ -26,6 +26,14 @@
 // and weekly suggestions alike. Before the suggestions, the pass resolves pass rows a dead pass left `running` longer
 // than a lease (failed, handing back the reservation they held, or removed when they held none, so their week still
 // runs), and records on the schedule document that it ran them, which TownwiseAI's panel reads.
+// D59 (openspec change auto-apply-agent-reads, design decision 12): after the week's locations, on any day, the pass
+// refits each location a training change marked (agent/refit.ts) once its mark is 15 minutes old, with no live
+// calibration of its own and no refit started in the last 24 hours: it fingerprints the location as above, clears the
+// mark when nothing the lab reads changed (or the history is too short), and otherwise starts a calibration as the
+// system, inside the live cap of 3 and counted in the weekly cap with the week's rows, and records the start. The mark
+// is cleared by compare-and-set on the value read, so a change landing during the pass keeps it for a later one. A
+// location the live or weekly cap holds keeps its mark. [CONFIRM: a training change refits as the system after 15 quiet
+// minutes, at most once a day per location]
 // A pass has SCHEDULE_PASS_BUDGET_MS (inside the job's replica timeout): it takes another location only while it could
 // finish it in the time left, and otherwise ends that part `deadline`, leaving the rest to the next hour's pass.
 // Nothing here names a town, an organization or a location. The pass logs one line of counts and its state for each
@@ -44,8 +52,8 @@ import { FORECAST_TIER_DAYS, forecastThrough, tierEnd } from '../forecasts/tiers
 import { LIVE_STATUSES } from '../stores/calibrations.ts';
 import type { ChatModel } from '../chat/model.ts';
 import {
-  countedWeekRows, liveScheduledCalibrations, staleStartingWeeks, staleSuggestionPasses, suggestionCandidates, weeklyCandidates,
-  type WeeklyCandidate,
+  countedWeekRows, countRefitStartsSince, liveScheduledCalibrations, refitCandidates, staleStartingWeeks, staleSuggestionPasses,
+  suggestionCandidates, weeklyCandidates, type RefitCandidate, type WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import { localDay, localMinutes, timeZoneOf } from '../time-zones.ts';
 import { currentChampion, GATE } from './gate.ts';
@@ -72,6 +80,13 @@ export const SCHEDULE_PASS_BUDGET_MS = 8 * 60_000;
  * the pass's own end); a suggestions location needs SUGGESTIONS_TIME_MS more, the call's whole time.
  */
 export const SCHEDULE_STEP_MS = 60_000;
+/** D59: how long a location's refit mark must be quiet before the pass refits it. */
+export const REFIT_QUIET_MS = 15 * 60_000;
+/** D59: a location's refits start at most once in this long. */
+export const REFIT_EVERY_MS = 24 * 60 * 60_000;
+/** D59: the weekly cap counts the refits started in this long, beside the week's rows. */
+const REFIT_CAP_WINDOW_MS = 7 * 24 * 60 * 60_000;
+
 /** How far back the staff console looks for each location's latest week row. */
 export const WEEK_ROWS_LOOKBACK_DAYS = 56;
 /**
@@ -127,7 +142,19 @@ export interface SuggestionsCounts {
 
 export interface SuggestionsResult extends SuggestionsCounts { state: SuggestionsState; ms: number }
 
-export interface PassResult extends PassCounts { state: PassState; ms: number; suggestions: SuggestionsResult }
+/** D59: what the refit part of a pass did. */
+export interface RefitCounts {
+  /** Refits started as the system. */
+  started: number;
+  /** Marks cleared with nothing the lab reads changed, or too little history to refit. */
+  cleared: number;
+  /** Marks kept: a calibration of the location was live, or the live or weekly cap held it. */
+  held: number;
+  /** Starts the lab refused or could not make, and locations whose turn threw. */
+  failed: number;
+}
+
+export interface PassResult extends PassCounts { state: PassState; ms: number; suggestions: SuggestionsResult; refits: RefitCounts }
 
 export interface ForecastSchedule {
   /** One pass. Never throws for one location's error (it logs that location's ids and goes on). */
@@ -301,6 +328,75 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
   }
 
   /**
+   * D59: one location a training change marked (see the top). The mark is kept when the location is busy or a cap holds
+   * it, and cleared by compare-and-set on the value read once nothing changed or a refit started.
+   */
+  async function considerRefit(candidate: RefitCandidate, pass: PassRun, refits: RefitCounts): Promise<void> {
+    const scope = scopeForWeeklyRefresh(candidate);
+    const location = await stores.locations.find(scope, candidate.locationId);
+    if (location === null) return;
+    const clear = (): Promise<boolean> => stores.locations.clearRefitWanted(scope, location.id, candidate.wantedAt);
+    const own = await stores.calibrations.live(scope, location.id);
+    if (own !== null && isLive((await expireStale(ctx, scope, own)).status)) {
+      refits.held += 1;
+      return;
+    }
+    const timeZone = timeZoneOf(location.town).timeZone;
+    const now = ctx.now();
+    let regimeStart = await regimeOf(scope, location.id);
+    if (regimeStart !== null && !(await regimeStartFits(ctx, scope, location.id, localDay(now, timeZone), regimeStart))) regimeStart = null;
+    const input = await buildLabInput(ctx, scope, { id: new Types.ObjectId().toHexString(), locationId: location.id, regimeStart, championRunId: null });
+    const first = input?.days[0]?.date;
+    if (input === null || first === undefined || daysBetween(first, input.dataThrough) < GATE.baselineMinHistoryDays) {
+      if (await clear()) refits.cleared += 1;
+      return;
+    }
+    const dataSha256 = labInputFingerprint(input);
+    if ((await stores.calibrations.reference(scope, location.id))?.dataSha256 === dataSha256) {
+      if (await clear()) refits.cleared += 1;
+      return;
+    }
+    if (pass.live >= SCHEDULE_LIVE_CAP) {
+      refits.held += 1;
+      return;
+    }
+    const today = localDay(now, timeZone);
+    const monday = utcDay(new Date(`${today}T00:00:00.000Z`), -((new Date(`${today}T00:00:00.000Z`).getUTCDay() + 6) % 7));
+    const weekRows = pass.weekCounts.get(monday) ?? await countedWeekRows(ctx.connection, monday);
+    pass.weekCounts.set(monday, weekRows);
+    const started = await countRefitStartsSince(ctx.connection, new Date(now.getTime() - REFIT_CAP_WINDOW_MS));
+    if (weekRows + started >= ctx.config.weeklyForecastCap) {
+      refits.held += 1;
+      return;
+    }
+    const req: StartRequest = { id: new Types.ObjectId().toHexString(), scope, location, requester: SYSTEM_REQUESTER, regimeStart, today };
+    const refusal = await checkStart(ctx, req);
+    if (refusal === 'in_progress') {
+      refits.held += 1;
+      return;
+    }
+    const launched = refusal === null ? await launch(ctx, req) : { ok: false as const, code: refusal };
+    if (!launched.ok && launched.code === 'in_progress') {
+      refits.held += 1;
+      return;
+    }
+    // A start, or a refusal, waits a day before the next try; a refusal keeps the mark for then.
+    await stores.locations.markRefitStarted(scope, location.id, ctx.now());
+    if (!launched.ok) {
+      refits.failed += 1;
+      return;
+    }
+    await clear();
+    await recordAfter(ctx, {
+      ...SYSTEM_ACTOR, at: ctx.now(), orgId: scope.orgId, action: 'calibration.scheduled',
+      target: { type: 'calibration', id: launched.calibration.id },
+      details: { locationId: location.id, calibrationId: launched.calibration.id },
+    });
+    refits.started += 1;
+    pass.live += 1;
+  }
+
+  /**
    * Pass rows a dead pass left running longer than a lease (a live pass finishes its row within the call's 2 minutes):
    * one that held a reservation fails and hands it back to its month, once; one that held none is removed.
    */
@@ -354,6 +450,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       const began = performance.now();
       const deadline = ctx.now().getTime() + SCHEDULE_PASS_BUDGET_MS;
       const counts: PassCounts = { started: 0, failed: 0, skipped: 0, capped: 0 };
+      const refits: RefitCounts = { started: 0, cleared: 0, held: 0, failed: 0 };
       const suggestionCounts: SuggestionsCounts = { passes: 0, suggested: 0, none: 0, budget: 0, failed: 0, ownerEvents: 0 };
       const model = ctx.config.weeklySuggestions ? ctx.chat ?? null : null;
       const refreshOn = ctx.labRunner !== null && ctx.config.weeklyForecasts;
@@ -362,8 +459,9 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
         const suggestions = { state: suggestionsState, ...suggestionCounts, ms: Math.round(performance.now() - suggestionsBegan) };
         const result = { state, ...counts, ms: Math.round(performance.now() - began) };
         ctx.logger.info(result, 'townwise.weekly_refresh_pass');
+        ctx.logger.info(refits, 'townwise.refit_pass');
         ctx.logger.info(suggestions, 'townwise.weekly_suggestions_pass');
-        return { ...result, suggestions };
+        return { ...result, suggestions, refits };
       };
       if (!refreshOn && model === null) return end('off', 'off');
       const claim = await stores.forecastSchedule.claim({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS });
@@ -389,6 +487,26 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
             } catch {
               counts.failed += 1;
               ctx.logger.warn({ orgId: candidate.orgId, locationId: candidate.locationId }, 'townwise.weekly_refresh_location_failed');
+            }
+          }
+          // D59: the locations a training change marked, on any day, after the week's.
+          const now = ctx.now().getTime();
+          const marked = state === 'ran'
+            ? await refitCandidates(ctx.connection, { quietBefore: new Date(now - REFIT_QUIET_MS), startedBefore: new Date(now - REFIT_EVERY_MS) })
+            : [];
+          for (const candidate of marked) {
+            if (deadline - ctx.now().getTime() < SCHEDULE_STEP_MS) {
+              state = 'deadline';
+              break;
+            }
+            if (!(await stores.forecastSchedule.renew({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS }))) {
+              return end('lease_lost', model === null ? 'off' : 'lease_lost');
+            }
+            try {
+              await considerRefit(candidate, pass, refits);
+            } catch {
+              refits.failed += 1;
+              ctx.logger.warn({ orgId: candidate.orgId, locationId: candidate.locationId }, 'townwise.refit_location_failed');
             }
           }
         }
