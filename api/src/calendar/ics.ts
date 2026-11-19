@@ -8,8 +8,10 @@
 // town, as TownwiseAI's today is the town's. Hours are kept only when the event starts and ends on the same date (an
 // end at midnight closes the day before, with no hours), or when it ends by 06:00 the next morning: such a late night
 // is its start day's alone, its end time before its start. A repeating event (RRULE or RDATE) is counted, not imported,
-// and its moved instances (RECURRENCE-ID) go with it; a canceled event is left out. Events within 400 days of the
-// town's today are kept, at most 2,000, the first by start. An event keeps its UID, its title (cut at 200 characters),
+// and its moved instances (RECURRENCE-ID) go with it; a canceled event is left out. A link keeps events within 400 days
+// of the town's today, at most 2,000, the first by start; an imported file (parseCalendarFile in csv-events.ts, either
+// format, openspec change learn-from-calendar-bookings design decision 4) keeps 1,096 days back to 400 ahead, its
+// upcoming events first (FILE_WINDOW). An event keeps its UID, its title (cut at 200 characters),
 // its dates and its hours, nothing else: DESCRIPTION, LOCATION, ATTENDEE and ORGANIZER are never read. The callers cap
 // the file at 1 MB. [CONFIRM: 1 MB and 2,000 events for a calendar file]
 // An event is keyed (openspec change calendar-event-suggestions, design decision 1) when its stored UID is the one the
@@ -28,6 +30,11 @@ export const MAX_ICS_BYTES = 1024 * 1024;
 export const MAX_EVENTS = 2_000;
 /** Events are kept from this many days before the town's today to this many after, the longest read ahead. */
 export const WINDOW_DAYS = 400;
+/**
+ * A calendar file, imported once and never re-read, keeps events from this many days before the town's today (D58).
+ * [CONFIRM: a calendar file keeps 3 years of past events and its upcoming events first, at most 2,000]
+ */
+export const FILE_HISTORY_DAYS = 1_096;
 /** A title is cut to this many characters. */
 export const MAX_TITLE_CHARS = 200;
 /** A stated UID longer than this is never keyed (a note's link holds at most this many characters). */
@@ -51,6 +58,15 @@ export interface IcsEvent {
 }
 
 export type IcsResult = { events: IcsEvent[]; skippedRepeating: number } | { error: 'not_calendar' };
+
+/** Which events a calendar keeps: `historyDays` back from the town's today (400 unless said), and `aheadFirst`. */
+export interface KeepOptions {
+  readonly aheadFirst?: boolean;
+  readonly historyDays?: number;
+}
+
+/** An imported file's window (D58): 3 years back, upcoming events first. */
+export const FILE_WINDOW = { aheadFirst: true, historyDays: FILE_HISTORY_DAYS } as const satisfies KeepOptions;
 
 /** The location's town: its today (YYYY-MM-DD) and its IANA time zone. */
 export interface IcsTown {
@@ -162,8 +178,11 @@ function startKey(event: IcsEvent): string {
   return `${event.startDate} ${event.startTime ?? ''}`;
 }
 
-/** The calendar's single events within 400 days of the town's today, by start, at most 2,000, or not_calendar. */
-export function parseIcs(text: string, town: IcsTown): IcsResult {
+/**
+ * The calendar's single events within 400 days of the town's today (or `keep`'s window), by start, at most 2,000, or
+ * not_calendar.
+ */
+export function parseIcs(text: string, town: IcsTown, keep?: KeepOptions): IcsResult {
   const clock = townClock(town.timeZone);
   const lines = text.replace(/^\uFEFF/, '').replace(/(?:\r\n|\r|\n)[ \t]/g, '').split(/\r\n|\r|\n/);
   const stack: string[] = [];
@@ -222,7 +241,7 @@ export function parseIcs(text: string, town: IcsTown): IcsResult {
     const given = stated[index] ?? '';
     return { ...draft, keyed: given !== '' && draft.uid === given && statedCount.get(given) === 1 && given.length <= MAX_KEY_CHARS };
   });
-  return { events: keepWindow(events, town.today), skippedRepeating };
+  return { events: keepWindow(events, town.today, keep), skippedRepeating };
 }
 
 function byStart(a: IcsEvent, b: IcsEvent): number {
@@ -230,13 +249,14 @@ function byStart(a: IcsEvent, b: IcsEvent): number {
 }
 
 /**
- * The events within 400 days of `today`, by start (a stable sort, so events that start together keep their order), at
- * most 2,000: the first by start; or, with `aheadFirst` (a Google calendar's), the first 2,000 by start of those that
- * end on or after `today`, then as many of the earlier ones as still fit, the latest of them first.
+ * The events ending at most `historyDays` (400 unless said) before `today` and starting at most 400 after it, by start
+ * (a stable sort, so events that start together keep their order), at most 2,000: the first by start; or, with
+ * `aheadFirst` (a Google calendar's, and an imported file's), the first 2,000 by start of those that end on or after
+ * `today`, then as many of the earlier ones as still fit, the latest of them first.
  * [CONFIRM: a Google calendar keeps its next 2,000 events first, then earlier ones]
  */
-export function keepWindow(events: readonly IcsEvent[], today: string, options?: { readonly aheadFirst?: boolean }): IcsEvent[] {
-  const first = plusDays(today, -WINDOW_DAYS);
+export function keepWindow(events: readonly IcsEvent[], today: string, options?: KeepOptions): IcsEvent[] {
+  const first = plusDays(today, -(options?.historyDays ?? WINDOW_DAYS));
   const last = plusDays(today, WINDOW_DAYS);
   const inWindow = events.filter((event) => event.endDate >= first && event.startDate <= last).sort(byStart);
   if (options?.aheadFirst !== true) return inWindow.slice(0, MAX_EVENTS);
