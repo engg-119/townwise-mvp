@@ -6,8 +6,10 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import type { OrgScope } from '../src/access/policy.ts';
 import type { Coverage, SalesDay } from '../src/stores/sales-days.ts';
 import { addLocation, addNote, addOrderRecords, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS } from './helpers/fixtures.ts';
+import { fakeLabRunner } from './helpers/lab.ts';
 import {
   call, limiterKey, logLines, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -176,7 +178,7 @@ describe('the write (spec 11.4)', () => {
     expect(firstBody.coverage).toEqual({
       dayCount: 3, guestsDayCount: 3, netSalesDayCount: 2, firstDate: '2026-04-01', lastDate: '2026-04-03', missingDays: 0,
     });
-    expect(firstBody.calibration).toEqual({ state: 'not_calibrated', dayCount: 3, firstDate: '2026-04-01', lastDate: '2026-04-03' });
+    expect(firstBody.calibration).toEqual({ state: 'not_calibrated', dayCount: 3, firstDate: '2026-04-01', lastDate: '2026-04-03', updating: null, lastRun: null });
     // D59: the upload marks the location for a refit; D65: with its cause.
     expect((await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(locationId) }))?.refit)
       .toEqual({ wantedAt: server.clock.now(), causes: ['sales'] });
@@ -272,7 +274,7 @@ describe('reads (spec 10.4, 14.1)', () => {
     expect(await res.json()).toEqual({
       coverage: { dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, firstDate: null, lastDate: null, missingDays: 0 },
       uploadsOff: false,
-      calibration: { state: 'no_sales_data' },
+      calibration: { state: 'no_sales_data', updating: null },
       months: [],
       uploads: [],
     });
@@ -293,7 +295,7 @@ describe('reads (spec 10.4, 14.1)', () => {
     expect(body.coverage).toEqual({
       dayCount: 4, guestsDayCount: 2, netSalesDayCount: 3, firstDate: '2026-03-30', lastDate: '2026-04-03', missingDays: 1,
     });
-    expect(body.calibration).toEqual({ state: 'not_calibrated', dayCount: 4, firstDate: '2026-03-30', lastDate: '2026-04-03' });
+    expect(body.calibration).toEqual({ state: 'not_calibrated', dayCount: 4, firstDate: '2026-03-30', lastDate: '2026-04-03', updating: null, lastRun: null });
     expect(body.months).toEqual([
       { month: '2026-03', dayCount: 2, guests: null, netSalesCents: 30_050 },
       { month: '2026-04', dayCount: 2, guests: 100, netSalesCents: 30_000 },
@@ -321,6 +323,88 @@ describe('reads (spec 10.4, 14.1)', () => {
   });
 });
 
+describe('updating and the last run (D65)', () => {
+  const MINUTE = 60_000;
+
+  /** An org admin's calibration of the location, queued at `requestedAt`. */
+  async function queued(on: TownwiseTestServer, orgId: string, locationId: string, requestedAt: Date): Promise<string> {
+    const id = new Types.ObjectId().toHexString();
+    await on.ctx.stores.calibrations.insertQueued({ orgId } as OrgScope, {
+      id, locationId, requestedBy: { userId: team.admin.userId, role: 'org_admin', via: 'chat' }, regimeStart: null, championRunId: null,
+      tokenExpiresAt: new Date(requestedAt.getTime() + 20 * MINUTE), now: requestedAt,
+    });
+    return id;
+  }
+
+  async function calibrationOf(locationId: string): Promise<unknown> {
+    const res = await call(server, `/api/org/locations/${locationId}/sales`, { session: team.member });
+    expect(res.status).toBe(200);
+    return (await res.json() as { calibration: unknown }).calibration;
+  }
+
+  it('a running calibration reads running in the sales GET, since its request', async () => {
+    const locationId = await newLocation();
+    expect((await upload(locationId, { days: [day('2026-04-01', 10, 1000)] })).status).toBe(201);
+    const requestedAt = new Date(server.clock.now().getTime() - 6 * MINUTE);
+    const id = await queued(server, team.orgId, locationId, requestedAt);
+    await server.ctx.stores.calibrations.markRunning({ orgId: team.orgId } as OrgScope, id, { now: server.clock.now(), imageDigest: null });
+    expect(await calibrationOf(locationId)).toMatchObject({
+      state: 'not_calibrated', updating: { stage: 'running', since: requestedAt.toISOString() }, lastRun: null,
+    });
+  });
+
+  it('a queued calibration 25 minutes old reads not updating, with a failed last run, and is unchanged in the database', async () => {
+    const locationId = await newLocation();
+    expect((await upload(locationId, { days: [day('2026-04-01', 10, 1000)] })).status).toBe(201);
+    const requestedAt = new Date(server.clock.now().getTime() - 25 * MINUTE);
+    const id = await queued(server, team.orgId, locationId, requestedAt);
+    const before = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(id) });
+    expect(await calibrationOf(locationId)).toEqual({
+      state: 'not_calibrated', dayCount: 1, firstDate: '2026-04-01', lastDate: '2026-04-01', updating: null,
+      lastRun: { outcome: 'not_run', reason: 'failed', finishedAt: new Date(requestedAt.getTime() + 20 * MINUTE).toISOString() },
+    });
+    expect(await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(id) })).toEqual(before);
+    expect(before?.status).toBe('queued');
+  });
+
+  describe('with the lab and the weekly forecasts on', () => {
+    let lab: TownwiseTestServer;
+    let admin: TestSession;
+    let orgId: string;
+
+    beforeAll(async () => {
+      // keepData: the suite's own server shares the database.
+      lab = await startTownwiseServer({ labRunner: fakeLabRunner(), keepData: true });
+      orgId = await createOrg(lab, { name: 'Onboarding Kitchen', forecastsOn: true });
+      const email = `admin-${randomUUID().slice(0, 8)}@example.test`;
+      admin = await signIn(lab, email);
+      await addSeat(lab, { orgId, userId: admin.userId, email, role: 'org_admin' });
+    });
+    afterAll(async () => { await lab.close(); });
+
+    async function onboard(count: number): Promise<UploadResponse['calibration'] & { updating?: unknown }> {
+      const locationId = await addLocation(lab, { orgId, name: `Room ${randomUUID().slice(0, 6)}` });
+      const res = await call(lab, `/api/org/locations/${locationId}/sales/uploads`, {
+        session: admin, json: { days: daysEnding('2026-05-31', count, () => ({ guests: 40, netSalesCents: null })) },
+      });
+      expect(res.status).toBe(201);
+      return (await res.json() as { calibration: UploadResponse['calibration'] & { updating?: unknown } }).calibration;
+    }
+
+    it('an onboarding upload of 700 days answers waiting, since the mark the upload set', async () => {
+      expect(await onboard(700)).toMatchObject({
+        state: 'not_calibrated', dayCount: 700, updating: { stage: 'waiting', since: lab.clock.now().toISOString() }, lastRun: null,
+      });
+    });
+
+    it('an onboarding upload of 120 days answers no updating, with no number of days needed', async () => {
+      const calibration = await onboard(120);
+      expect(calibration).toMatchObject({ state: 'not_calibrated', dayCount: 120, updating: null, lastRun: null });
+      expect(JSON.stringify(calibration)).not.toContain('230');
+    });
+  });
+});
+
 describe('DELETE /api/org/locations/:locationId/sales', () => {
   it('is for org admins only; it deletes every day and upload record of the location, keeps notes and is audited', async () => {
     const locationId = await newLocation();
@@ -343,7 +427,7 @@ describe('DELETE /api/org/locations/:locationId/sales', () => {
     expect(await server.connection.collection('tw_notes').countDocuments({ locationId: new Types.ObjectId(locationId) })).toBe(1);
 
     const after = await (await call(server, `/api/org/locations/${locationId}/sales`, { session: team.admin })).json() as { calibration: unknown };
-    expect(after.calibration).toEqual({ state: 'no_sales_data' });
+    expect(after.calibration).toEqual({ state: 'no_sales_data', updating: null });
     const event = (await auditEvents(server)).filter((e) => e.action === 'sales.deleted').at(-1);
     expect(event).toMatchObject({ actorUserId: team.admin.userId, actorRole: 'org_admin', target: { type: 'location', id: locationId } });
     expect(event?.details).toEqual({ locationId, deletedDays: 3, deletedFiles: 0 });

@@ -177,7 +177,7 @@ describe('in setup', () => {
     expect(location).toEqual({
       id: location.id, name: 'Main Street', town: HANOVER, placeId: null,
       coverage: { dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, firstDate: null, lastDate: null, missingDays: 0 },
-      calibration: { state: 'no_sales_data' }, notesCount: 0, lastUploadAt: null, offDayCount: 0,
+      calibration: { state: 'no_sales_data', updating: null }, notesCount: 0, lastUploadAt: null, offDayCount: 0,
     });
     expect(await doc('tw_locations', location.id)).toMatchObject({ name: 'Main Street', createdBy: staff.userId, byStaff: true });
     expect((await eventsIn(org.orgId)).at(-1)).toMatchObject({
@@ -240,7 +240,7 @@ describe('in setup', () => {
         dayCount: 3, inserted: 3, replaced: 0, kept: 0, firstDate: '2026-05-01', lastDate: '2026-05-03', hasGuests: true, hasNetSales: true,
       },
       coverage: { dayCount: 3, guestsDayCount: 2, netSalesDayCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-03', missingDays: 0 },
-      calibration: { state: 'not_calibrated', dayCount: 3, firstDate: '2026-05-01', lastDate: '2026-05-03' },
+      calibration: { state: 'not_calibrated', dayCount: 3, firstDate: '2026-05-01', lastDate: '2026-05-03', updating: null, lastRun: null },
     });
     expect(await doc('tw_uploads', answer.upload.id)).toMatchObject({ uploadedBy: staff.userId, byStaff: true, status: 'applied' });
     // Written before the days, so it has no inserted or replaced, which exist only after.

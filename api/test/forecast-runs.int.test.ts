@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import mongoose, { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { scopeForNewOrg } from '../src/access/policy.ts';
 import type { StaffActivityView } from '../src/audit.ts';
 import type { StaffForecastRunView } from '../src/handlers/forecast-runs.ts';
 import type { RunTrainingView } from '../src/lab/training.ts';
@@ -281,6 +282,44 @@ describe('publish, withdraw and delete', () => {
     const { runs } = await res.json() as { runs: StaffForecastRunView[] };
     expect(runs.map((run) => run.id)).toEqual([second.id, first.id]);
     expect(JSON.stringify(runs)).not.toMatch(/"(low|mid|high|days)":/);
+  });
+});
+
+describe('run states and the first published run (D65)', () => {
+  const principal = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
+  const scopeOf = (t: Pick<Team, 'orgId'>) => scopeForNewOrg(principal, t.orgId);
+
+  it('the first published run is the earliest publishedAt, a withdrawn run included', async () => {
+    const t = await team();
+    expect(await server.ctx.stores.forecasts.firstPublished(scopeOf(t), t.locationId)).toBeNull();
+    const draft = await imported(t);
+    expect(await server.ctx.stores.forecasts.firstPublished(scopeOf(t), t.locationId)).toBeNull();
+    const first = await imported(t, withMadeAt('2026-05-02'));
+    expect((await change(t, first.id, 'publish')).status).toBe(200);
+    const at = server.clock.now();
+    expect((await change(t, first.id, 'withdraw')).status).toBe(200);
+    server.clock.advance(60_000);
+    expect((await change(t, draft.id, 'publish')).status).toBe(200);
+    expect(await server.ctx.stores.forecasts.firstPublished(scopeOf(t), t.locationId)).toEqual({ runId: first.id, publishedAt: at });
+  });
+
+  it('reads run states by id in one read, scoped to the organization', async () => {
+    const t = await team();
+    const other = await team();
+    const mine = await imported(t);
+    const published = await imported(t, withMadeAt('2026-05-02'));
+    expect((await change(t, published.id, 'publish')).status).toBe(200);
+    const theirs = await imported(other);
+    expect((await change(other, theirs.id, 'publish')).status).toBe(200);
+    const gone = new Types.ObjectId().toHexString();
+    server.commands.length = 0;
+    const states = await server.ctx.stores.forecasts.runStates(scopeOf(t), [mine.id, published.id, theirs.id, gone]);
+    expect(server.commands.filter((name) => name === 'find')).toHaveLength(1);
+    expect([...states.keys()].sort()).toEqual([mine.id, published.id].sort());
+    expect(states.get(mine.id)).toEqual({ status: 'draft', publishedAt: null, publishedBy: null });
+    expect(states.get(published.id)).toEqual({ status: 'published', publishedAt: server.clock.now(), publishedBy: staff.userId });
+    expect(await server.ctx.stores.forecasts.firstPublished(scopeOf(t), t.locationId)).toMatchObject({ runId: published.id });
+    expect((await server.ctx.stores.forecasts.runStates(scopeOf(t), [])).size).toBe(0);
   });
 });
 

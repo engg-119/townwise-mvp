@@ -49,8 +49,9 @@ export const overviewTool: ChatTool<Record<string, never>> = {
           guestsDayCount: coverage.guestsDayCount, netSalesDayCount: coverage.netSalesDayCount, missingDays: coverage.missingDays,
         },
         calibration: calibration.state,
-        // D42: "Townwise refits on {Mon} with the {n} days since." for a stale forecast, else null.
-        calibrationWords: calibrationWords(calibration),
+        // D42: "Townwise refits on {Mon} with the {n} days since." for a stale forecast; D65: then the model card's
+        // sentence while the forecast is updating, its start in the town's time; else null.
+        calibrationWords: calibrationWords(calibration, tc.timeZone, ctx.now()),
         townProfile: location.town.townId !== null && townProfileOf(location.town.townId) !== undefined,
         months: months.slice(-OVERVIEW_MONTHS).map((month) => ({
           month: month.month, days: month.dayCount, guests: month.guests, netSalesUsd: dollars(month.netSalesCents),
