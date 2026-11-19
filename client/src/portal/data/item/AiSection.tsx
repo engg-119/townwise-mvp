@@ -15,14 +15,14 @@ import {
   AI, aiError, cantReadLine, daysLine, forecastLine, guardLine, itemLine, kindFoundLine, noteLine, notesLine, rulesSuggestedLine, settledLine,
   undidLine, undoBody,
 } from '../aiCopy';
-import { readWithAi, undoAiRead, type AiRead, type DataItem } from '../api';
+import { isCalendarFile, readWithAi, undoAiRead, type AiRead, type DataItem } from '../api';
 import { agendaMonths, fileEventItem } from './agenda';
 import { CalendarAgenda } from './CalendarAgenda';
 
 // The TownwiseAI section of an item's page (P27, D34, spec 11A.9), on web and native, for an item with a stored file
 // (an `f_` item, or an upload read from one). Before a read, or after one that failed, was skipped or was undone, the
 // people who may ask (`canAiRead`) get what reading sends and does, the privacy link and “Let TownwiseAI read this
-// file”; a kind TownwiseAI can't read says why instead. While it reads, the item is read again every 3 seconds until
+// file”; a kind TownwiseAI can't read says why instead (a calendar file has no section: it is imported as a calendar). While it reads, the item is read again every 3 seconds until
 // the read settles; leaving the page stops that. A done read shows what TownwiseAI found and what it added, each with
 // its link or why not (D46: how many closure rules it suggested, linked to Business rules), and, for the person who
 // asked or an org admin, Undo behind a confirm dialog; so does a read that
@@ -97,6 +97,9 @@ export function AiSection(props: {
   };
 
   if (item.file === null || item.fromAiRead !== null) return null;
+  // UI review 2026-11-19: a calendar file is imported as a calendar (D60; CalendarImport says how), never read by
+  // TownwiseAI, so it has no section, unless a read from before still has something to show.
+  if (isCalendarFile(item) && (ai === null || (!running && ai.status !== 'done' && !ai.canUndo))) return null;
   if (ai === null && !item.canAiRead && notice === null && failure === null) return null;
 
   // The status, said as a notice when it changes in front of the person, else as a plain line.

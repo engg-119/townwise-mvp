@@ -107,3 +107,25 @@ test('a calendar file’s page says it was added as a calendar, and Try again re
   expect(await screen.findByText('Added to your calendars as Late: 1 event.')).toBeTruthy();
   expect(fake.calendarRetries).toEqual([REFUSED]);
 });
+
+// UI review 2026-11-19: a calendar file kept before calendar files were imported says so on native too, with Import as
+// a calendar, and its TownwiseAI section never says TownwiseAI can't read it.
+test('a calendar file kept before calendar files were imported offers Import as a calendar, never “can’t read”', async () => {
+  const { api, fake } = setup();
+  const OLD = 'f_00000000000000000000000e';
+  const kept = { kind: 'other', state: 'kept', outcome: 'reference' } as const;
+  fake.items.push(itemOf(OLD, { ...kept, name: 'Old.ics', canAiRead: true, calendar: null }));
+  await renderApp(`/locations/l1/data/${OLD}`, api);
+  expect(await screen.findByText(
+    'This calendar file was kept before Townwise added calendar files to your calendars, so it isn’t one of them. Import it as a calendar, or delete it if it’s already one of your calendars.',
+  )).toBeTruthy();
+  expect(screen.queryByText(/can’t read this file/)).toBeNull();
+  const added = itemOf(OLD, { ...kept, name: 'Old.ics', calendar: { status: 'added', calendarId: 'c3', label: 'Old', eventCount: 2 } });
+  fake.answers['POST calendar'] = () => {
+    fake.items = fake.items.map((item) => (item.ref === OLD ? added : item));
+    return { item: added };
+  };
+  await fireEvent.press(screen.getByRole('button', { name: 'Import as a calendar' }));
+  expect(await screen.findByText('Added to your calendars as Old: 2 events.')).toBeTruthy();
+  expect(fake.calendarRetries).toEqual([OLD]);
+});

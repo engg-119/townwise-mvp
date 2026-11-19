@@ -131,7 +131,7 @@ function calendarLine(locationId: string, ref: string, note: CalendarNote): stri
     case 'removed': return `- ${ref}: added as a calendar before; that calendar was removed since, and Townwise never imports the same file again.`;
     // A file kept before D60 is never imported (its upload is done, and D60's retry needs a record): deleting it and
     // adding it again imports it, as a new upload.
-    case 'not_imported': return `- ${ref}: not imported: it was kept in Your data before Townwise imported calendar files, and Townwise imports a file only when it is added. To add it as a calendar, the person who added it or an org admin can delete it on the file's page, then add the file again: ${dataPath(locationId, ref)}`;
+    case 'not_imported': return `- ${ref}: not imported: it was kept in Your data before Townwise imported calendar files. To add it as a calendar, a member can press Import as a calendar on the file's page: ${dataPath(locationId, ref)}`;
     case 'refused': break;
   }
   const gone = 'and its original was deleted, so it can\'t be tried again.';

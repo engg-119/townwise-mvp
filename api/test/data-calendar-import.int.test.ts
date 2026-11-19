@@ -206,6 +206,52 @@ describe('a calendar file kept in Your data (D60)', () => {
     expect(await sources(place)).toHaveLength(1);
   });
 
+  // UI review 2026-11-19: an .ics file kept before D60 has no import record and no calendar. It is filed in Calendars,
+  // its item says nothing was tried (`calendar` null), and the retry route imports it once, under the same unique index.
+  async function keptBeforeImports(place: Place, name: string, text: string): Promise<string> {
+    const fileId = await keep(place, name, text);
+    await server.connection.collection('tw_calendar_sources').deleteMany({ orgId: new Types.ObjectId(place.orgId) });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, { $unset: { calendarImport: '' } });
+    return fileId;
+  }
+
+  async function folderOfItem(place: Place, ref: string): Promise<string | undefined> {
+    const res = await call(server, `/api/org/data?locationId=${place.locationId}`, { session: place.session });
+    expect(res.status).toBe(200);
+    return (await res.json() as { items: DataItemView[] }).items.find((item) => item.ref === ref)?.folder;
+  }
+
+  it('an .ics file kept before calendar files were imported is filed in Calendars, and Import as a calendar adds it once', async () => {
+    const place = await freshPlace();
+    const fileId = await keptBeforeImports(place, `${NAME}.ics`, ics('legacy@example.test', 'legacy-2@example.test'));
+    expect(await sources(place)).toEqual([]);
+    expect((await itemOf(place, fileId)).calendar).toBeNull();
+    expect(await folderOfItem(place, `f_${fileId}`)).toBe('calendars');
+    const [first, second] = await Promise.all([retry(place, fileId), retry(place, fileId)]);
+    expect([first.status, second.status]).toEqual([200, 200]);
+    const [source, ...others] = await sources(place);
+    expect(others).toEqual([]);
+    expect(source).toMatchObject({ kind: 'file', label: NAME, eventCount: 2, fromFileId: new Types.ObjectId(fileId) });
+    expect((await itemOf(place, fileId)).calendar).toEqual({ status: 'added', calendarId: String(source?._id), label: NAME, eventCount: 2 });
+    const again = await retry(place, fileId);
+    expect((await again.json() as { item: DataItemView }).item.calendar).toMatchObject({ status: 'added' });
+    expect(await sources(place)).toHaveLength(1);
+  });
+
+  it('an old .ics file that is no calendar is refused not_calendar on import, and one whose original was deleted answers 400', async () => {
+    const place = await freshPlace();
+    const broken = await keptBeforeImports(place, 'old broken.ics', 'This is not a calendar.');
+    const res = await retry(place, broken);
+    expect(res.status).toBe(200);
+    expect((await res.json() as { item: DataItemView }).item.calendar).toEqual({ status: 'refused', reason: 'not_calendar', retry: false });
+    expect(await sources(place)).toEqual([]);
+
+    const gone = await keptBeforeImports(place, 'old gone.ics', ics('gone@example.test'));
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(gone) }, { $set: { rawDeletedAt: server.clock.now() } });
+    expect((await retry(place, gone)).status).toBe(400);
+    expect(await sources(place)).toEqual([]);
+  });
+
   it('a calendar file uploaded as sales history is not imported here', async () => {
     const place = await freshPlace();
     const done = await uploadFile(server, place.locationId, place.session, 'history.ics', Buffer.from(ics('h@example.test'), 'utf8'));
