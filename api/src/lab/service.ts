@@ -46,7 +46,8 @@ export type StartRefusal =
 
 export const START_REFUSAL_WORDS: Record<StartRefusal, string> = {
   lab_unavailable: 'Calibration isn’t available right now.',
-  not_enough_history: 'Calibration needs at least 595 days from the first to the last day of sales history.',
+  not_enough_history:
+    'Calibration needs at least 230 days from the first to the last day of sales history, for Townwise’s baseline. Its demand model also runs from 595 days.',
   invalid_regime_start: 'The pattern change date must fall inside the sales history, at least 8 weeks before its last day.',
   budget_exhausted: 'This month’s TownwiseAI budget is used up, so a calibration can’t start until it resets.',
   in_progress: 'A calibration for this location is already running.',
@@ -67,7 +68,7 @@ export type StartRequester =
   | { readonly userId: string; readonly role: 'org_admin' | 'superadmin'; readonly via: 'chat' | 'console' | 'file' }
   | { readonly userId: null; readonly role: 'system'; readonly via: 'scheduled' };
 
-/** The weekly refresh's requester: Townwise pays (no charge, not one of the 4 a day) and 230 days may start it (D42). */
+/** The weekly refresh's requester: Townwise pays (no charge, not one of the 4 a day) (D42). */
 export const SYSTEM_REQUESTER = { userId: null, role: 'system', via: 'scheduled' } as const satisfies StartRequester;
 
 export interface StartRequest {
@@ -181,17 +182,17 @@ export async function regimeStartFits(
 
 /**
  * The checks before a start, in order: the lab is on; the history (first to last day with guests) spans at least
- * GATE.minHistoryDays, the span that always gives the gate 12 weeks to judge (GATE.baselineMinHistoryDays for the
- * weekly refresh, D42, whose calibration below 595 days can only make a baseline); a pattern change date falls inside
- * it, at least 8 weeks before its last day; the month's TownwiseAI budget is not spent (a person's start only); and no
- * calibration of the location is live (a stale one is timed out first).
+ * GATE.baselineMinHistoryDays, whoever starts it (D42; a person's start too since 2026-11-19), so a span under
+ * GATE.minHistoryDays runs the baseline engine alone, as the weekly refresh's does, and the lab adds the model from it;
+ * a pattern change date falls inside it, at least 8 weeks before its last day; the month's TownwiseAI budget is not
+ * spent (a person's start only); and no calibration of the location is live (a stale one is timed out first).
+ * [CONFIRM: a person's calibration starts from 230 days and runs the baseline alone under 595, spec index item 143]
  */
 export async function checkStart(ctx: LabStartContext, req: StartRequest): Promise<StartRefusal | null> {
   if (ctx.labRunner === null) return 'lab_unavailable';
   const { scope, location } = req;
   const history = await historyOf(ctx, scope, location.id, req.today);
-  const minDays = systemPaid(req) ? GATE.baselineMinHistoryDays : GATE.minHistoryDays;
-  if (history === null || daysBetween(history.first, history.last) < minDays) return 'not_enough_history';
+  if (history === null || daysBetween(history.first, history.last) < GATE.baselineMinHistoryDays) return 'not_enough_history';
   if (req.regimeStart !== null && !regimeFits(req.regimeStart, history)) return 'invalid_regime_start';
   if (!systemPaid(req) && await budgetSpent(ctx, scope)) return 'budget_exhausted';
   const live = await ctx.stores.calibrations.live(scope, location.id);

@@ -99,12 +99,12 @@ test('switching off says what stays and posts on false', async () => {
   expect(api.calls.filter((call) => call.method === 'POST')).toEqual([{ method: 'POST', path: '/api/admin/orgs/o1/forecasts-switch', body: { on: false } }]);
 });
 
-test('Calibrate opens the dialog with the cost and optional date, posts it, and lists the new calibration', async () => {
+test('Calibrate opens the dialog with which engine runs, the cost and optional date, posts it, and lists the new calibration', async () => {
   const api = await show();
   expect(screen.getByText('No calibrations yet.')).toBeTruthy();
   await settle(() => { fireEvent.click(screen.getByRole('button', { name: 'Calibrate Hanover' })); });
   const dialog = screen.getByRole('dialog', { name: 'Calibrate Hanover?' });
-  expect(within(dialog).getByText(`Townwise refits Hanover’s forecast on its sales history and notes, on Townwise’s servers, and scores it on held-out weeks. It costs $0.10 of ${ORG}’s TownwiseAI budget. If it passes every check and forecasts are on, it publishes itself. Its admins see this in their Townwise staff activity.`)).toBeTruthy();
+  expect(within(dialog).getByText(`Townwise refits Hanover’s forecast on its sales history and notes, on Townwise’s servers, and scores it on held-out weeks. With 595 days of sales history or more it runs Townwise’s demand model beside its baseline, as the weekly refresh does; with 230 to 594 days it runs the baseline only. It costs $0.10 of ${ORG}’s TownwiseAI budget. If it passes every check and forecasts are on, it publishes itself. Its admins see this in their Townwise staff activity.`)).toBeTruthy();
   expect(within(dialog).getByText('The first day of a lasting change, such as the day lunch service ended.')).toBeTruthy();
   fireEvent.change(within(dialog).getByLabelText('Weekly pattern changed on (optional)'), { target: { value: '2026-09-01' } });
   api.routes[START] = () => ({ calibration: calibration({ status: 'queued', gate: null, summary: null, startedAt: null, finishedAt: null, runId: null }) });
@@ -209,6 +209,8 @@ test('a summary with nothing to compare reads without the current forecast', asy
 test.each([
   [new ApiError('http', 'The request was refused.', { status: 409, code: 'calibration_in_progress' }), 'A calibration for this location is already running.'],
   [new ApiError('http', 'The request was refused.', { status: 429, code: 'calibrations_rate_limited' }), 'This organization has started 4 calibrations in the last day. Try again tomorrow.'],
+  // Under 230 days (2026-11-19): which engine runs from how many days
+  [new ApiError('http', 'The request was refused.', { status: 409, code: 'not_enough_history' }), 'Calibration needs at least 230 days from the first to the last day of sales history, for Townwise’s baseline. Its demand model also runs from 595 days.'],
 ])('a refusal shows the server message in the dialog', async (error, text) => {
   const api = await show();
   await settle(() => { fireEvent.click(screen.getByRole('button', { name: 'Calibrate Hanover' })); });

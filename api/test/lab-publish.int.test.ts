@@ -44,10 +44,10 @@ function switchForecasts(t: Pick<Team, 'orgId'>, body: unknown, session = staff)
 }
 
 /**
- * An organization with an org admin and one Hanover location holding guests from 2024-10-01 to `to` (2026-05-31), with
- * its forecasts switched on through the console when `forecastsOn`.
+ * An organization with an org admin and one Hanover location holding guests from `from` (2024-10-01) to `to`
+ * (2026-05-31), with its forecasts switched on through the console when `forecastsOn`.
  */
-async function team(opts?: { forecastsOn?: boolean; to?: string; unswitched?: true }): Promise<Team> {
+async function team(opts?: { forecastsOn?: boolean; from?: string; to?: string; unswitched?: true }): Promise<Team> {
   // Switched off by staff unless `unswitched` (never switched, on by default since D42), so switching on goes through
   // the console.
   const name = `Publish Kitchen ${randomUUID().slice(0, 6)}`;
@@ -56,7 +56,7 @@ async function team(opts?: { forecastsOn?: boolean; to?: string; unswitched?: tr
   const admin = await signIn(server, email);
   await addSeat(server, { orgId, userId: admin.userId, email, role: 'org_admin' });
   const locationId = await addLocation(server, { orgId, name: 'Hanover Room' });
-  await seedHistory(server, { orgId, locationId, from: '2024-10-01', to: opts?.to ?? '2026-05-31' });
+  await seedHistory(server, { orgId, locationId, from: opts?.from ?? '2024-10-01', to: opts?.to ?? '2026-05-31' });
   if (opts?.forecastsOn === true) expect((await switchForecasts({ orgId }, ON)).status).toBe(200);
   return { orgId, locationId, admin };
 }
@@ -274,6 +274,46 @@ describe('one set of rules for every calibration (D42)', () => {
     expect(await post(job, labResultFor(input, { scorecard, run: run70(mid, length) }))).toEqual(SUCCEEDED);
     return viewOf(t, calibration.id);
   }
+
+  /** The baseline's params as the lab returns them (the numbers mean nothing). */
+  const BASELINE_PARAMS: LabSuccess['params'] = {
+    target: 'guests', engine: 'baseline', regimeStart: null, levelDays: 8, levelMinDays: 3, shapeClamp: { min: 0.5, max: 2 },
+    calendarEffects: {}, dailyLogRange: { lo: -0.2, hi: 0.2 }, widenK: 1, weeklyLogRange: { lo: -0.1, hi: 0.1 }, widening: [],
+    horizonDays: 28, minPastWeeks: 8, floor: 1,
+  };
+
+  it('staff’s Calibrate on a 300-day history publishes the baseline the lab returns, on the weekly refresh’s rules (2026-11-19)', async () => {
+    // 2025-08-04 to 2026-05-31 spans 300 days: the lab runs the baseline alone, so the model's figures are null.
+    const t = await team({ forecastsOn: true, from: '2025-08-04' });
+    const { calibration, job } = await started(t);
+    expect(calibration.chargedUsd).toBe(0.1);
+    const input = await inputFor(job);
+    const backtest = {
+      weeks: 14, weeksWithRange: 14, metrics: metricsWith({ weeklyWape: 0.11, coverage80: { inside: 11, weeks: 14 } }),
+      weekdayMedianWeeklyWape: 0.13, weeklyBias: -0.02,
+    };
+    const scorecard = scorecardWith({
+      engine: 'baseline', comparison: null, backtest,
+      engines: { model: null, baseline: { weeks: 14, weeklyWape: 0.11, weeklyBias: -0.02, coverage80: { inside: 11, weeks: 14 } } },
+      history: { firstDate: input.days[0]?.date ?? '', lastDate: input.dataThrough, spanDays: 300 },
+    });
+    const base = labResultFor(input, { scorecard });
+    const result: LabSuccess = { ...base, params: BASELINE_PARAMS, run: { ...base.run, model: { ...base.run.model, family: 'seasonal_baseline' } } };
+    expect(await post(job, result)).toEqual(SUCCEEDED);
+    const view = await viewOf(t, calibration.id);
+    // A first forecast's baseline is judged by its absolute checks, as a scheduled one's is
+    expect(view.gate).toMatchObject({ published: true, reason: 'published', words: gateWords('published', true) });
+    expect(await runDoc(view.runId ?? '')).toMatchObject({ status: 'published', model: { family: 'seasonal_baseline' } });
+  });
+
+  it('the gate is unchanged: a model draft from under 595 days, which the lab never returns, is still not_enough_history', async () => {
+    const t = await team({ forecastsOn: true, from: '2025-08-04' });
+    const { calibration, job } = await started(t);
+    const input = await inputFor(job);
+    const scorecard = scorecardWith({ comparison: null, history: { firstDate: input.days[0]?.date ?? '', lastDate: input.dataThrough, spanDays: 300 } });
+    expect(await post(job, labResultFor(input, { scorecard }))).toEqual(SUCCEEDED);
+    expect((await viewOf(t, calibration.id)).gate).toMatchObject({ published: false, reason: 'not_enough_history' });
+  });
 
   it('a refit against a one-week-old lab run is judged on the streak’s best recorded backtest, not held-out weeks', async () => {
     const t = await team({ forecastsOn: true });
