@@ -67,7 +67,7 @@ test('lists every change with its why and Undo, and loads the next page on deman
   });
   renderAt(api);
   const list = await screen.findByRole('list', { name: 'TownwiseAI’s changes' });
-  expect(screen.getByRole('heading', { name: 'Every change it made on its own' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Every change it made' })).toBeTruthy();
   expect(within(list).getAllByRole('listitem')).toHaveLength(2);
   expect(within(list).getByText('Why: The file says closed 3')).toBeTruthy();
   expect(within(list).getByText('Added a note: Closure, Jul 4, 2026, from a file you added. You changed it since, so it’s yours.')).toBeTruthy();
@@ -163,7 +163,7 @@ test('slice 2: Undo on a calendar’s labels reads the log again, so the notes i
 
 test('the log’s intro and the switch’s words name calendar labels, and the switch says when a calendar file is sorted', () => {
   expect(CHANGES_INTRO).toBe(
-    'Each note, business rule, summary, set of sales days or set of booking labels TownwiseAI saved here, newest first. Undo removes what it added, as long as nobody changed it since. Undo on a calendar’s booking labels also removes the notes TownwiseAI made from that calendar and stops using its labels for forecasts. Once you change something it added, it’s yours.',
+    'Each note, business rule, summary, set of sales days or set of booking labels TownwiseAI saved here, and each correction it made when you asked to an event town research found, newest first. Undo removes what it added, or puts back what it corrected, as long as nobody changed it since. Undo on a calendar’s booking labels also removes the notes TownwiseAI made from that calendar and stops using its labels for forecasts. Once you change something it added, it’s yours.',
   );
   expect(AGENT_AUTO_WORDS).toBe(
     'Let TownwiseAI work on its own. It reads each file you add or text you paste on Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. When you tell it about a dated event plainly in a message, it saves that note too. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week. While sending your calendars’ titles is on, a calendar link or Google calendar whose refresh adds or moves an event in the next 3 months brings that forward, at most once a day. When your calendar plainly says you’re closed on days it asked about, it stops asking, whether this is on or off. With this on, it also saves that closure from the calendar, so the forecast closes those days; with it off, make a note from that event on the Calendar. Each change shows here with Undo. Anything it isn’t sure of waits for you.',
