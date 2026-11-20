@@ -17,7 +17,6 @@
 //
 // The plan is idempotent: a merge redone after a crash matches its own inserts and counts this run once (a row whose
 // `lastRunId` is this run keeps its `seenCount`), so a replay inserts and changes nothing.
-// [CONFIRM: a finding that repeats a curated row or a curated term date is dropped]
 import type { TownEvent } from '../town-calendar.ts';
 import { nameKey, sameBusiness, sameEvent, storedMatch, titleKey, type Comparable } from './dedupe.ts';
 import type { LocationOrigin, ThreadId } from './threads.ts';

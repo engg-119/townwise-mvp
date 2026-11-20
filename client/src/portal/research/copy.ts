@@ -8,8 +8,7 @@ import { LIVE_RUN_STATUSES } from './api';
 // the components that print them, each pinned by test/portal/research-copy.test.ts. Research works in "topics" (never
 // "threads"), in plain words (15.6), with no em dash. This part holds the Calendar's (P28): the filter and the day
 // panel's group, a found event's where and who, its chips, its actions and their answers, the edit sheet, and the
-// banner for a run a person started. [CONFIRM: the Town tab's, Calendar's, banner's, switch's, activity's and
-// dashboard's words for research]
+// banner for a run a person started.
 
 /** The Calendar's filter and the day panel's group. */
 export const FOUND_LABEL = 'Found by research';

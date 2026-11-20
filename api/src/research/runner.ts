@@ -67,7 +67,6 @@ import { researchWindow, threadDef, type ThreadDef } from './threads.ts';
 
 const MINUTE = 60_000;
 const DAY_MS = 86_400_000;
-/** [CONFIRM: 2 research lanes per API replica, 1 live thread per organization, and a thread tried at most twice] */
 export const RESEARCH_LANES = 2;
 export const PER_ORG_LIVE = 1;
 export const RESEARCH_MAX_ATTEMPTS = 2;
@@ -83,9 +82,7 @@ export const RESEARCH_LEASE_MS = 90_000;
 export const RESEARCH_HEARTBEAT_MS = 30_000;
 /** What an automatic location thread leaves of the TownwiseAI month: $5. */
 export const AUTOMATIC_HEADROOM_MICRO_USD = 5_000_000;
-/** [CONFIRM: a dead replica's thread charged its last recorded spend plus 30 seconds of streaming] */
 export const STALE_GRACE_MS = 30_000;
-/** [CONFIRM: researched events, runs and threads kept 400 days, ...] */
 export const RETENTION_DAYS = 400;
 export const ENTITY_UNSEEN_DAYS = 365;
 const POLL_MS = 30_000;

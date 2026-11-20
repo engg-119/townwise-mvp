@@ -13,7 +13,7 @@
 // typed title or `where` never reaches a prompt.
 import type { RevisionFields, RevisionRecord } from '../stores/research-revisions.ts';
 
-/** At most this many revisions a location; past it an edit answers 409 `too_many_edits`. [CONFIRM: at most 1,000 edits a location] */
+/** At most this many revisions a location; past it an edit answers 409 `too_many_edits`. */
 export const MAX_LOCATION_REVISIONS = 1_000;
 
 /**

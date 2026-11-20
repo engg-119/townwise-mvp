@@ -128,8 +128,7 @@ describe('route table', () => {
       { id: 'org.research.run', method: 'POST', path: '/org/locations/:locationId/research/run', policy: 'org_admin', bodyLimit: '1kb', limiter: 'research', openAsAdmin: undefined },
       { id: 'org.research.switch', method: 'PATCH', path: '/org/research', policy: 'org_admin', bodyLimit: '2kb', limiter: undefined, openAsAdmin: true },
     ]);
-    // [CONFIRM: Research now for org admins, the location's threads only, 3 a day per person, not within 6 hours of the last run];
-    // every press spends money and sends to Anthropic, so a store outage denies.
+    // Research now: every press spends money and sends to Anthropic, so a store outage denies.
     expect(ROUTE_LIMITS.research).toEqual({ name: 'townwise:research', limit: 3, windowSeconds: 86400, whenStoreDown: 'deny' });
     expect(TOWNWISE_ROUTES.filter((r) => r.limiter === 'research').map((r) => r.id)).toEqual(['org.research.run']);
   });

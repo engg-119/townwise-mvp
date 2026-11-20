@@ -240,9 +240,6 @@ export function grounded(event: { dateQuote: string; startDate: string; weekdays
 
 const RANK: Readonly<Record<Confidence, number>> = { low: 0, medium: 1, high: 2 };
 
-/**
- * [CONFIRM: confidence high when a cited quote states the date and 2 sites agree, medium for 1 site, low otherwise]
- */
 export function codeConfidence(isGrounded: boolean, sources: readonly LedgerSource[]): Confidence {
   if (!isGrounded) return 'low';
   return new Set(sources.map((source) => source.host)).size >= 2 ? 'high' : 'medium';

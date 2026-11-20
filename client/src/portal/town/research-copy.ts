@@ -8,7 +8,6 @@ import { LIVE_RUN_STATUSES, type ResearchGap, type TownRun } from '../research/a
 // who and where, hidden by your team) and the Competition card. Pure functions beside the components that print them
 // (ResearchSection.tsx, CompetitionCard.tsx), each pinned by test/portal/town/research-copy.test.ts. Research works in
 // "topics", never "threads"; plain words (15.6); no em dash. The Calendar's research words are research/copy.ts.
-// [CONFIRM: the Town tab's, Calendar's, banner's, switch's, activity's and dashboard's words for research]
 
 export const RESEARCH_HEADING = 'Town research';
 export const RESEARCH_KICKER = 'Research';

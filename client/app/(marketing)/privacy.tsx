@@ -10,25 +10,23 @@ const Mail = (): React.JSX.Element => <A href={CONTACT_HREF}>{CONTACT_EMAIL}</A>
 // organization, D42), the 180 days of sign-in dates (staff-overview), the attached files and chat ordering setup wording
 // (D36, D56, propose-order-setup-in-chat 7.5), and every slice of TownwiseAI working on its own (D59,
 // auto-apply-agent-reads 7.1, 9.1, 10.1 and 11.1).
-// [CONFIRM: privacy wording for the first-forecast email, awaiting the owner] The short version's email line, the Email
-// section's first two paragraphs, the Microsoft Azure item's "three emails" and the "three emails Microsoft delivers"
-// sentence (spec D65 and D14, OpenSpec change forecast-training-status, design decision 9, task 8.3): a third email to
-// every org admin of an organization, once per location, when that location's first forecast is published, and the date
-// it was sent kept on the location (tw_locations.firstForecastMailedAt). Built on the owner's request of 2026-11-19; the
-// page's date (November 19, 2026) covers it.
-// [CONFIRM: the privacy page's words for research, awaiting the owner; research is on in production] The
-// “Town research” item, the Changes TownwiseAI makes item's sentences on correcting a researched event, the TownwiseAI
-// conversations item's sentence on events research found, the Google item's sentences on the Competition card, and the
-// Anthropic item's exception for town research, its sentence on research's searches and pages, and the weekly reading's
-// researched events and location name (spec D66 and Section 17, OpenSpec change town-research-agent, design decision 16,
-// task 8.1), drafted for the owner's approval. They describe the shipped config, api/production.env's
-// TOWNWISE_RESEARCH_PLACES_TO_AI=true: design decision 10's question (whether Google Maps Platform's terms allow sending
-// Places names, types and websites to Anthropic) was decided 2026-11-19 by the owner: allowed ("yes that is allowed").
-// So the Town research item and the Anthropic item say that the restaurant's Google name and address and up to 8
-// competitors' Google names, types and websites go to Anthropic (and the location's own name no longer does), and the
-// Google item that the server asks Google for them each time a location is researched and keeps Google's ids for the
-// competitors' places. [CONFIRM: the restaurant's Google name and address, and its competitors' Google names, types and
-// websites, sent to Anthropic for research]
+// The short version's email line, the Email section's first two paragraphs, the Microsoft Azure item's "three emails"
+// and the "three emails Microsoft delivers" sentence (spec D65 and D14, OpenSpec change forecast-training-status,
+// design decision 9, task 8.3): a third email to every org admin of an organization, once per location, when that
+// location's first forecast is published, and the date it was sent kept on the location
+// (tw_locations.firstForecastMailedAt). Built on the owner's request of 2026-11-19; the page's date (November 19, 2026)
+// covers it. Approved by the owner on 2026-11-20.
+// The “Town research” item, the Changes TownwiseAI makes item's sentences on correcting a researched event, the
+// TownwiseAI conversations item's sentence on events research found, the Google item's sentences on the Competition
+// card, and the Anthropic item's exception for town research, its sentence on research's searches and pages, and the
+// weekly reading's researched events and location name (spec D66 and Section 17, OpenSpec change town-research-agent,
+// design decision 16, task 8.1), approved by the owner on 2026-11-20. They describe the shipped config,
+// api/production.env's TOWNWISE_RESEARCH_PLACES_TO_AI=true: design decision 10's question (whether Google Maps
+// Platform's terms allow sending Places names, types and websites to Anthropic) was decided 2026-11-19 by the owner:
+// allowed ("yes that is allowed"). So the Town research item and the Anthropic item say that the restaurant's Google
+// name and address and up to 8 competitors' Google names, types and websites go to Anthropic (and the location's own
+// name no longer does), and the Google item that the server asks Google for them each time a location is researched and
+// keeps Google's ids for the competitors' places.
 
 // Anthropic's own terms for API data (checked 2026-11-05: “Anthropic may not train models on Customer Content
 // from Services”, where Customer Content is the inputs and outputs).
