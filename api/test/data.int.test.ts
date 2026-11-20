@@ -1044,6 +1044,27 @@ describe('an item’s edit fields', () => {
     });
   });
 
+  it('canEdit is false for a calendar file whose import found a calendar, and saving an edit of one is 400 (item 144)', async () => {
+    const l1 = await newLocation();
+    const at = server.clock.now();
+    const added = await seedFile(l1, { name: 'events.csv', calendarImport: { state: 'added', at } });
+    const full = await seedFile(l1, { name: 'more.csv', calendarImport: { state: 'refused', code: 'calendar_limit', at } });
+    const notCalendar = await seedFile(l1, { name: 'list.csv', calendarImport: { state: 'refused', code: 'not_calendar', at } });
+    const plain = await seedFile(l1);
+    for (const session of [team.member, team.admin]) {
+      expect(Object.fromEntries((await list(session, `?locationId=${l1}`)).items.map((each) => [each.ref, each.canEdit]))).toEqual({
+        [`f_${added}`]: false, [`f_${full}`]: false, [`f_${notCalendar}`]: true, [`f_${plain}`]: true,
+      });
+    }
+    // Renaming it stays open; saving an edit in its place does not, so no second calendar comes of it.
+    expect(await renamed(team.member, l1, `f_${added}`, 'Bookings')).toMatchObject({ name: 'Bookings.csv', canEdit: false });
+    const b = await seedFile(l1, { name: 'events.csv' });
+    expect((await replace(team.member, l1, `f_${added}`, b)).status).toBe(400);
+    expect(await listed(team.member, l1, `f_${added}`)).toMatchObject({ name: 'Bookings.csv' });
+    // The same edit of a file that is not a calendar is saved.
+    expect(await replaced(team.member, l1, `f_${notCalendar}`, b)).toMatchObject({ ref: `f_${b}` });
+  });
+
   it('editedAt and editedByEmail: null if never edited, else when and who, as Townwise staff for staff and Deleted person once gone', async () => {
     const l1 = await newLocation();
     const at = new Date(server.clock.now().getTime() - 1000);

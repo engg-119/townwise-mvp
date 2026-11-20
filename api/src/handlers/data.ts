@@ -212,11 +212,23 @@ function turnable(item: DataItemRecord): boolean {
   return item.ref.type === 'upload' || item.file?.purpose === 'reference';
 }
 
-/** A reference item kept with its original stored, with no edit being saved at `now`, while stored files are on. */
+/**
+ * Whether the file's calendar import found a calendar: added, or refused for any reason but not_calendar. Such a file
+ * has no Edit (item 144): a saved edit is a new stored file, which imports as a second calendar while the first stays.
+ */
+function foundCalendar(file: FileRecord): boolean {
+  const record = file.calendarImport;
+  return record !== null && !(record.state === 'refused' && record.code === 'not_calendar');
+}
+
+/**
+ * A reference item kept with its original stored, with no edit being saved at `now`, while stored files are on, and
+ * not a file whose import found a calendar.
+ */
 function editable(item: DataItemRecord, filesOn: boolean, now: Date): boolean {
   const file = item.file;
   return filesOn && item.ref.type === 'file' && file !== null && file.purpose === 'reference' && item.state === 'kept'
-    && file.rawDeletedAt === null && !replaceClaimLive(file, now);
+    && file.rawDeletedAt === null && !replaceClaimLive(file, now) && !foundCalendar(file);
 }
 
 /**
@@ -658,6 +670,7 @@ export async function replaceDataItem(ctx: TownwiseContext, req: Request, res: R
     return;
   }
   const a = editableFile(member, item);
+  if (foundCalendar(a)) throw new AppError(400, 'invalid_request', 'A calendar file can’t be edited here');
   const b = await ctx.stores.files.get(scope, location.id, fileId);
   if (b === null || b.status === 'deleting') throw notFound();
   // A retry after step 2: B already carries A's place, and with it A's uploader and time.

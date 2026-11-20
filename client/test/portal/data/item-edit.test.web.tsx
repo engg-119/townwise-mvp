@@ -430,6 +430,31 @@ describe('what can’t be edited', () => {
     expect(screen.queryByText(/to edit here/)).toBeNull();
   });
 
+  test('a calendar file whose import found a calendar has no Edit and says how to change it; one that is no calendar keeps Edit (item 144)', async () => {
+    const line = 'To change this calendar, edit the file on your computer, remove the calendar on the Calendar, then add the file again.';
+    const csv = 'event_id,title,start_at,end_at\n1,Party,2026-11-21T18:00,2026-11-21T22:00\n';
+    // As the API answers it: canEdit false.
+    setup(editable(refOf(45), {
+      name: 'events.csv', sizeBytes: csv.length, canEdit: false, calendar: { status: 'added', calendarId: 'c1', label: 'events', eventCount: 1 },
+    }), csv);
+    expect(await screen.findByText(line, {}, SLOW)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Edit/ })).toBeNull();
+    cleanup();
+
+    // Refused for the limit, and removed since: still a calendar file.
+    for (const calendar of [{ status: 'refused', reason: 'calendar_limit', retry: true }, { status: 'removed' }] as const) {
+      setup(editable(refOf(46), { name: 'events.csv', sizeBytes: csv.length, canEdit: false, calendar }), csv);
+      expect(await screen.findByText(line, {}, SLOW)).toBeTruthy();
+      cleanup();
+    }
+
+    setup(editable(refOf(47), {
+      name: 'list.csv', sizeBytes: 9, calendar: { status: 'refused', reason: 'not_calendar', retry: false },
+    }), 'a,b\n1,2\n');
+    expect(await screen.findByRole('button', { name: 'Edit: list.csv' }, SLOW)).toBeTruthy();
+    expect(screen.queryByText(line)).toBeNull();
+  });
+
   test('an item the person can’t edit has neither Rename nor Edit', async () => {
     setup(editable(refOf(44), { name: 'notes.txt', sizeBytes: 5, canEdit: false }), 'hello');
     expect(await screen.findByRole('region', { name: 'Text of notes.txt' }, SLOW)).toBeTruthy();

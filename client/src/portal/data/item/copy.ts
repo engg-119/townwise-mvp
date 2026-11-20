@@ -165,6 +165,8 @@ export const EDIT = {
   keptAsNew: 'Your edit is kept on Your data as a new item.',
   itemBusy: 'This item is changing right now, maybe because someone is saving an edit of it. Try again in a moment.',
   renameRefused: 'Townwise couldn’t rename this item. Try another name, or go back to Your data in case its file was deleted.',
+  /** Item 144: in place of Edit on a calendar file whose import found a calendar, whose edit would import a second one. */
+  calendarFile: 'To change this calendar, edit the file on your computer, remove the calendar on the Calendar, then add the file again.',
 } as const;
 
 /** A name as its part before the last dot and the rest (“.txt”), as the API keeps the extension on a rename. */
