@@ -91,7 +91,7 @@ def slug(text: str) -> str:
 def event_id(event: Event) -> str:
     """Stable across runs for the same event, so a re-run updates the index document instead of adding a copy."""
     raw = f"{slug(event.town)}|{event.start_date.isoformat()}|{slug(event.title)}"
-    return hashlib.sha1(raw.encode()).hexdigest()
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
