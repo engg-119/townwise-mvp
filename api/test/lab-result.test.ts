@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { tierEnd } from '../src/forecasts/tiers.ts';
 import { labInputSchema } from '../src/lab/input.ts';
-import { checkLabResult, labResultSchema, type LabSuccess } from '../src/lab/result.ts';
+import { checkLabResult, labResultSchema, MAX_BACKTEST_DAYS, type LabSuccess } from '../src/lab/result.ts';
 import { labScorecardSchema, scorecardSchema } from '../src/lab/scorecard.ts';
 import { storedScorecard } from './helpers/lab-scorecard.ts';
 
@@ -191,5 +191,68 @@ describe('checkLabResult’s outlook sanity checks (D52)', () => {
     const many = [...tier, ...anchors(1.6, 2.2), { fromLead: 380, ratio: 2.3 }, { fromLead: 390, ratio: 2.4 }, { fromLead: 400, ratio: 3 }];
     expect(labResultSchema.safeParse(widened([...many, { fromLead: 401, ratio: 3 }])).success).toBe(true);
     expect(labResultSchema.safeParse(widened([...many, { fromLead: 401, ratio: 3 }, { fromLead: 402, ratio: 3 }])).success).toBe(false);
+  });
+});
+
+describe('backtestDays (D72)', () => {
+  /** The golden result as JSON with `backtestDays` replaced (or left out, with undefined). */
+  function withDays(days: unknown[] | undefined): Record<string, unknown> {
+    const raw = structuredClone(golden('result.json')) as Record<string, unknown>;
+    if (days === undefined) delete raw.backtestDays;
+    else raw.backtestDays = days;
+    return raw;
+  }
+  const day = (date: string, more: Record<string, unknown> = {}) => ({
+    date, engine: 'baseline', dataThrough: '2025-08-31', low: 40, mid: 50, high: 62, ...more,
+  });
+
+  it('the golden result carries them, ascending and each before the run’s last day of data, and passes', () => {
+    const result = goldenResult();
+    expect(result.backtestDays.length).toBeGreaterThan(300);
+    const dates = result.backtestDays.map((each) => each.date);
+    expect(dates).toEqual([...dates].sort());
+    expect(new Set(dates).size).toBe(dates.length);
+    expect(result.backtestDays.every((each) => each.dataThrough < each.date && each.date <= result.run.dataThrough)).toBe(true);
+    expect(issuesOf(golden('result.json'))).toEqual([]);
+  });
+
+  it('a result from a lab before v14, without the field, still parses and passes, with none', () => {
+    const parsed = labResultSchema.parse(withDays(undefined));
+    if (!parsed.ok) return expect.unreachable('a success');
+    expect(parsed.backtestDays).toEqual([]);
+    expect(issuesOf(withDays(undefined))).toEqual([]);
+    expect(issuesOf(withDays([]))).toEqual([]);
+  });
+
+  it('refuses dates out of order or repeated, a day forecast from data that reached it, and a day after the run’s data', () => {
+    const { run } = goldenResult();
+    expect(run.dataThrough).toBe('2025-10-21');
+    expect(issuesOf(withDays([day('2025-09-02'), day('2025-09-01')]))).toEqual([{ path: 'backtestDays[1].date', code: 'dates_out_of_order' }]);
+    expect(issuesOf(withDays([day('2025-09-02'), day('2025-09-02')]))).toEqual([{ path: 'backtestDays[1].date', code: 'dates_out_of_order' }]);
+    expect(issuesOf(withDays([day('2025-08-31')]))).toEqual([{ path: 'backtestDays[0].date', code: 'not_after_data' }]);
+    expect(issuesOf(withDays([day('2025-09-01', { dataThrough: '2025-09-02' })]))).toEqual([{ path: 'backtestDays[0].date', code: 'not_after_data' }]);
+    expect(issuesOf(withDays([day('2025-10-21', { dataThrough: '2025-10-01' })]))).toEqual([]);
+    expect(issuesOf(withDays([day('2025-10-22', { dataThrough: '2025-10-01' })]))).toEqual([{ path: 'backtestDays[0].date', code: 'after_data_through' }]);
+  });
+
+  it('refuses a range out of order', () => {
+    expect(issuesOf(withDays([day('2025-09-01', { low: 51 })]))).toEqual([{ path: 'backtestDays[0].mid', code: 'below_low' }]);
+    expect(issuesOf(withDays([day('2025-09-01', { high: 49 })]))).toEqual([{ path: 'backtestDays[0].high', code: 'below_mid' }]);
+    expect(issuesOf(withDays([day('2025-09-01', { low: 50, mid: 50, high: 50 })]))).toEqual([]);
+  });
+
+  it('refuses a fraction, a negative, another engine, a bad date, an extra key and more than 450 days, by the schema', () => {
+    for (const bad of [
+      day('2025-09-01', { mid: 50.5 }), day('2025-09-01', { low: -1 }), day('2025-09-01', { engine: 'hybrid' }), day('2025-02-30'),
+      day('2025-09-01', { dataThrough: '2025-8-31' }), day('2025-09-01', { label: 'x' }), { ...day('2025-09-01'), high: undefined },
+    ]) {
+      expect(labResultSchema.safeParse(withDays([bad])).success).toBe(false);
+      expect(issuesOf(withDays([bad])).length).toBeGreaterThan(0);
+    }
+    const plus = (from: string, days: number) => new Date(Date.parse(`${from}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+    const many = (n: number) => Array.from({ length: n }, (_, i) => day(plus('2024-07-01', i), { dataThrough: '2024-06-30' }));
+    expect(MAX_BACKTEST_DAYS).toBe(450);
+    expect(issuesOf(withDays(many(450)))).toEqual([]);
+    expect(labResultSchema.safeParse(withDays(many(451))).success).toBe(false);
   });
 });

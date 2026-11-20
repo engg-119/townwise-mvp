@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import mongoose, { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { scopeForNewOrg } from '../src/access/policy.ts';
+import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
 import type { StaffActivityView } from '../src/audit.ts';
 import type { StaffForecastRunView } from '../src/handlers/forecast-runs.ts';
 import type { RunTrainingView } from '../src/lab/training.ts';
@@ -66,6 +66,13 @@ function change(t: Pick<Team, 'orgId'>, runId: string, verb: 'publish' | 'withdr
 
 function count(collection: string, filter: Record<string, unknown>): Promise<number> {
   return server.connection.collection(collection).countDocuments(filter);
+}
+
+/** D72: two backtest days on the run, as a lab result's, written twice (a retry) to show the write is idempotent. */
+async function withBacktestDays(t: Pick<Team, 'orgId' | 'locationId'>, runId: string): Promise<void> {
+  const days = ['2026-04-01', '2026-04-02'].map((date) => ({ date, engine: 'model' as const, dataThrough: '2026-03-01', low: 40, mid: 50, high: 60 }));
+  for (let i = 0; i < 2; i += 1) await server.ctx.stores.forecasts.writeBacktestDays({ orgId: t.orgId } as OrgScope, t.locationId, runId, days);
+  expect(await count('tw_forecast_backtest_days', { runId: new Types.ObjectId(runId) })).toBe(2);
 }
 
 describe('import', () => {
@@ -226,12 +233,14 @@ describe('publish, withdraw and delete', () => {
     expect((await (await change(t, draft.id, 'withdraw')).json() as { run: StaffForecastRunView }).run.status).toBe('withdrawn');
   });
 
-  it('deletes the rows, then the run, and answers 404 after', async () => {
+  it('deletes the rows and (D72) backtest days, then the run, and answers 404 after', async () => {
     const t = await team();
     const run = await imported(t);
+    await withBacktestDays(t, run.id);
     const path = `/api/admin/orgs/${t.orgId}/forecast-runs/${run.id}`;
     expect((await call(server, path, { method: 'DELETE', session: staff })).status).toBe(204);
     expect(await count('tw_forecasts', { runId: new Types.ObjectId(run.id) })).toBe(0);
+    expect(await count('tw_forecast_backtest_days', { runId: new Types.ObjectId(run.id) })).toBe(0);
     expect(await count('tw_forecast_runs', { _id: new Types.ObjectId(run.id) })).toBe(0);
     expect((await call(server, path, { method: 'DELETE', session: staff })).status).toBe(404);
     expect((await change(t, run.id, 'publish')).status).toBe(404);
@@ -429,31 +438,38 @@ describe('deletion', () => {
   it('deleting the location’s sales data deletes its forecasts', async () => {
     const t = await team();
     const run = await imported(t);
+    await withBacktestDays(t, run.id);
     await addSalesDay(server, { orgId: t.orgId, locationId: t.locationId, date: '2026-05-01', guests: 90, netSalesCents: 100_000 });
     const res = await call(server, `/api/org/locations/${t.locationId}/sales`, { method: 'DELETE', session: t.admin });
     expect(res.status).toBe(200);
     expect(await count('tw_forecast_runs', { _id: new Types.ObjectId(run.id) })).toBe(0);
     expect(await count('tw_forecasts', { runId: new Types.ObjectId(run.id) })).toBe(0);
+    expect(await count('tw_forecast_backtest_days', { runId: new Types.ObjectId(run.id) })).toBe(0);
   });
 
   it('deleting a location with no sales data deletes the forecasts imported for it', async () => {
     const t = await team();
     const run = await imported(t);
+    await withBacktestDays(t, run.id);
     expect((await call(server, `/api/org/locations/${t.locationId}`, { method: 'DELETE', session: t.admin })).status).toBe(204);
     expect(await count('tw_forecast_runs', { _id: new Types.ObjectId(run.id) })).toBe(0);
     expect(await count('tw_forecasts', { runId: new Types.ObjectId(run.id) })).toBe(0);
+    expect(await count('tw_forecast_backtest_days', { runId: new Types.ObjectId(run.id) })).toBe(0);
   });
 
   it('deleting the organization deletes its runs and rows, and leaves another organization’s', async () => {
     const t = await team();
     const kept = await team();
-    await imported(t);
+    await withBacktestDays(t, (await imported(t)).id);
     const keptRun = await imported(kept);
+    await withBacktestDays(kept, keptRun.id);
     expect((await call(server, `/api/admin/orgs/${t.orgId}`, { method: 'PATCH', session: staff, json: { status: 'suspended' } })).status).toBe(200);
     expect((await call(server, `/api/admin/orgs/${t.orgId}`, { method: 'DELETE', session: staff })).status).toBe(200);
     expect(await count('tw_forecast_runs', { orgId: new Types.ObjectId(t.orgId) })).toBe(0);
     expect(await count('tw_forecasts', { orgId: new Types.ObjectId(t.orgId) })).toBe(0);
+    expect(await count('tw_forecast_backtest_days', { orgId: new Types.ObjectId(t.orgId) })).toBe(0);
     expect(await count('tw_forecasts', { runId: new Types.ObjectId(keptRun.id) })).toBe(ROWS);
+    expect(await count('tw_forecast_backtest_days', { runId: new Types.ObjectId(keptRun.id) })).toBe(2);
   });
 
   it('deleting a person clears their staff id from the runs they imported or published', async () => {

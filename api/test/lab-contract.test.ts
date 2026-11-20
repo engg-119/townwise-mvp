@@ -45,9 +45,10 @@ describe('lab contract', () => {
       id: input.calibrationId, dataThrough: input.dataThrough, championRunId: input.champion?.runId ?? null, termsThrough: input.termsThrough,
     };
     expect(checkLabResult(golden('result.json'), calibration, input.today)).toMatchObject({ ok: true });
-    // Small enough for the callback's body limit with room to spare: a year-long run (D52) stays under the 192 KB that
-    // would raise LAB_RESULT_LIMIT (design decision 13).
-    expect(JSON.stringify(result).length).toBeLessThan(128 * 1024);
+    // Small enough for the callback's body limit with room to spare: a year-long run (D52) with its backtest days (D72,
+    // at most about 401, about 40 KB) stays under the 192 KB that would raise LAB_RESULT_LIMIT (design decision 13).
+    expect(result.backtestDays.length).toBeGreaterThan(0);
+    expect(JSON.stringify(result).length).toBeLessThan(192 * 1024);
   });
 
   it('the golden result names its engine (D42): the baseline, more than 0.5 points better than the model on the same weeks', () => {

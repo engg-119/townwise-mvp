@@ -46,8 +46,8 @@ const TENANT_COLLECTIONS = [
   'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
   // D59: TownwiseAI's changes.
   'tw_agent_changes',
-  // U13B.
-  'tw_forecast_runs', 'tw_forecasts',
+  // U13B, and (D72) a lab run's backtest days.
+  'tw_forecast_runs', 'tw_forecasts', 'tw_forecast_backtest_days',
   // The forecast lab, and (D42) the weekly refresh's week rows.
   'tw_calibrations', 'tw_forecast_weeks',
   // Business rules (spec 6.24).
@@ -203,6 +203,11 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
     targetUpdatedAt: server.clock.now(), startDate: '2026-07-04', endDate: '2026-07-04', appliedAt: server.clock.now(), statusAt: server.clock.now(),
     statusBy: 'townwise_ai',
   });
+  // D72: a backtest day of a lab run.
+  await server.connection.collection('tw_forecast_backtest_days').insertOne({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), runId: new Types.ObjectId(), date: '2026-04-01',
+    engine: 'model', dataThrough: '2026-03-01', low: 40, mid: 50, high: 60,
+  });
   // D42: a week row of the weekly refresh.
   await server.connection.collection('tw_forecast_weeks').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), week: '2026-06-01', status: 'unchanged',
@@ -270,13 +275,14 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     // records, chat usage and (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
     // Stored files (none here) are swept again after the row too: imports first. Then (staff-overview) active days, (D42)
-    // week rows, the weekly suggestions' pass rows and suggestions, (D59) TownwiseAI's changes, (U13B) forecast rows,
-    // then runs, and (D66) research's runs and threads, then its events, entities and edits.
-    expect(writes.slice(-23)).toEqual([
+    // week rows, the weekly suggestions' pass rows and suggestions, (D59) TownwiseAI's changes, (U13B) forecast rows and
+    // (D72) backtest days, then runs, and (D66) research's runs and threads, then its events, entities and edits.
+    expect(writes.slice(-24)).toEqual([
       'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_item_sales', 'delete tw_order_counts',
       'delete tw_order_setups', 'delete tw_order_decisions', 'delete tw_order_rules', 'delete tw_order_cards',
       'delete tw_chat_usage', 'delete tw_activity_days', 'delete tw_calibrations', 'delete tw_forecast_weeks', 'delete tw_suggestion_passes',
-      'delete tw_agent_suggestions', 'delete tw_agent_changes', 'delete tw_forecasts', 'delete tw_forecast_runs',
+      'delete tw_agent_suggestions', 'delete tw_agent_changes', 'delete tw_forecasts', 'delete tw_forecast_backtest_days',
+      'delete tw_forecast_runs',
       'delete tw_location_research_runs', 'delete tw_location_research_threads', 'delete tw_location_events', 'delete tw_location_entities',
       'delete tw_research_revisions',
     ]);

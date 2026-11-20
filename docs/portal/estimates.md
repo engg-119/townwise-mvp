@@ -35,7 +35,7 @@ Modules:
 - `api/src/people-in-town/term.ts` (term state), `estimate.ts` (the window, headcount rules, caveats), `history.ts` (day classes and your history), `sources.ts` (researched inputs, empty), `reader.ts` (the `PeopleInTownReader` port).
 - `api/src/estimates/about.ts`: `MODEL_CARD`, `MODEL_CARD_VERSION`, `estimatesAbout(location, data, now)`.
 - `api/src/app.ts`: `TownwiseContext.ports.peopleInTown`, built from `TownwiseDeps.peopleData` (tests) or the committed sources, and (U13B) `ports.forecasts`, the published-runs reader.
-- U13B: `api/src/forecasts/file.ts` (the run file schema, its rules, issues and canonical hash), `reasons.ts` (labels from code and the calendar), `score.ts` (live accuracy), `reader.ts` (the `ForecastReader` port: `window`, `latest`); `api/src/stores/forecasts.ts` (`tw_forecast_runs`, `tw_forecasts`); `api/src/handlers/forecast-runs.ts` (staff routes); `api/src/handlers/estimates.ts` `getForecast`.
+- U13B: `api/src/forecasts/file.ts` (the run file schema, its rules, issues and canonical hash), `reasons.ts` (labels from code and the calendar), `score.ts` (live accuracy), `reader.ts` (the `ForecastReader` port: `window`, `latest`); `api/src/stores/forecasts.ts` (`tw_forecast_runs`, `tw_forecasts` and, D72, `tw_forecast_backtest_days`); `api/src/handlers/forecast-runs.ts` (staff routes); `api/src/handlers/estimates.ts` `getForecast`.
 
 ## 3. TownwiseAI
 

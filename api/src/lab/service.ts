@@ -383,7 +383,7 @@ async function gateDraft(
 
 /**
  * The draft run of a checked result, in retry-safe order: the run upserted on its file's hash (the lab never changes a
- * run that already exists), its rows, draft, then the result on the calibration, its gate (and the publish the gate
+ * run that already exists), its rows and (D72) its backtest days, draft, then the result on the calibration, its gate (and the publish the gate
  * decides) and its finish, each by compare-and-set. A calibration deleted meanwhile (its sales data, its location or its
  * organization) takes the run this calibration made with it, and answers 404.
  */
@@ -404,6 +404,8 @@ async function storeDraft(
   });
   if (run.status === 'importing') {
     await forecasts.writeRows(scope, location.id, run.id, rowsOf(file, location.town.townId));
+    // D72: the backtest's day-by-day predictions, before draft, so a retry of an unfinished import writes the rest.
+    await forecasts.writeBacktestDays(scope, location.id, run.id, result.backtestDays);
     if (await forecasts.countRows(scope, run.id) !== run.dayCount + run.weekCount) throw new Error('forecast rows incomplete');
     await forecasts.setStatus(scope, run.id, { from: ['importing'], to: 'draft', at: now, by: null });
   }

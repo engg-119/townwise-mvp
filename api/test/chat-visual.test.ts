@@ -244,7 +244,7 @@ describe('show_visual’s run', () => {
   const runOf = (label: string, dataThrough: string, madeAt: string) => ({
     id: `run-${label}`, model: { family: 'f', version: label, label: `Townwise demand model ${label}` }, dataThrough, madeAt,
   }) as unknown as ForecastWindowRun;
-  const EMPTY: ForecastWindow = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: [] };
+  const EMPTY: ForecastWindow = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: [], backtest: [] };
 
   function context(
     days: SalesDay[], windowOf: (range: { from: string; to: string }) => ForecastWindow = () => EMPTY,

@@ -114,6 +114,11 @@ function count(collection: string, filter: Record<string, unknown>): Promise<num
   return server.connection.collection(collection).countDocuments(filter);
 }
 
+/** D72: three backtest days before the inputs' last day of data (2026-05-31), each forecast from data a month earlier. */
+const BACKTEST_DAYS = ['2026-05-01', '2026-05-02', '2026-05-03'].map((date, i) => ({
+  date, engine: 'baseline' as const, dataThrough: '2026-04-02', low: 40 + i, mid: 50 + i, high: 62 + i,
+}));
+
 async function eventsFor(calibrationId: string): Promise<Record<string, unknown>[]> {
   return (await auditEvents(server)).filter((event) => (event.target as { id?: string } | undefined)?.id === calibrationId
     || (event.details as { calibrationId?: string } | undefined)?.calibrationId === calibrationId);
@@ -336,7 +341,7 @@ describe('the job’s callback', () => {
       dayCount: 608, dataFrom: '2024-10-01', newDays: 31,
     });
 
-    const result = labResultFor(input);
+    const result = labResultFor(input, { backtestDays: BACKTEST_DAYS });
     const res = await jobCall(server, job, 'result', result);
     expect(await res.json()).toEqual({ status: 'succeeded' });
     expect(res.status).toBe(200);
@@ -356,6 +361,12 @@ describe('the job’s callback', () => {
     });
     expect(JSON.parse(String((run?.lab as { paramsJson?: string } | undefined)?.paramsJson))).toEqual(result.params);
     expect(await count('tw_forecasts', { runId: new Types.ObjectId(view.runId ?? '') })).toBe(result.run.days.length + result.run.weeks.length);
+    // D72: the backtest days, one a date, with the run's organization and location and nothing else.
+    const backtest = await server.connection.collection('tw_forecast_backtest_days').find({ runId: new Types.ObjectId(view.runId ?? '') })
+      .sort({ date: 1 }).project({ _id: 0 }).toArray();
+    expect(backtest).toEqual(BACKTEST_DAYS.map((day) => ({
+      orgId: new Types.ObjectId(t.orgId), locationId: new Types.ObjectId(t.locationId), runId: new Types.ObjectId(view.runId ?? ''), ...day,
+    })));
     const doc = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
     expect(doc).toMatchObject({ codeVersion: CODE_VERSION, scorecardJson: JSON.stringify(result.scorecard) });
     expect(doc?.tokenSha256).toBeUndefined();
@@ -629,7 +640,7 @@ describe('the job’s callback', () => {
   it('a duplicated result post answers 200 and leaves one run and one finished event', async () => {
     const t = await team();
     const { calibration, job } = await started(t);
-    const result = labResultFor(await inputFor(job));
+    const result = labResultFor(await inputFor(job), { backtestDays: BACKTEST_DAYS });
     // The first post waits while writing its rows; the second runs to the end meanwhile.
     const rows = holdCalls(server, 'bulkWrite', 'TwForecast');
     try {
@@ -650,6 +661,8 @@ describe('the job’s callback', () => {
     const view = await viewOf(t, calibration.id);
     expect(view.status).toBe('succeeded');
     expect(await count('tw_forecasts', { runId: new Types.ObjectId(view.runId ?? '') })).toBe(result.run.days.length + result.run.weeks.length);
+    // D72: both posts upserted the same backtest days; each is there once.
+    expect(await count('tw_forecast_backtest_days', { runId: new Types.ObjectId(view.runId ?? '') })).toBe(BACKTEST_DAYS.length);
     expect((await eventsFor(calibration.id)).filter((event) => event.action === 'calibration.finished')).toHaveLength(1);
   });
 
@@ -668,7 +681,7 @@ describe('the job’s callback', () => {
     // Deleted while the post writes its run: the run it wrote after the deletion goes too.
     const during = await team();
     const late = await started(during);
-    const lateResult = labResultFor(await inputFor(late.job));
+    const lateResult = labResultFor(await inputFor(late.job), { backtestDays: BACKTEST_DAYS });
     const rows = holdCalls(server, 'bulkWrite', 'TwForecast');
     try {
       const post = jobCall(server, late.job, 'result', lateResult);
@@ -684,6 +697,7 @@ describe('the job’s callback', () => {
       const location = new Types.ObjectId(t.locationId);
       expect(await count('tw_forecast_runs', { locationId: location })).toBe(0);
       expect(await count('tw_forecasts', { locationId: location })).toBe(0);
+      expect(await count('tw_forecast_backtest_days', { locationId: location })).toBe(0);
       expect(await count('tw_calibrations', { locationId: location })).toBe(0);
     }
   });

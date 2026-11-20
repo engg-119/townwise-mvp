@@ -23,13 +23,16 @@
 // chosen from run metadata when the run has no gap in its days (every lab run) and from rows for a run with gaps (an
 // imported file may skip days), so rows are read only for the runs chosen (D52 decision 11, about 52 year-long weekly
 // runs a year): over the read's days and a week either side, and each run the read's days use over its own past days,
-// for its live accuracy; the model card's, the newest run's over its days. It logs nothing and stores nothing.
+// for its live accuracy; the model card's, the newest run's over its days. A read that asks for them (the forecast
+// route only, D72) also gets the lab's backtest days for the past dates no run covers, from the newest published run
+// that has any, with their actuals; they are never chosen, scored or counted anywhere. It logs nothing and stores
+// nothing.
 import type { OrgScope } from '../access/policy.ts';
 import { noteCovers } from '../agent/questions.ts';
 import { closureOf, trustedGuestDays, TYPICAL_LOOKBACK_DAYS, typicalByDate } from '../closed-days.ts';
 import { daysBetween, utcDay } from '../dates.ts';
 import type { BusinessRuleStore } from '../stores/business-rules.ts';
-import type { ForecastRow, ForecastRunRecord, ForecastStore } from '../stores/forecasts.ts';
+import type { BacktestDay, ForecastRow, ForecastRunRecord, ForecastStore } from '../stores/forecasts.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord, NoteStore } from '../stores/notes.ts';
 import type { SalesDayStore } from '../stores/sales-days.ts';
@@ -151,6 +154,29 @@ export interface ForecastWeekView {
   outlook: boolean;
 }
 
+/**
+ * D72: a past day no published run covers, as the lab's backtest forecast it out of sample: from a fit trained only on
+ * sales through `dataThrough`, before the day. Never scored and never in any accuracy.
+ */
+export interface BacktestDayView {
+  date: string;
+  weekday: Weekday;
+  /** The engine whose backtest forecast the day (the baseline fills days before the model's backtest). */
+  engine: ForecastEngine;
+  /** The last day of sales the fit that forecast the day was trained on. */
+  dataThrough: string;
+  /** Whole guests, low <= mid <= high (the 80% range). */
+  low: number;
+  mid: number;
+  high: number;
+  /** The published run whose lab result carried the day. */
+  runId: string;
+  /** The stored guests; null when none (or a note marks the count wrong, D67). */
+  actual: number | null;
+  /** The actual within [low, high]; null without an actual. */
+  inRange: boolean | null;
+}
+
 /** The earliest and the latest of some YYYY-MM-DD dates, missing ones skipped; undefined with none. */
 const firstOf = (dates: readonly (string | undefined)[]): string | undefined => dates.filter((date) => date !== undefined).sort()[0];
 const lastOf = (dates: readonly (string | undefined)[]): string | undefined => dates.filter((date) => date !== undefined).sort().at(-1);
@@ -166,11 +192,23 @@ export interface ForecastWindow {
   /** Live accuracy over the read's own days, each from the run chosen for it; null under 5 scored days. */
   accuracy: LiveAccuracy | null;
   notCovered: { from: string; to: string }[];
+  /**
+   * D72: with `backtest` asked for, each date of the range before today with no day in `days`, from the newest published
+   * run that has any backtest days (one run supplies them all); always empty otherwise.
+   */
+  backtest: BacktestDayView[];
+}
+
+export interface ForecastWindowOptions {
+  /** D72: add the lab's backtest days for the past dates no run covers (the forecast route only). */
+  backtest?: boolean;
 }
 
 export interface ForecastReader {
   /** `range`: inclusive YYYY-MM-DD days, at most 92 (callers check). `today`: the first day with no actual yet. */
-  window(scope: OrgScope, location: LocationRecord, range: { from: string; to: string }, today: string): Promise<ForecastWindow>;
+  window(
+    scope: OrgScope, location: LocationRecord, range: { from: string; to: string }, today: string, options?: ForecastWindowOptions,
+  ): Promise<ForecastWindow>;
   /** The newest published run (by dataThrough) and its own live accuracy, for the model card; null when none is published. */
   latest(scope: OrgScope, locationId: string, today: string): Promise<{ run: ForecastRunView; live: LiveAccuracy | null } | null>;
 }
@@ -286,13 +324,14 @@ export function createForecastReader(deps: {
    * days, closed and likely-closed days left out. The stored days are read once, from 8 weeks before the first chosen
    * day (its typical guests, D32), or from `reach.historyFrom` when that is earlier (the reason effects' history), to
    * yesterday; the notes once, over the stored days, the chosen days before today and `reach.notes`; the scheduled rules
-   * once. None are read when no run supplies a day. A stored day whose guest count a note marks wrong (D67) reads with
-   * no guest count.
+   * once. None are read when no run supplies a day, except that with any run published the stored days and notes reach
+   * back to `reach.actualsFrom` (D72: a backtest read's actuals). A stored day whose guest count a note marks wrong (D67)
+   * reads with no guest count.
    */
   async function load(
     scope: OrgScope, locationId: string, today: string,
     reach: {
-      historyFrom?: string; notes?: { from: string; to: string };
+      historyFrom?: string; notes?: { from: string; to: string }; actualsFrom?: string;
       /** The rows the answer needs and the day each date uses, from the published runs. */
       choose: (runs: readonly ForecastRunRecord[]) => Promise<Choice>;
     },
@@ -302,7 +341,8 @@ export function createForecastReader(deps: {
     const dates = [...chosen.keys()].sort();
     const [first] = dates;
     const yesterday = utcDay(new Date(`${today}T00:00:00.000Z`), -1);
-    const from = first === undefined ? undefined : firstOf([utcDay(new Date(`${first}T00:00:00.000Z`), -TYPICAL_LOOKBACK_DAYS), reach.historyFrom]);
+    const lookback = first === undefined ? undefined : firstOf([utcDay(new Date(`${first}T00:00:00.000Z`), -TYPICAL_LOOKBACK_DAYS), reach.historyFrom]);
+    const from = firstOf([lookback, runs.length > 0 ? reach.actualsFrom : undefined]);
     const readsDays = from !== undefined && from <= yesterday;
     // The notes the scored days need (the chosen days to yesterday), the caller's, and every stored day's (D67: a note
     // marking a guest count wrong anywhere in the stored range).
@@ -310,7 +350,7 @@ export function createForecastReader(deps: {
     const notesTo = lastOf([readsDays ? yesterday : undefined, dates.filter((date) => date <= yesterday).at(-1), reach.notes?.to]);
     const [storedRows, noted, scheduled] = await Promise.all([
       readsDays ? salesDays.days(scope, locationId, { from, to: yesterday }) : [],
-      first === undefined || notesFrom === undefined || notesTo === undefined ? [] : notes.overlapping(scope, locationId, { from: notesFrom, to: notesTo }),
+      (first === undefined && !readsDays) || notesFrom === undefined || notesTo === undefined ? [] : notes.overlapping(scope, locationId, { from: notesFrom, to: notesTo }),
       first === undefined ? [] : businessRules.scheduled(scope, locationId),
     ]);
     const rules = scheduledRules(scheduled);
@@ -414,19 +454,24 @@ export function createForecastReader(deps: {
   }
 
   return {
-    async window(scope, location, range, today) {
+    async window(scope, location, range, today, options) {
       // Effects are for days from today on, so a range wholly in the past reads no history for them.
       const history = range.to >= today ? effectHistory(today) : null;
+      // D72: backtest days are for past dates only, and need their actuals.
+      const backtestOn = options?.backtest === true && range.from < today;
       // One read of the notes, over the scored days, the range, a week reaching 6 days past either end and the effects' history.
       const at = (date: string, days: number): string => utcDay(new Date(`${date}T00:00:00.000Z`), days);
       const { runs, rows, chosen, actuals, scored, liveOf, stored, notesOn, rulesOn, laterNoteOn } = await load(scope, location.id, today, {
         ...(history === null ? {} : { historyFrom: history.readFrom }),
+        ...(backtestOn ? { actualsFrom: range.from } : {}),
         notes: { from: firstOf([at(range.from, -6), history?.from]) ?? range.from, to: at(range.to, 6) },
         choose: (published) => chooseWindow(scope, location.id, published, range, today),
       });
       const dates = eachDay(range.from, range.to);
       if (runs.length === 0) {
-        return { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: spans(dates) };
+        return {
+          available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: spans(dates), backtest: [],
+        };
       }
       const entries = townTermEntries(location.town.townId);
       const calendarOn = townCalendarOf(location.town.townId, entries);
@@ -489,6 +534,21 @@ export function createForecastReader(deps: {
         }];
       });
       const used = new Set(days.map((day) => day.runId));
+      // D72: one bounded read, only when some past date has no day.
+      const uncovered = backtestOn ? dates.filter((date) => date < today && !chosen.has(date)) : [];
+      const [uncoveredFrom] = uncovered;
+      const uncoveredTo = uncovered.at(-1);
+      const backtestRows: BacktestDay[] = uncoveredFrom === undefined || uncoveredTo === undefined ? [] : await forecasts.backtestDays(
+        scope, location.id, runs.map((run) => run.id), { from: uncoveredFrom, to: uncoveredTo },
+      );
+      const open = new Set(uncovered);
+      const backtest = backtestRows.filter((day) => open.has(day.date)).map((day): BacktestDayView => {
+        const actual = actuals.get(day.date) ?? null;
+        return {
+          date: day.date, weekday: weekdayOf(day.date), engine: day.engine, dataThrough: day.dataThrough, low: day.low, mid: day.mid,
+          high: day.high, runId: day.runId, actual, inRange: inRangeOf(actual, day.low, day.high),
+        };
+      });
       return {
         available: days.length > 0,
         reason: days.length > 0 ? null : 'not_covered',
@@ -497,6 +557,7 @@ export function createForecastReader(deps: {
         weeks,
         accuracy: liveAccuracy(scoredDays),
         notCovered: spans(dates.filter((date) => !chosen.has(date))),
+        backtest,
       };
     },
     async latest(scope, locationId, today) {

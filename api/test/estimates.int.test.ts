@@ -211,6 +211,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
   it('says no forecast while none is published, and a draft stays invisible', async () => {
     const none = {
       available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: [{ from: '2026-05-01', to: '2026-05-14' }],
+      backtest: [],
     };
     expect(await forecast()).toEqual(none);
     first = await staffImport(RUN);
@@ -732,6 +733,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
       await save(event({}), bare);
       expect(await read('?from=2026-06-01&to=2026-06-14', bare)).toEqual({
         available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: [{ from: '2026-06-01', to: '2026-06-14' }],
+        backtest: [],
       });
     });
   });
@@ -1039,6 +1041,111 @@ describe('the forecast reader with a year of weekly runs (D42)', () => {
     asked.length = 0;
     expect(await ranged.latest(scope, locationId, today)).toEqual(await unranged.latest(scope, locationId, today));
     expect(asked.every((bound) => bound !== undefined && daysBetween(bound.from, bound.to) <= 91)).toBe(true);
+  });
+});
+
+describe('backtest days on past days no run covers (D72)', () => {
+  const scope = (): OrgScope => ({ orgId } as OrgScope);
+  const plus = (date: string, days: number): string => utcDay(new Date(`${date}T00:00:00.000Z`), days);
+
+  /** A run of `length` days after `dataThrough`, in `status`, with these backtest days (dataThrough before each). */
+  async function runWith(
+    locationId: string, dataThrough: string, length: number, status: 'draft' | 'published',
+    backtest: { date: string; mid: number; engine?: 'model' | 'baseline' }[],
+  ): Promise<string> {
+    const { days, weeks } = runDays(dataThrough, length);
+    const file: ForecastRunFile = {
+      schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v9', notebookCommit: 'abcdef0' },
+      trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough, madeAt: plus(dataThrough, 1), frozen: null,
+      interval: { level: 0.8, widened: true }, backtest: null, days, weeks,
+    };
+    const stores = server.ctx.stores.forecasts;
+    const { run } = await stores.upsertRun(scope(), locationId, {
+      id: new Types.ObjectId().toHexString(), file, fileSha256: runFileSha256(file), importedBy: 'staff-0000', lab: null, now: server.clock.now(),
+    });
+    await stores.writeRows(scope(), locationId, run.id, rowsOf(file, 'hanover-nh'));
+    await stores.writeBacktestDays(scope(), locationId, run.id, backtest.map((day) => ({
+      date: day.date, engine: day.engine ?? 'model', dataThrough: plus(day.date, -29), low: day.mid - 10, mid: day.mid, high: day.mid + 10,
+    })));
+    await stores.setStatus(scope(), run.id, { from: ['importing'], to: status, at: server.clock.now(), by: 'staff-0000' });
+    return run.id;
+  }
+
+  async function read(locationId: string, from: string, to: string): Promise<ForecastWindow> {
+    const res = await call(server, `/api/org/locations/${locationId}/forecast?from=${from}&to=${to}`, { session: member });
+    expect(res.status).toBe(200);
+    return await res.json() as ForecastWindow;
+  }
+
+  const shown = (window: ForecastWindow) => window.backtest.map((day) => [day.date, day.mid, day.actual, day.inRange]);
+
+  it('fills past days no run covers from the newest published run that has any, with actuals; never a covered day, today or a draft’s', async () => {
+    const locationId = await addLocation(server, { orgId, name: `Backtest Room ${randomUUID().slice(0, 6)}` });
+    await addSalesDay(server, { orgId, locationId, date: '2025-12-01', guests: 70, netSalesCents: 70_000 });
+    await addSalesDay(server, { orgId, locationId, date: '2025-12-02', guests: 95, netSalesCents: 95_000 });
+    await addSalesDay(server, { orgId, locationId, date: '2025-12-10', guests: 50, netSalesCents: 50_000 });
+    // The older run: sales through Apr 30 2026, backtest days in December 2025 (none on Dec 7 to 9).
+    const december = ['2025-12-01', '2025-12-02', '2025-12-03', '2025-12-04', '2025-12-05', '2025-12-06', '2025-12-10', '2025-12-11'];
+    const older = await runWith(locationId, '2026-04-30', 14, 'published', december.map((date) => ({ date, mid: 70 })));
+    // A run that covers Dec 10 to 16 for real, with no backtest days of its own.
+    const real = await runWith(locationId, '2025-12-09', 7, 'published', []);
+
+    const body = await read(locationId, '2025-12-01', '2025-12-14');
+    expect(body.backtest[0]).toEqual({
+      date: '2025-12-01', weekday: 'Mon', engine: 'model', dataThrough: '2025-11-02', low: 60, mid: 70, high: 80, runId: older, actual: 70, inRange: true,
+    });
+    // Dec 2 missed the range, Dec 3 has no guests; Dec 10 and 11 are the real run's days, never a backtest's.
+    expect(shown(body)).toEqual([
+      ['2025-12-01', 70, 70, true], ['2025-12-02', 70, 95, false], ['2025-12-03', 70, null, null], ['2025-12-04', 70, null, null],
+      ['2025-12-05', 70, null, null], ['2025-12-06', 70, null, null],
+    ]);
+    expect(body.days.map((day) => day.date)).toEqual(eachDay('2025-12-10', '2025-12-14'));
+    expect(body.days.every((day) => day.runId === real)).toBe(true);
+    // Everything else as before: the uncovered days are still not covered, and backtest days are never scored.
+    expect(body).toMatchObject({ available: true, reason: null, notCovered: [{ from: '2025-12-01', to: '2025-12-09' }] });
+    expect(body.runs.map((run) => run.id)).toEqual([real]);
+    expect(body.accuracy).toBeNull();
+    expect(body.runs[0]?.live).toBeNull();
+
+    // A read of only backtest days is still unavailable, saying not_covered.
+    const only = await read(locationId, '2025-12-01', '2025-12-06');
+    expect(only).toMatchObject({ available: false, reason: 'not_covered', runs: [], days: [], notCovered: [{ from: '2025-12-01', to: '2025-12-06' }] });
+    expect(only.backtest).toHaveLength(6);
+
+    // A newer draft's backtest days stay invisible; a newer published run's replace the older run's, never mixed with them.
+    const draft = await runWith(locationId, '2026-05-10', 14, 'draft', december.map((date) => ({ date, mid: 300 })));
+    expect(shown(await read(locationId, '2025-12-01', '2025-12-06'))).toEqual(shown(only));
+    const newer = await runWith(locationId, '2026-05-15', 14, 'published', ['2025-12-01', '2025-12-02'].map((date) => ({ date, mid: 90, engine: 'baseline' as const })));
+    const replaced = await read(locationId, '2025-12-01', '2025-12-06');
+    expect(replaced.backtest.map((day) => [day.date, day.mid, day.engine, day.runId, day.inRange])).toEqual([
+      ['2025-12-01', 90, 'baseline', newer, false], ['2025-12-02', 90, 'baseline', newer, true],
+    ]);
+    // The newest run with backtest days supplies them even where it has none in the range: no older run fills in.
+    expect((await read(locationId, '2025-12-03', '2025-12-06')).backtest).toEqual([]);
+    // Withdrawn, it supplies none, and the older run's come back.
+    expect(await server.ctx.stores.forecasts.setStatus(scope(), newer, { from: ['published'], to: 'withdrawn', at: server.clock.now(), by: 'staff-0000' })).toBe(true);
+    expect(shown(await read(locationId, '2025-12-01', '2025-12-06'))).toEqual(shown(only));
+    expect(draft).not.toBe(newer);
+
+    // Today and later never get one (the reader with an earlier today): Dec 3 is today there.
+    const location = await server.ctx.stores.locations.find(scope(), locationId);
+    if (location === null) throw new Error('no location');
+    const early = await server.ctx.ports.forecasts.window(scope(), location, { from: '2025-12-01', to: '2025-12-06' }, '2025-12-03', { backtest: true });
+    expect(shown(early)).toEqual([['2025-12-01', 70, 70, true], ['2025-12-02', 70, 95, false]]);
+    // The other callers (TownwiseAI, the overview, orders) don't ask, and get none.
+    const unasked = await server.ctx.ports.forecasts.window(scope(), location, { from: '2025-12-01', to: '2025-12-14' }, '2026-06-01');
+    expect(unasked.backtest).toEqual([]);
+    // Everything but the backtest days is the same either way.
+    expect(JSON.parse(JSON.stringify({ ...unasked, backtest: body.backtest }))).toEqual(body);
+  });
+
+  it('a location with no published run has none, and its read stays no_published_forecast', async () => {
+    const locationId = await addLocation(server, { orgId, name: `Draft Only Room ${randomUUID().slice(0, 6)}` });
+    await runWith(locationId, '2026-04-30', 14, 'draft', [{ date: '2025-12-01', mid: 70 }]);
+    expect(await read(locationId, '2025-12-01', '2025-12-06')).toEqual({
+      available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null,
+      notCovered: [{ from: '2025-12-01', to: '2025-12-06' }], backtest: [],
+    });
   });
 });
 

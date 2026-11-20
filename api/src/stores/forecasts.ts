@@ -1,10 +1,12 @@
 // tw_forecast_runs and tw_forecasts (spec 6.20, 6.21, 14.4): one run per imported forecast run file, and one row per
-// day or week of a run. A run is `importing` while its rows are written, `draft` once all are, `published` when
+// day or week of a run; and (D72) tw_forecast_backtest_days, the out-of-sample backtest days a lab result carried, one
+// per run and date, for the Calendar's past days no run covers. A run is `importing` while its rows are written, `draft` once all are, `published` when
 // staff publish it and `withdrawn` when they take it back; only published runs reach owners, view-as and TownwiseAI
 // (forecasts/reader.ts). No transactions: the run is upserted on its file's hash, rows are upserted on their unique
 // key, and the run moves to draft only when every row is there, so a retry of an import completes it. Rows hold
 // outputs only (numbers, status, reason kinds, calendar refs, effects); labels are made in code. Both schemas are
-// strict: 'throw' and rows are built field by field. Nothing here logs.
+// strict: 'throw' and rows are built field by field. A run's backtest days are upserted on their unique key as its rows
+// are, and go wherever its rows go. Nothing here logs.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import mongoose, { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -13,6 +15,7 @@ import type { DayStatus, ForecastRunFile, LabRunFile, ReasonKind } from '../fore
 
 export const FORECAST_RUNS_COLLECTION = 'tw_forecast_runs';
 export const FORECASTS_COLLECTION = 'tw_forecasts';
+export const BACKTEST_DAYS_COLLECTION = 'tw_forecast_backtest_days';
 
 export type RunStatus = 'importing' | 'draft' | 'published' | 'withdrawn';
 export const RUN_STATUSES: readonly RunStatus[] = ['importing', 'draft', 'published', 'withdrawn'];
@@ -73,6 +76,19 @@ interface RowFields {
   /** A week's open days; null for a day. */
   openDays: number | null;
   reasons: ReasonFields[];
+}
+
+/** D72: one day as the lab's backtest forecast it, from a fit trained on sales through `dataThrough` only. */
+interface BacktestDayFields {
+  orgId: Types.ObjectId;
+  locationId: Types.ObjectId;
+  runId: Types.ObjectId;
+  date: string;
+  engine: 'model' | 'baseline';
+  dataThrough: string;
+  low: number;
+  mid: number;
+  high: number;
 }
 
 const sub = { _id: false, strict: 'throw' } as const;
@@ -144,6 +160,24 @@ function rowSchema(): Schema<RowFields> {
   return schema;
 }
 
+function backtestDaySchema(): Schema<BacktestDayFields> {
+  const schema = new Schema<BacktestDayFields>({
+    orgId: { type: Schema.Types.ObjectId, required: true },
+    locationId: { type: Schema.Types.ObjectId, required: true },
+    runId: { type: Schema.Types.ObjectId, required: true },
+    date: { type: String, required: true },
+    engine: { type: String, required: true, enum: ['model', 'baseline'] },
+    dataThrough: { type: String, required: true },
+    low: { type: Number, required: true },
+    mid: { type: Number, required: true },
+    high: { type: Number, required: true },
+  }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
+  schema.index({ orgId: 1, locationId: 1, runId: 1, date: 1 }, { unique: true });
+  // A run's deletion knows only its id.
+  schema.index({ orgId: 1, runId: 1 });
+  return schema;
+}
+
 /** Registers TwForecastRun (tw_forecast_runs) on first call. */
 export function forecastRunModel(connection: Connection): Model<RunFields> {
   const existing = connection.models.TwForecastRun as Model<RunFields> | undefined;
@@ -154,6 +188,12 @@ export function forecastRunModel(connection: Connection): Model<RunFields> {
 export function forecastModel(connection: Connection): Model<RowFields> {
   const existing = connection.models.TwForecast as Model<RowFields> | undefined;
   return existing ?? connection.model<RowFields>('TwForecast', rowSchema(), FORECASTS_COLLECTION);
+}
+
+/** Registers TwForecastBacktestDay (tw_forecast_backtest_days) on first call (D72). */
+export function backtestDayModel(connection: Connection): Model<BacktestDayFields> {
+  const existing = connection.models.TwForecastBacktestDay as Model<BacktestDayFields> | undefined;
+  return existing ?? connection.model<BacktestDayFields>('TwForecastBacktestDay', backtestDaySchema(), BACKTEST_DAYS_COLLECTION);
 }
 
 export interface ForecastRunRecord {
@@ -193,6 +233,20 @@ export interface ForecastRow {
   readonly reasons: readonly ReasonFields[];
 }
 
+/** D72: a run's backtest day: whole guests, low <= mid <= high, `dataThrough` before `date` (lab/result.ts checks). */
+export interface BacktestDay {
+  readonly runId: string;
+  readonly date: string;
+  readonly engine: 'model' | 'baseline';
+  readonly dataThrough: string;
+  readonly low: number;
+  readonly mid: number;
+  readonly high: number;
+}
+
+/** A backtest day to write, as the lab result carries it. */
+export type BacktestDayInput = Omit<BacktestDay, 'runId'>;
+
 /** D65: what happened to a run, as the owner's run history reads it (lab/owner-outcome.ts). */
 export interface RunState {
   readonly status: RunStatus;
@@ -229,6 +283,13 @@ export interface ForecastStore {
   /** Upserts the rows on their unique key without changing any that exist, so a retry writes only the missing ones. */
   writeRows(scope: OrgScope, locationId: string, runId: string, rows: readonly ForecastRowInput[]): Promise<void>;
   countRows(scope: OrgScope, runId: string): Promise<number>;
+  /** D72: upserts the run's backtest days on their unique key without changing any that exist, as writeRows. */
+  writeBacktestDays(scope: OrgScope, locationId: string, runId: string, days: readonly BacktestDayInput[]): Promise<void>;
+  /**
+   * D72: the backtest days over [from, to] of the first of `runIds` (in the order given) that has any backtest days at
+   * all, by date; none when no run has any. One run supplies them all, never a mix.
+   */
+  backtestDays(scope: OrgScope, locationId: string, runIds: readonly string[], range: { from: string; to: string }): Promise<BacktestDay[]>;
   /** Compare-and-set: moves the run from one of `from` to `to`, with the time and staff id that go with it. */
   setStatus(scope: OrgScope, runId: string, change: { from: readonly RunStatus[]; to: RunStatus; at: Date; by: string | null }): Promise<boolean>;
   find(scope: OrgScope, runId: string): Promise<ForecastRunRecord | null>;
@@ -245,7 +306,7 @@ export interface ForecastStore {
   firstPublished(scope: OrgScope, locationId: string): Promise<{ runId: string; publishedAt: Date } | null>;
   /** Rows of these runs of the location that overlap [from, to], or all of them when no range is given. */
   rows(scope: OrgScope, locationId: string, runIds: readonly string[], range?: { from: string; to: string }): Promise<ForecastRow[]>;
-  /** The run's rows, then the run, so a retry finishes. False when the run was not there. */
+  /** The run's rows and backtest days, then the run, so a retry finishes. False when the run was not there. */
   remove(scope: OrgScope, runId: string): Promise<boolean>;
   /** Location deletion and deleting its sales data (spec 10.7). Resolves the number of runs deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
@@ -333,9 +394,15 @@ function runFields(input: RunInput): Omit<RunFields, 'orgId' | 'locationId' | 'f
 
 const STATUS_TIME: Partial<Record<RunStatus, 'publishedAt' | 'withdrawnAt'>> = { published: 'publishedAt', withdrawn: 'withdrawnAt' };
 
+/** Unordered upserts that raced another import of the same file: each duplicate key is a document the other one wrote. */
+function racedOnly(err: unknown): boolean {
+  return err instanceof mongoose.mongo.MongoBulkWriteError && [err.writeErrors].flat().every((writeError) => writeError.code === 11000);
+}
+
 export function createForecastStore(connection: Connection): ForecastStore {
   const Run = forecastRunModel(connection);
   const Row = forecastModel(connection);
+  const BacktestDay = backtestDayModel(connection);
   const org = (scope: OrgScope) => ({ orgId: new Types.ObjectId(scope.orgId) });
   const ofRun = (scope: OrgScope, runId: string) => ({ ...org(scope), _id: new Types.ObjectId(runId) });
 
@@ -382,12 +449,42 @@ export function createForecastStore(connection: Connection): ForecastStore {
       } catch (err) {
         // Two imports of the same file upserted the same rows at once: each duplicate key is a row the other one wrote
         // (every other op still ran, unordered). The caller's countRows decides whether the run is complete.
-        if (!(err instanceof mongoose.mongo.MongoBulkWriteError)) throw err;
-        if ([err.writeErrors].flat().some((writeError) => writeError.code !== 11000)) throw err;
+        if (!racedOnly(err)) throw err;
       }
     },
     countRows(scope, runId) {
       return Row.countDocuments({ ...org(scope), runId: new Types.ObjectId(runId) });
+    },
+    async writeBacktestDays(scope, locationId, runId, days) {
+      if (days.length === 0) return;
+      const base = { ...org(scope), locationId: new Types.ObjectId(locationId), runId: new Types.ObjectId(runId) };
+      const ops = days.map((day) => ({
+        updateOne: {
+          filter: { ...base, date: day.date },
+          update: { $setOnInsert: { engine: day.engine, dataThrough: day.dataThrough, low: day.low, mid: day.mid, high: day.high } },
+          upsert: true,
+        },
+      }));
+      try {
+        await BacktestDay.bulkWrite(ops, { ordered: false });
+      } catch (err) {
+        if (!racedOnly(err)) throw err;
+      }
+    },
+    async backtestDays(scope, locationId, runIds, range) {
+      if (runIds.length === 0) return [];
+      const location = { ...org(scope), locationId: new Types.ObjectId(locationId) };
+      const having = new Set((await BacktestDay.distinct('runId', {
+        ...location, runId: trusted({ $in: runIds.map((id) => new Types.ObjectId(id)) }),
+      })).map((id) => id.toHexString()));
+      const runId = runIds.find((id) => having.has(id));
+      if (runId === undefined) return [];
+      const docs = await BacktestDay.find({
+        ...location, runId: new Types.ObjectId(runId), date: trusted({ $gte: range.from, $lte: range.to }),
+      }).sort({ date: 1 }).lean();
+      return docs.map((doc) => ({
+        runId, date: doc.date, engine: doc.engine, dataThrough: doc.dataThrough, low: doc.low, mid: doc.mid, high: doc.high,
+      }));
     },
     async setStatus(scope, runId, change) {
       const set: Partial<RunFields> = { status: change.to };
@@ -441,15 +538,18 @@ export function createForecastStore(connection: Connection): ForecastStore {
     },
     async remove(scope, runId) {
       await Row.deleteMany({ ...org(scope), runId: new Types.ObjectId(runId) });
+      await BacktestDay.deleteMany({ ...org(scope), runId: new Types.ObjectId(runId) });
       return (await Run.deleteOne(ofRun(scope, runId))).deletedCount === 1;
     },
     async removeForLocation(scope, locationId) {
       const location = { ...org(scope), locationId: new Types.ObjectId(locationId) };
       await Row.deleteMany(location);
+      await BacktestDay.deleteMany(location);
       return (await Run.deleteMany(location)).deletedCount;
     },
     async removeForOrg(scope) {
       await Row.deleteMany(org(scope));
+      await BacktestDay.deleteMany(org(scope));
       return (await Run.deleteMany(org(scope))).deletedCount;
     },
   };
