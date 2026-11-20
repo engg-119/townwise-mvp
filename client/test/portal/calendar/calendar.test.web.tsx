@@ -3,6 +3,7 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { revealOnArrival } from '../../../src/portal/calendar/arrival';
 import { COPY } from '../../../src/portal/errors';
 import type { ForecastDay } from '../../../src/portal/estimates/api';
 import type { MeResponse } from '../../../src/portal/schemas';
@@ -851,6 +852,38 @@ test('from 1024px the panel is beside the grid, so a clicked day scrolls nothing
     await waitFor(() => { expect(within(panel()).getByRole('heading', { name: 'Sat, Nov 7, 2026' })).toBeTruthy(); });
     fireEvent.keyDown(cell('2026-11-07'), { key: 'Enter' });
     expect(scrolls).not.toHaveBeenCalled();
+  } finally {
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+  }
+});
+
+test('below 1024px a day opened from Home’s This month brings the day panel into view once it loads; from 1024px it does not (item 70)', async () => {
+  const scrolls = jest.fn();
+  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value: scrolls });
+  try {
+    setWidth(800);
+    revealOnArrival('l1', '2026-11-21');
+    const { api } = setup();
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    // Deferred past the frame's scroll to the top, which runs after the page's effects in the same commit.
+    await waitFor(() => { expect(scrolls).toHaveBeenCalledTimes(1); });
+    expect(scrolls.mock.contexts[0]).toBe(panel());
+    expect(scrolls).toHaveBeenLastCalledWith({ block: 'start' });
+    expect(within(panel()).getByRole('heading', { name: 'Sat, Nov 21, 2026' })).toBeTruthy();
+    cleanup();
+
+    // Used up: the same link again, or a reload, opens at the top.
+    await renderAt('/locations/l1/calendar?day=2026-11-21', setup().api);
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+    expect(scrolls).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    // Wider, the panel sits beside the grid.
+    setWidth(1280);
+    revealOnArrival('l1', '2026-11-21');
+    await renderAt('/locations/l1/calendar?day=2026-11-21', setup().api);
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+    expect(scrolls).toHaveBeenCalledTimes(1);
   } finally {
     Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
   }

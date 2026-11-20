@@ -27,6 +27,7 @@ import { ErrorNotice, InlineNotice } from '../ui/feedback';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Small } from '../ui/text';
 import { Popover, type PopoverAnchor, type PopoverProps } from '../ui/Popover';
+import { clearArrival, isRevealArrival } from './arrival';
 import { CalendarDay, PANEL_ID } from './CalendarDay';
 import { CalendarGrid } from './CalendarGrid';
 import { CalendarWeek } from './CalendarWeek';
@@ -269,6 +270,26 @@ function CalendarView(): React.JSX.Element {
     const panel = document.getElementById(PANEL_ID);
     if (panel !== null && typeof panel.scrollIntoView === 'function') panel.scrollIntoView({ block: 'start' });
   }, [chosen, desktop]);
+
+  // A day Home's This month opened (item 70, arrival.ts) does the same, once the first read lands. Deferred a task,
+  // since the frame's scroll to the top for the new path runs after this page's effects in the same commit.
+  const reveal = useRef<boolean | null>(null);
+  reveal.current ??= isRevealArrival(location.id, typeof params.day === 'string' ? params.day : undefined);
+  useEffect(() => { clearArrival(); }, []);
+  const loaded = monthData.data !== null && notes.data !== null;
+  useEffect(() => {
+    if (reveal.current !== true || !loaded) return undefined;
+    if (desktop || Platform.OS !== 'web' || typeof document === 'undefined') {
+      reveal.current = false;
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      reveal.current = false;
+      const panel = document.getElementById(PANEL_ID);
+      if (panel !== null && typeof panel.scrollIntoView === 'function') panel.scrollIntoView({ block: 'start' });
+    }, 0);
+    return () => { clearTimeout(timer); };
+  }, [loaded, desktop]);
 
   // On web, whether focus is on a cell of the grid now, before this render replaces any (spec 16.3 P28): after it, if
   // the cell that had focus is gone (browser back or forward to a day in another grid), focus goes to the selected
