@@ -376,7 +376,7 @@ As built (task 10.1): the full eval is `api/scripts/research-eval-full.ts`, call
 ## Coordination
 
 - **D65** (`forecast-training-status`) owns `useWhileRunning`, `refreshOrg` and the activity pattern. Phase 7 rebases on D65 once merged, or waits; it never copies D65's hook. Both add an additive field to `summarizer`'s location summary; the second to merge rebases.
-- **Numbers:** D66; sections 6.32 to 6.41, 10.19, 13.3; CONFIRM index items 260 to 292 (provisional: develop ends at 199, PR #126 holds 200 to 214, `fix/ui-review-1119` 230 to 233, D65 240 to 252; rechecked 2026-11-19 in task 0.1), renumbered at merge.
+- **Numbers:** D66; sections 6.32 to 6.41, 10.19, 13.3; CONFIRM index items 238 to 270 (develop ends at 224 and D65, PR #140, holds 225 to 237; provisionally 260 to 292 until the merge of D65 on 2026-11-19).
 - `chat/turn.ts`'s `usageTracker` moves to `chat/pricing.ts` with chat's behavior unchanged and pinned by `test/chat-web-search.test.ts`.
 - The PR description listed decision 10's DECISION NEEDED first, so the owner saw before release that the config then shipped researched the restaurant by its own owner-typed name and town and found competitors by web search, with no Google content sent. Decided 2026-11-19 by the owner: allowed (2026-11-19), so production now sends Google's names.
 
