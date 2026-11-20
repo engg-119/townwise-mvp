@@ -689,7 +689,8 @@ describe('a private event’s guests (D71)', () => {
     expect(within(party).queryByRole('button', { name: 'Something else…' })).toBeNull();
     const save = (): HTMLElement => within(party).getByRole('button', { name: 'Save' });
     expect(save().getAttribute('aria-disabled')).toBe('true');
-    const field = within(party).getByLabelText('Guests who came');
+    // The field's name carries the card's date, so two cards' fields are told apart.
+    const field = within(party).getByLabelText('Guests who came, Sat, Apr 4, 2026');
     for (const value of ['0', '20001', '4.5', 'forty']) {
       fireEvent.change(field, { target: { value } });
       expect({ value, off: save().getAttribute('aria-disabled') }).toEqual({ value, off: 'true' });
@@ -698,8 +699,41 @@ describe('a private event’s guests (D71)', () => {
     fireEvent.change(field, { target: { value: '43' } });
     expect(save().getAttribute('aria-disabled')).not.toBe('true');
     fireEvent.click(save());
-    expect(await findInCards('Saved: 43 guests on the private event note.')).toBeTruthy();
+    const line = await findInCards('Saved: 43 guests on the private event note.');
     expect(api.writes).toEqual([{ method: 'POST', path: PARTY_PATH, body: { answer: 'guests', guests: 43 } }]);
+    // Saved, the context no longer says the note has no count, and focus moves to what the answer did.
+    expect(within(card(cards(), PARTY_HEADING)).queryByText('Its note has no guest count yet.')).toBeNull();
+    expect(document.activeElement).toBe(line.parentElement);
+  });
+
+  test('a count that lost to one saved first elsewhere says which was kept, and that this one wasn’t used', async () => {
+    const api = partyApi();
+    const { response } = fixture.partyGuests.answer as { response: { question: unknown; note: Record<string, unknown> } };
+    api.respond[PARTY_PATH] = () => ({ ...response, note: { ...response.note, expectedGuests: 30 } });
+    renderAt('/locations/l1/agent', api);
+    await openPanel(3);
+    const party = await waitFor(() => card(cards(), PARTY_HEADING));
+    fireEvent.change(within(party).getByLabelText('Guests who came, Sat, Apr 4, 2026'), { target: { value: '50' } });
+    fireEvent.click(within(party).getByRole('button', { name: 'Save' }));
+    expect(await findInCards('A count was already saved: 30 guests on the private event note, so your 50 wasn’t used. You can change it on the Notes page.')).toBeTruthy();
+  });
+
+  test('a Save turned away because the note changed reads the panel again and says the count wasn’t saved', async () => {
+    const api = partyApi();
+    api.respond[PARTY_PATH] = () => {
+      // The note got a count on the Notes page: the question is no longer asked.
+      api.panel = fixture.panel;
+      return refusal(404, 'not_found');
+    };
+    renderAt('/locations/l1/agent', api);
+    await openPanel(3);
+    const party = await waitFor(() => card(cards(), PARTY_HEADING));
+    fireEvent.change(within(party).getByLabelText('Guests who came, Sat, Apr 4, 2026'), { target: { value: '43' } });
+    fireEvent.click(within(party).getByRole('button', { name: 'Save' }));
+    const notice = await findInCards('That private event’s note changed, so your count of 43 wasn’t saved. Check its guest count on the Notes page.');
+    await waitFor(() => { expect(within(cards()).queryByRole('heading', { level: 3, name: PARTY_HEADING })).toBeNull(); });
+    expect(notice.parentElement?.getAttribute('role')).toBe('status');
+    expect(document.activeElement).toBe(notice.parentElement);
   });
 
   test('Skip answers not sure, and the card says it won’t ask again', async () => {

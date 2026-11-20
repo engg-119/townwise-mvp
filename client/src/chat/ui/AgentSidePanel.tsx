@@ -21,7 +21,7 @@ import { readsLine, type ToolContext } from '../tools';
 import { openQuestions, openRuleSuggestions, type AgentPanelState, type SendToChat } from '../useAgentPanel';
 import { ActivityChange, AgentAutoSwitch, NoteSuggestionsSection, WaitingLine } from './AgentChanges';
 import { ModelCardSheet } from './ModelCardSheet';
-import { QuestionCard, type QuestionChat } from './QuestionCard';
+import { QuestionCard, QuestionsNoticeLine, type QuestionChat } from './QuestionCard';
 import { SuggestionsSection } from './SuggestionCard';
 
 // The side panel (spec P25): Suggested rules (D46: suggested closure rules from files and the sales history, shown only
@@ -147,6 +147,7 @@ function QuestionsSection(props: {
         {open === null ? null : <Eyebrow>{`${formatCount(open)} open`}</Eyebrow>}
         <Heading>Questions for you</Heading>
       </View>
+      <QuestionsNoticeLine panel={panel} place="panel" />
       {body}
       <View style={styles.planned}>
         <StatusTag label="Planned" kind="planned" />
