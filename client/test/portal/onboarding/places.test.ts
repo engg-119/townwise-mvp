@@ -18,19 +18,20 @@ const PLACE: UsablePlace = { ...HANOVER, town: HANOVER.town, name: 'Lou’s Rest
 const ADDRESS_PLACE: UsablePlace = { ...HANOVER, placeId: 'ChIJTestPlace0006', town: HANOVER.town, name: '12 South Main Street', kind: 'address' };
 
 describe('checkPlaceSearch', () => {
-  test('an empty body: 400 invalid_request is on, 503 places_unavailable or any failure is off', async () => {
+  test('GET /api/places/status: placeSearch says on or off, and any failure is off', async () => {
     const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
     const places = installPlaces(api);
     await expect(checkPlaceSearch(api)).resolves.toBe(true);
     places.on = false;
     await expect(checkPlaceSearch(api)).resolves.toBe(false);
-    api.answers['/api/places/autocomplete'] = () => offline();
+    api.answers['GET /api/places/status'] = () => offline();
     await expect(checkPlaceSearch(api)).resolves.toBe(false);
-    api.answers['/api/places/autocomplete'] = () => refusal(403, 'view_as_read_only');
+    api.answers['GET /api/places/status'] = () => refusal(403, 'view_as_read_only');
     await expect(checkPlaceSearch(api)).resolves.toBe(false);
-    // The check sends nothing Google would see.
-    expect(writes(api).map((call) => call.body)).toEqual([{}, {}, {}, {}]);
-    expect(places.autocompletes).toEqual([]);
+    // The check is a read: no autocomplete, so nothing the API refuses and nothing Google would see.
+    expect(writes(api)).toEqual([]);
+    expect(api.calls.map((call) => `${call.method} ${call.path}`)).toEqual(Array(4).fill('GET /api/places/status'));
+    expect(places.checks).toBe(2);
   });
 });
 

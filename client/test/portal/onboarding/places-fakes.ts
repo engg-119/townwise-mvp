@@ -4,8 +4,10 @@ import { refusal, type FakePortalApi } from '../../helpers/portal';
 
 // The Google Places proxy (api/README.md, Places search) on the portal fake: POST /api/places/autocomplete and
 // /api/places/details answer from these fields, the way the API does, and POST /api/places/map signs a map of the ids
-// sent (mapOf) whether or not the search is on, or answers null while `mapOn` is false. An empty body is the search's on/off check
-// (onboarding/places.ts checkPlaceSearch): 400 invalid_request while `on`, else 503 places_unavailable. The first
+// sent (mapOf) whether or not the search is on, or answers null while `mapOn` is false. GET /api/places/status is the
+// search's on/off check (onboarding/places.ts checkPlaceSearch), counted in `checks`. An autocomplete the API would
+// refuse (an input under 2 characters after trimming) answers 400 invalid_request while `on`, as the API does, and is
+// kept in `refused`, so a test can pin that none is sent. The first
 // autocomplete of a session gets the token `token-1`, the next session `token-2`, and so on; a details call may carry
 // none (a checked place after the first in one list). Fixtures stay low-entropy: ids like ChIJTestPlace0001.
 
@@ -75,6 +77,8 @@ export interface PlacesFake {
   /** `sessionToken` is undefined when the call carried none. */
   detailCalls: { placeId: string; sessionToken: string | undefined }[];
   checks: number;
+  /** Each autocomplete body the API would refuse with 400 invalid_request. */
+  refused: unknown[];
   /** While true, each autocomplete waits in `held` until the test releases it. */
   holding: boolean;
   held: (() => void)[];
@@ -93,19 +97,25 @@ export function installPlaces(api: FakePortalApi, init?: Partial<Pick<PlacesFake
     autocompletes: [],
     detailCalls: [],
     checks: 0,
+    refused: [],
     holding: false,
     held: [],
     holdingDetails: false,
     heldDetails: [],
   };
   let sessions = 0;
+  api.answers['GET /api/places/status'] = () => {
+    fake.checks += 1;
+    return { placeSearch: fake.on };
+  };
   api.answers['/api/places/autocomplete'] = async (raw) => {
-    const body = raw as { input?: string; sessionToken?: string };
-    if (body.input === undefined) {
-      fake.checks += 1;
-      return fake.on ? refusal(400, 'invalid_request') : refusal(503, 'places_unavailable');
-    }
+    const body = raw as { input?: unknown; sessionToken?: string };
+    // The API checks the key before the body, so while the search is off every body is 503.
     if (!fake.on) return refusal(503, 'places_unavailable');
+    if (typeof body.input !== 'string' || body.input.trim().length < 2 || body.input.trim().length > 120) {
+      fake.refused.push(raw);
+      return refusal(400, 'invalid_request');
+    }
     fake.autocompletes.push({ input: body.input, sessionToken: body.sessionToken });
     if (fake.holding) await new Promise<void>((resolve) => { fake.held.push(resolve); });
     const answer = fake.results[body.input] ?? [];
