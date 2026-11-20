@@ -60,27 +60,56 @@ def backtest_predictions(frame: pd.DataFrame, hist: pd.DataFrame, origins: list[
     return preds.assign(lo=lo, mid=mid, hi=hi)
 
 
+def set_aside(frame: pd.DataFrame) -> pd.Series:
+    """The days that say nothing about a weekday's regular service: a private event, a counted party (`party`, read
+    only when the frame has it) or a booking. closed_weekdays counts them as neither served nor unserved (D70)."""
+    out = frame.private_event.eq(1) | frame.booked.astype(bool)
+    if "party" in frame:
+        out |= frame.party.astype(bool)
+    return out
+
+
 def served(frame: pd.DataFrame) -> pd.Series:
     """Whether each day was open to the public: guests at least a tenth of the median guests over its week's days with
-    guests, and not a private event or booked. A day closed to the public can still ring a private party as one check
-    with a guest or two, or as a full room, and neither says anything about the weekday's regular service."""
+    guests, and not set aside (a private event, a counted party or booked). A day closed to the public can still ring a
+    private party as one check with a guest or two, or as a full room, and neither says anything about the weekday's
+    regular service."""
     typical = frame.guests.where(frame.guests.gt(0)).groupby(_monday(frame.date)).transform("median")
-    private = frame.private_event.eq(1) | frame.booked.astype(bool)
-    return frame.guests.gt(0) & frame.guests.ge(NEAR_EMPTY_SHARE * typical) & ~private
+    return frame.guests.gt(0) & frame.guests.ge(NEAR_EMPTY_SHARE * typical) & ~set_aside(frame)
 
 
 def closed_weekdays(frame: pd.DataFrame, through: pd.Timestamp) -> set[str]:
     """Weekdays served (see served) on at most one of their last 8 counted dates. A counted date is on or before
     `through`, in a complete week (the week holding `through` only when `through` is its Sunday: a partial week's median
-    can fall to a few guests) and in a week served on another day (a week closed throughout says nothing about one
-    weekday). A weekday with fewer than MIN_SERVED_DATES counted dates stays open."""
+    can fall to a few guests), in a week served on another day (a week closed throughout says nothing about one
+    weekday) and not set aside (set_aside, D70: a private event or party is neither served nor unserved, so a party
+    every Friday never closes Fridays and parties on a closed Monday never reopen it). A weekday with fewer than
+    MIN_SERVED_DATES counted dates stays open."""
     last_sunday = through - pd.Timedelta(days=(through.day_of_week + 1) % 7)
     past = frame[frame.date <= last_sunday]
     had = served(past).astype(int)
-    counted = (had.groupby(_monday(past.date)).transform("sum") - had) > 0
+    counted = ((had.groupby(_monday(past.date)).transform("sum") - had) > 0) & ~set_aside(past)
     recent = had[counted].groupby(past.weekday[counted]).tail(CLOSED_WEEKDAY_DATES)
     return {name for name, values in recent.groupby(past.weekday[recent.index])
             if len(values) >= MIN_SERVED_DATES and values.sum() < MIN_SERVED_DATES}
+
+
+def private_on_closed_weekday(frame: pd.DataFrame) -> pd.Series:
+    """D70: whether each day with guests is a private event or a counted party (`party`, when the frame has it) on a
+    weekday closed (closed_weekdays) as judged from the complete weeks before the day's week. Such a day opened only for
+    the event: its guests are the party's or its leftovers, not the weekday's service, so training leaves it out
+    (features.training_rows). The weeks before the day's are all it reads, so a day's flag is the same at every cutoff
+    after it and every backtest trains on the same days. A private day on an open weekday is not flagged."""
+    private = frame.private_event.eq(1)
+    if "party" in frame:
+        private |= frame.party.astype(bool)
+    private &= frame.guests.gt(0)  # only a day with guests could train
+    mondays = _monday(frame.date)
+    out = pd.Series(False, index=frame.index)
+    for monday in sorted(set(mondays[private])):
+        closed = closed_weekdays(frame, monday - pd.Timedelta(days=1))
+        out |= private & mondays.eq(monday) & frame.weekday.isin(closed)
+    return out
 
 
 def _holiday_key(day: pd.Timestamp) -> tuple[int, ...]:

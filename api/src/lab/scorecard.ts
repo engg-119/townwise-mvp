@@ -149,7 +149,7 @@ export const scorecardSchema = z.strictObject({
 });
 
 /**
- * The scorecard a lab result is posted with (lab-input/3): every engine field present, since the gate reads them, and
+ * The scorecard a lab result is posted with (lab-input/4): every engine field present, since the gate reads them, and
  * both outlook horizons' reports, in order (D52 release B).
  */
 export const labScorecardSchema = scorecardSchema.extend({

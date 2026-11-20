@@ -1,6 +1,6 @@
 """The API's side of the lab contract: golden/api-input.json is an input the API built (api/test/lab-input.test.ts checks
-it equals what labInputOf makes, and regenerates it), and the lab must take it as it is. Version 3 only (D52: 400 future days and termsThrough): versions 1 and 2 and
-a calendar entry carrying a title or a URL are refused. Synthetic data only."""
+it equals what labInputOf makes, and regenerates it), and the lab must take it as it is. Version 4 only (D70: each
+day's party): versions 1 to 3 and a calendar entry carrying a title or a URL are refused. Synthetic data only."""
 
 import copy
 import json
@@ -32,9 +32,10 @@ def api_input() -> dict:
     return json.loads(API_INPUT.read_text(encoding="utf-8"))
 
 
-def test_the_api_input_is_version_3_with_its_calendar_champion_engine_and_terms_through():
+def test_the_api_input_is_version_4_with_its_calendar_champion_engine_and_terms_through():
     inp = api_input()
-    assert inp["schema"] == schema.INPUT_SCHEMA == "townwise.lab-input/3"
+    assert inp["schema"] == schema.INPUT_SCHEMA == "townwise.lab-input/4"
+    assert all(isinstance(d["party"], bool) for d in inp["days"])
     assert inp["horizonDays"] == 400
     # Hanover's last researched term day (its spring 2028 finals), which caps a model run's outlook
     assert inp["termsThrough"] == "2028-06-06"
@@ -42,6 +43,28 @@ def test_the_api_input_is_version_3_with_its_calendar_champion_engine_and_terms_
     kinds = {entry["kind"] for entry in inp["calendar"]}
     assert {"holiday", "term", "event"} <= kinds
     assert all(set(entry) == schema.CALENDAR_KEYS for entry in inp["calendar"])
+
+
+def test_a_version_3_input_is_refused():
+    inp = api_input()
+    inp["schema"] = "townwise.lab-input/3"
+    with pytest.raises(schema.InputError, match="^schema$"):
+        schema.validate_input(inp)
+    for d in inp["days"]:  # as version 3 was: no party on its days
+        del d["party"]
+    assert calibrate(inp, "0" * 40) == {"schema": schema.RESULT_SCHEMA, "calibrationId": inp["calibrationId"],
+                                        "ok": False, "code": "invalid_input"}
+
+
+@pytest.mark.parametrize("value", ["missing", None, 0, 1, "true"])
+def test_a_day_without_a_boolean_party_is_refused(value):
+    inp = api_input()
+    if value == "missing":
+        del inp["days"][3]["party"]
+    else:
+        inp["days"][3]["party"] = value
+    with pytest.raises(schema.InputError, match=r"^days\[3\]$"):
+        schema.validate_input(inp)
 
 
 def test_a_version_2_input_is_refused():

@@ -386,7 +386,7 @@ def check_comparison(cmp: dict, lab_input: dict) -> None:
 def check_envelope(result: dict, lab_input: dict) -> None:
     assert list(result) == ["schema", "calibrationId", "ok", "codeVersion", "params", "scorecard", "run"]
     assert result["schema"] == schema.RESULT_SCHEMA == "townwise.lab-result/1"
-    assert schema.INPUT_SCHEMA == "townwise.lab-input/3"
+    assert schema.INPUT_SCHEMA == "townwise.lab-input/4"
     assert result["calibrationId"] == lab_input["calibrationId"]
     assert result["ok"] is True and result["codeVersion"] == CODE
     json.dumps(result, allow_nan=False)
@@ -450,7 +450,7 @@ def test_result_matches_contract(model_result, lab_input):
 
     assert result["run"]["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION,
                                       "notebookCommit": CODE}
-    assert version.MODEL_VERSION == "v12"
+    assert version.MODEL_VERSION == "v13"
 
 
 def test_a_model_run_carries_how_its_trees_learned(model_result, result, lab_input):
@@ -922,12 +922,15 @@ CLOSED_FROM = pd.Timestamp("2025-06-01")
 
 
 def closed_weekdays_of(through: str, guests: dict[str, float] | None = None, private: tuple[str, ...] = (),
-                       booked: tuple[str, ...] = (), first: str = "2025-03-03") -> set[str]:
+                       booked: tuple[str, ...] = (), first: str = "2025-03-03",
+                       party: tuple[str, ...] = ()) -> set[str]:
     dates = pd.Series(pd.date_range(first, through))
     shut = dates.dt.day_of_week.isin([6, 0]) & dates.ge(CLOSED_FROM)
     frame = pd.DataFrame({"date": dates, "weekday": dates.dt.day_name(), "guests": np.where(shut, np.nan, 100.0),
                           "private_event": dates.isin(pd.to_datetime(list(private))).astype(int),
                           "booked": dates.isin(pd.to_datetime(list(booked)))})
+    if party:  # a frame without the column reads as one without parties
+        frame["party"] = dates.isin(pd.to_datetime(list(party)))
     for when, count in (guests or {}).items():
         frame.loc[frame.date.eq(pd.Timestamp(when)), "guests"] = count
     return forecast.closed_weekdays(frame, pd.Timestamp(through))
@@ -964,6 +967,127 @@ def test_an_open_weekday_stays_open():
     assert closed_weekdays_of("2025-08-31") == {"Sunday", "Monday"}
     # A weekday with fewer than 2 counted dates stays open, even unserved: one week of data, closed Sunday and Monday
     assert closed_weekdays_of("2025-08-31", first="2025-08-25") == set()
+
+
+# D70 (v13): a private event or counted party on a weekday held closed as of the weeks before it opened only for the
+# event, so it leaves training; and such days are neither served nor unserved when closed weekdays are judged.
+
+
+def closed_input(through: str = "2025-08-31", guests: dict[str, float] | None = None, party: tuple[str, ...] = (),
+                 private: tuple[str, ...] = (), first: str = "2025-03-03", shut: tuple[int, ...] = (6, 0)) -> dict:
+    """A valid LabInput from `first` to `through` + 400 days: guests by weekday with a little noise, none on the
+    weekdays `shut` (day_of_week numbers) from CLOSED_FROM on, then `guests` by date, with `party` and `private` days
+    flagged as the API flags them (a counted party's guests already taken off)."""
+    end = pd.Timestamp(through)
+    days = []
+    for n, when in enumerate(pd.date_range(first, end + pd.Timedelta(days=forecast.HORIZON_DAYS))):
+        count = None
+        if when <= end and not (when.day_of_week in shut and when >= CLOSED_FROM):
+            count = float(80 + 10 * when.day_of_week + (n * 7) % 11)
+        key = forecast.iso(when)
+        if when <= end and guests and key in guests:
+            count = guests[key]
+        days.append({"date": key, "guests": count, "term": "interim", "weekOfTerm": -1, "events": [], "closed": False,
+                     "privateEvent": key in private, "booked": False, "party": key in party})
+    inp = {"schema": schema.INPUT_SCHEMA, "calibrationId": "0" * 24, "metric": "guests", "today": through,
+           "dataThrough": through, "horizonDays": forecast.HORIZON_DAYS, "termsThrough": None, "regimeStart": None,
+           "days": days, "calendar": [], "champion": None}
+    schema.validate_input(inp)
+    return inp
+
+
+def trained_dates(inp: dict) -> set[str]:
+    frame = pipeline.frame_of(inp)
+    return {forecast.iso(d) for d in features.training_rows(frame, pd.Timestamp(inp["dataThrough"])).date}
+
+
+def future_status(inp: dict, weekday: str) -> set[str]:
+    frame = pipeline.frame_of(inp)
+    status = forecast.statuses(frame, pd.Timestamp(inp["dataThrough"]))
+    return set(status[frame.weekday[status.index].eq(weekday).to_numpy()])
+
+
+PARTY_MONDAYS = {"2025-08-11": 100.0, "2025-08-18": 100.0}  # counted parties whose leftovers look like full service
+
+
+def test_counted_parties_on_closed_mondays_neither_reopen_mondays_nor_train():
+    assert closed_weekdays_of("2025-08-31", PARTY_MONDAYS, party=tuple(PARTY_MONDAYS)) == {"Sunday", "Monday"}
+    inp = closed_input(guests=PARTY_MONDAYS, party=tuple(PARTY_MONDAYS))
+    assert future_status(inp, "Monday") == {"closed"}
+    assert not set(PARTY_MONDAYS) & trained_dates(inp)
+    assert pipeline.frame_of(inp)[features.PRIVATE_ON_CLOSED].sum() == 2
+    # Unflagged, the same two Mondays are real service: they reopen Mondays and train (v12)
+    assert closed_weekdays_of("2025-08-31", PARTY_MONDAYS) == {"Sunday"}
+    plain = closed_input(guests=PARTY_MONDAYS)
+    assert future_status(plain, "Monday") == {"open"}
+    assert set(PARTY_MONDAYS) <= trained_dates(plain)
+
+
+def test_an_uncounted_private_event_on_a_closed_monday_leaves_training():
+    inp = closed_input(guests={"2025-08-18": 60.0}, private=("2025-08-18",))
+    assert "2025-08-18" not in trained_dates(inp)
+    assert future_status(inp, "Monday") == {"closed"}
+    # The same day unflagged is one served Monday in 8: Mondays stay closed, but it trains
+    assert "2025-08-18" in trained_dates(closed_input(guests={"2025-08-18": 60.0}))
+
+
+@pytest.mark.parametrize("flag", ["party", "private"])
+def test_a_party_every_friday_keeps_fridays_open_and_training(flag):
+    fridays = tuple(forecast.iso(d) for d in pd.date_range("2025-03-07", "2025-08-31", freq="W-FRI"))
+    inp = closed_input(**{flag: fridays})
+    # Every Friday set aside leaves Friday no counted date, so it stays open (fewer than 2), and nothing is flagged
+    assert "Friday" not in forecast.closed_weekdays(pipeline.frame_of(inp), pd.Timestamp("2025-08-31"))
+    assert future_status(inp, "Friday") == {"open"}
+    assert set(fridays) <= trained_dates(inp)  # a counted party on its leftovers
+
+
+def test_a_party_on_an_open_weekday_trains_on_its_leftovers():
+    inp = closed_input(guests={"2025-08-20": 70.0}, party=("2025-08-20",))  # a Wednesday
+    frame = pipeline.frame_of(inp)
+    hist = features.training_rows(frame, pd.Timestamp(inp["dataThrough"]))
+    assert hist.guests[hist.date.eq(pd.Timestamp("2025-08-20"))].tolist() == [70.0]
+
+
+def test_a_party_monday_before_the_closure_is_kept():
+    inp = closed_input(party=("2025-05-19",))  # Mondays close from June
+    assert "2025-05-19" in trained_dates(inp)
+
+
+def test_a_party_spanning_saturday_to_monday_drops_only_monday():
+    days = ("2025-08-16", "2025-08-17", "2025-08-18")
+    inp = closed_input(guests=dict.fromkeys(days, 90.0), party=days, shut=(0,))  # Mondays alone are closed
+    trained = trained_dates(inp)
+    assert {"2025-08-16", "2025-08-17"} <= trained and "2025-08-18" not in trained
+
+
+def test_a_days_flag_reads_only_the_weeks_before_it():
+    """The flag is the same whether the data end on the party day or a year later, when Mondays have reopened, so every
+    cutoff (and every backtest) trains on the same days."""
+    party = ("2025-08-18",)
+    short = pipeline.frame_of(closed_input("2025-08-18", {"2025-08-18": 100.0}, party))
+    reopened = {forecast.iso(d): 100.0 for d in pd.date_range("2025-09-01", "2026-08-31", freq="W-MON")}
+    long = pipeline.frame_of(closed_input("2026-08-31", {"2025-08-18": 100.0} | reopened, party))
+    assert short[features.PRIVATE_ON_CLOSED].sum() == 1
+    days = len(short[short.date <= pd.Timestamp("2025-08-18")])
+    assert short[features.PRIVATE_ON_CLOSED][:days].tolist() == long[features.PRIVATE_ON_CLOSED][:days].tolist()
+    assert "Monday" not in forecast.closed_weekdays(long, pd.Timestamp("2026-08-31"))
+
+
+def test_a_party_monday_after_the_closure_is_in_no_engines_history_or_backtest():
+    party = "2025-08-18"
+    inp = closed_input(guests={party: 100.0}, party=(party,), first="2023-06-05")
+    frame, through = pipeline.frame_of(inp), pd.Timestamp(inp["dataThrough"])
+    hist = features.training_rows(frame, through)
+    assert pd.Timestamp(party) not in set(hist.date)
+    history = baseline.prepare(frame, inp["calendar"], through)
+    assert pd.Timestamp(party) not in history.guests
+    base_preds = baseline.backtest_predictions(history, through, [7, 28])
+    assert not base_preds.empty and pd.Timestamp(party) not in set(base_preds.date)
+    origins = backtest.quarterly_origins(hist.date.min(), through)[-1:]
+    preds = forecast.backtest_predictions(frame, hist, origins, through, features.base_columns(None),
+                                          features.event_columns(frame, hist.index))
+    assert not preds.empty and pd.Timestamp(party) not in set(preds.date)
+    assert pd.Timestamp("2025-08-19") in set(preds.date)  # its Tuesday is forecast as usual
 
 
 def test_open_days_take_the_holiday_multipliers_and_ranges_widened_by_k(lab_input):
@@ -1305,7 +1429,11 @@ def test_frame_of_input_is_the_fixture_frame(lab_input):
                    "hol_closed", "federal_holiday"]
     expected = synthetic_frame(0)[lab_columns]
     expected = expected[expected.date >= lab_input["days"][0]["date"]].reset_index(drop=True)
-    pd.testing.assert_frame_equal(pipeline.frame_of(lab_input), expected, check_dtype=False)
+    frame = pipeline.frame_of(lab_input)
+    pd.testing.assert_frame_equal(frame[lab_columns], expected, check_dtype=False)
+    # D70's two columns: the fixture has no counted party, and its private events on closed Mondays have no guests
+    assert list(frame.columns) == lab_columns[:10] + ["party"] + lab_columns[10:] + [features.PRIVATE_ON_CLOSED]
+    assert not frame.party.any() and not frame[features.PRIVATE_ON_CLOSED].any()
 
 
 def _prepared(inp):

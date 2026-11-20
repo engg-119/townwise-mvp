@@ -17,7 +17,7 @@ export function metricsWith(overrides: Partial<Metrics> = {}): Metrics {
 }
 
 /**
- * A lab-input/3 scorecard (D42, D52): a model run by default, its `engines` figures its backtest's (the baseline's a
+ * A lab-input/4 scorecard (D42, D52): a model run by default, its `engines` figures its backtest's (the baseline's a
  * point worse) unless given, a weekly bias of 0, no longer-horizon reports, and the outlook horizons' reports (OUTLOOK,
  * the growth floor's ratios from a 91-day ratio of 1.2; helpers/lab.ts labResultFor's widening carries their anchors).
  */

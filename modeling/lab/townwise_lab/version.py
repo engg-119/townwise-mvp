@@ -19,4 +19,9 @@
 # holding the data cutoff counts only when the cutoff is its Sunday, a private-event or booked day is never served, and
 # a weekday is closed until 2 of its last 8 counted dates were served, so a partial last week or one party on a closed
 # Sunday or Monday no longer reopens it.
-MODEL_VERSION = "v12"
+# v13 (D70, 2026-11-19): a private event or counted party on a weekday held closed as of the complete weeks before it
+# (forecast.private_on_closed_weekday) leaves training and every backtest of both engines, since the restaurant opened
+# only for it; and private events, counted parties (the input's new party, townwise.lab-input/4) and bookings count as
+# neither served nor unserved when closed weekdays are judged (forecast.set_aside), so a party every Friday never closes
+# Fridays.
+MODEL_VERSION = "v13"

@@ -209,9 +209,10 @@ def synthetic_input(seed: int = 0) -> dict:
     days = [{"date": _iso(row.date), "guests": None if np.isnan(row.guests) else int(row.guests), "term": row.term,
              "weekOfTerm": int(row.week_of_term),
              "events": sorted(c.removeprefix("ev_") for c in groups if row[c] == 1),
-             "closed": bool(row.closed), "privateEvent": bool(row.private_event), "booked": bool(row.booked)}
+             "closed": bool(row.closed), "privateEvent": bool(row.private_event), "booked": bool(row.booked),
+             "party": False}
             for _, row in rows.iterrows()]
-    return {"schema": "townwise.lab-input/3", "calibrationId": CALIBRATION_ID, "metric": "guests", "today": _iso(TODAY),
+    return {"schema": "townwise.lab-input/4", "calibrationId": CALIBRATION_ID, "metric": "guests", "today": _iso(TODAY),
             "dataThrough": _iso(through), "horizonDays": FUTURE_DAYS, "termsThrough": None, "regimeStart": None,
             "days": days,
             "calendar": synthetic_calendar(rows), "champion": synthetic_champion(f)}
@@ -246,13 +247,13 @@ def two_year_input(seed: int, shape: str, days: int = 700, through: str = "2026-
     guests = np.round(level * season * growth * swing[week] * rng.lognormal(0.0, 0.12, len(dates)))
     no_row = (dates > end) | ((dates.dt.day_name() == "Monday") & (shape == "closed_mondays"))
     out = [{"date": _iso(day), "guests": None if missing else int(count), "term": "interim", "weekOfTerm": -1,
-            "events": [], "closed": False, "privateEvent": False, "booked": False}
+            "events": [], "closed": False, "privateEvent": False, "booked": False, "party": False}
            for day, count, missing in zip(dates, guests, no_row)]
     out += [{"date": _iso(day), "guests": None, "term": "interim", "weekOfTerm": -1, "events": [], "closed": False,
-             "privateEvent": False, "booked": False}
+             "privateEvent": False, "booked": False, "party": False}
             for day in pd.date_range(dates.iloc[-1] + pd.Timedelta(days=1), end + pd.Timedelta(days=FUTURE_DAYS))]
     first_with = next(i for i, d in enumerate(out) if d["guests"])
-    return {"schema": "townwise.lab-input/3", "calibrationId": CALIBRATION_ID, "metric": "guests",
+    return {"schema": "townwise.lab-input/4", "calibrationId": CALIBRATION_ID, "metric": "guests",
             "today": _iso(end + pd.Timedelta(days=1)), "dataThrough": through, "horizonDays": FUTURE_DAYS,
             "termsThrough": None, "regimeStart": None, "days": out[first_with:], "calendar": [], "champion": None}
 
@@ -357,9 +358,9 @@ def four_year_input(seed: int, shape: str, cut_years: int) -> tuple[dict, pd.Ser
         out.append({"date": date, "guests": None if missing or day > through else int(count),
                     "term": known["term"] if known else "interim", "weekOfTerm": known["weekOfTerm"] if known else -1,
                     "events": sorted(set(known["events"]) - hidden.get(date, set())) if known else [],
-                    "closed": False, "privateEvent": False, "booked": False})
+                    "closed": False, "privateEvent": False, "booked": False, "party": False})
     first_with = next(i for i, d in enumerate(out) if d["guests"])
-    inp = {"schema": "townwise.lab-input/3", "calibrationId": CALIBRATION_ID, "metric": "guests",
+    inp = {"schema": "townwise.lab-input/4", "calibrationId": CALIBRATION_ID, "metric": "guests",
            "today": _iso(through + pd.Timedelta(days=1)), "dataThrough": _iso(through),
            "horizonDays": FUTURE_DAYS, "termsThrough": terms_through, "regimeStart": None,
            "days": out[first_with:], "calendar": calendar, "champion": None}

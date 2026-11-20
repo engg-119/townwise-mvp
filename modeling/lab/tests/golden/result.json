@@ -662,7 +662,7 @@
   "metric": "guests",
   "model": {
    "family": "seasonal_baseline",
-   "version": "v12",
+   "version": "v13",
    "notebookCommit": "0000000000000000000000000000000000000000"
   },
   "trainingSource": "townwise_lab",

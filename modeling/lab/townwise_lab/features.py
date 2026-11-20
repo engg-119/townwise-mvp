@@ -3,7 +3,9 @@
 A frame has one row per date (no gaps) with: date, weekday (full name), guests (NaN with no sales row and after the
 data cutoff), term ("fall", "winter", "spring", "summer" or "interim"), week_of_term (-1 between terms), one
 ev_<group> column per town event group (0 or 1), private_event (0 or 1), closed and booked (booleans), and the
-holiday_flags columns. add_recent_level and add_weekday_regime add the two level columns the baseline uses.
+holiday_flags columns. A frame from an input (pipeline.frame_of) also has party (a history day a counted party covers,
+boolean) and PRIVATE_ON_CLOSED (forecast.private_on_closed_weekday, D70). add_recent_level and add_weekday_regime add
+the two level columns the baseline uses.
 """
 
 import numpy as np
@@ -18,6 +20,7 @@ REGIME_SUFFIX = " (regime)"
 # counts a weekday's bias only with at least 4 days]
 MIN_REGIME_DAYS = 4
 RECENT_DAYS = 364
+PRIVATE_ON_CLOSED = "private_on_closed"  # a private event or counted party on a weekday held closed (D70)
 
 
 def halloween_weekend(dates: pd.Series) -> pd.Series:
@@ -105,7 +108,11 @@ def event_columns(frame: pd.DataFrame, train_idx: pd.Index) -> list[str]:
 
 
 def training_rows(frame: pd.DataFrame, through: pd.Timestamp) -> pd.DataFrame:
-    """The days a model learns from: on or before `through`, with guests above zero, not closed and not booked."""
+    """The days a model learns from: on or before `through`, with guests above zero, not closed, not booked and, when
+    the frame has the column, not a private event or party on a weekday held closed (PRIVATE_ON_CLOSED, D70). Every
+    fit, backtest, fold and comparison of both engines reads its history from here, so all leave out the same days."""
     keep = ((frame.date <= through) & frame.guests.gt(0) & ~frame.closed.astype(bool)
             & ~frame.booked.astype(bool))
+    if PRIVATE_ON_CLOSED in frame:
+        keep &= ~frame[PRIVATE_ON_CLOSED].astype(bool)
     return frame[keep]
