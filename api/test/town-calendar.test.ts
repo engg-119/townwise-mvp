@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { isCalendarDate } from '../src/dates.ts';
 import { TOWN_CALENDAR } from '../src/town-calendar-data.ts';
-import { federalHolidays, townCalendarCovers, townEvents, type TownEvent } from '../src/town-calendar.ts';
+import { federalHolidays, halloween, townCalendarCovers, townEvents, type TownEvent } from '../src/town-calendar.ts';
 import { TOWN_IDS } from '../src/towns.ts';
 
 const OPM_URL = 'https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/';
@@ -72,6 +72,43 @@ describe('federal holidays', () => {
   });
 });
 
+describe('Halloween (D68)', () => {
+  const LOC_URL = 'https://blogs.loc.gov/folklife/category/halloween/';
+
+  it('marks the same nights as the lab’s hol_halloween (modeling/lab/tests/test_core.py)', () => {
+    const dates = [2025, 2026, 2027, 2028, 2029].flatMap((year) => halloween(year).map((event) => event.start));
+    expect(dates).toEqual([
+      '2025-10-31', '2025-11-01', // Friday Halloween: it and the Saturday after
+      '2026-10-30', '2026-10-31', // Saturday: the Friday before
+      '2027-10-29', '2027-10-30', '2027-10-31', // Sunday: its Friday and Saturday still
+      '2028-10-27', '2028-10-28', '2028-10-31', // Tuesday: the weekend before
+      '2029-10-31', '2029-11-02', '2029-11-03', // Wednesday: the weekend after
+    ]);
+  });
+
+  it('names Oct 31 Halloween and the other nights Halloween weekend, one group, an observance with a source', () => {
+    expect(halloween(2026)).toEqual([
+      {
+        id: 'us:halloween-weekend:2026-10-30', title: 'Halloween weekend', start: '2026-10-30', end: '2026-10-30', kind: 'holiday',
+        scope: 'observance', group: 'us:halloween', groupLabel: 'Halloween', confidence: null,
+        sources: [{ label: 'Library of Congress', url: LOC_URL }],
+      },
+      {
+        id: 'us:halloween:2026', title: 'Halloween', start: '2026-10-31', end: '2026-10-31', kind: 'holiday',
+        scope: 'observance', group: 'us:halloween', groupLabel: 'Halloween', confidence: null,
+        sources: [{ label: 'Library of Congress', url: LOC_URL }],
+      },
+    ]);
+  });
+
+  it('is on every town’s calendar, researched or not', () => {
+    for (const townId of [null, 'hanover-nh']) {
+      expect(townEvents(townId, { from: '2026-10-30', to: '2026-10-31' }).filter((event) => event.group === 'us:halloween')
+        .map((event) => event.id)).toEqual(['us:halloween-weekend:2026-10-30', 'us:halloween:2026']);
+    }
+  });
+});
+
 describe('townEvents', () => {
   it('give every event at least one https source with a label, real dates and start <= end', () => {
     for (const event of allEvents()) {
@@ -98,6 +135,7 @@ describe('townEvents', () => {
     const events = townEvents('hanover-nh', { from: '2025-11-01', to: '2025-11-30' });
     expect(events.map((event) => event.id)).toEqual([
       'hanover-nh:2025-09-15:fall-term-classes',
+      'us:halloween-weekend:2025-11-01', // the Saturday after a Friday Halloween (D68)
       'hanover-nh:2025-11-08:home-football-vs-princeton',
       'us:veterans-day:2025',
       'hanover-nh:2025-11-15:home-football-vs-cornell',
@@ -116,7 +154,7 @@ describe('townEvents', () => {
   it('give a town outside the twelve, and a listed town with nothing researched, holidays only', () => {
     for (const townId of [null, 'nantucket-ma']) {
       const events = townEvents(townId, { from: '2026-01-01', to: '2026-12-31' });
-      expect(events).toHaveLength(11);
+      expect(events).toHaveLength(11 + 2); // the federal holidays and Halloween's two nights (D68)
       expect(events.every((event) => event.kind === 'holiday')).toBe(true);
     }
   });

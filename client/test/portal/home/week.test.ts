@@ -449,6 +449,8 @@ describe('this month', () => {
     const items = monthItems(TODAY, calendar);
     expect(items.map((item) => [item.kind, item.dates])).toEqual([['event', 'Nov 11'], ['note', 'Nov 20 to 22'], ['event', 'Nov 26']]);
     expect(eventLine({ title: 'Veterans Day', kind: 'holiday', scope: 'national' })).toBe('Veterans Day. Federal holiday.');
+    // D68: Halloween is a holiday no law sets, so never "Federal holiday".
+    expect(eventLine({ title: 'Halloween', kind: 'holiday', scope: 'observance' })).toBe('Halloween. Holiday.');
     expect(eventLine({ title: 'Sample game', kind: 'event', scope: 'town' })).toBe('Sample game. Town event.');
   });
 });

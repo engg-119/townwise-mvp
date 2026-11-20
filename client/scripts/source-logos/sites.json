@@ -12,6 +12,7 @@
   { "host": "ithaca.edu", "name": "Ithaca College" },
   { "host": "jsdelivr.net", "name": "jsDelivr" },
   { "host": "lakeplacid.com", "name": "Lake Placid Adirondacks" },
+  { "host": "loc.gov", "name": "Library of Congress" },
   { "host": "middlebury.edu", "name": "Middlebury College" },
   { "host": "northconwaynh.com", "name": "NorthConwayNH.com" },
   { "host": "nps.gov", "name": "National Park Service" },
