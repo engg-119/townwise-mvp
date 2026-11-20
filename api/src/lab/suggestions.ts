@@ -121,12 +121,12 @@ export const SUGGESTIONS_MAX_NOTES = 200;
 export const SUGGESTIONS_MAX_OWNER_EVENTS = 150;
 /** A pass keeps at most this many spotted events, read apart from its notes and rules. */
 export const MAX_EVENT_SUGGESTIONS = 5;
-/** D59 slice 3: at most this many rules TownwiseAI adds on its own a week (7 days) per location. [CONFIRM: at most 2 rules applied a week per location] */
+/** D59 slice 3: at most this many rules TownwiseAI adds on its own a week (7 days) per location. */
 export const MAX_RULES_APPLIED_A_WEEK = 2;
 const WEEK_MS = 7 * 24 * 60 * 60_000;
 /**
  * Generic event and food words that never mark a note or rule as repeating a sent title (design decision 7), so only a
- * distinctive word (a name, a company) does. [CONFIRM]
+ * distinctive word (a name, a company) does.
  */
 export const GENERIC_TITLE_WORDS: ReadonlySet<string> = new Set([
   'party', 'dinner', 'lunch', 'brunch', 'private', 'event', 'events', 'birthday', 'wedding', 'rehearsal', 'reception', 'meeting',
@@ -134,7 +134,7 @@ export const GENERIC_TITLE_WORDS: ReadonlySet<string> = new Set([
 ]);
 /**
  * Words of 3 or more letters that nearly every sentence holds and no name is, so a why like "closed for it last year"
- * is not dropped because an owner title also says "for". They never mark a leak on their own. [CONFIRM]
+ * is not dropped because an owner title also says "for". They never mark a leak on their own.
  */
 export const COMMON_WORDS: ReadonlySet<string> = new Set([
   'the', 'and', 'for', 'with', 'from', 'into', 'onto', 'our', 'you', 'your', 'are', 'was', 'were', 'has', 'had', 'have', 'its', 'not',
@@ -669,8 +669,7 @@ export function closedRunOf(sure: SureChange): number {
  * rated `high`: a note as it is; a rule only when it is a closure (with or without hours), D59's `rule.add`; a spotted
  * event only when the model chose its effect, as a private-event note with that effect (alongside regular service only
  * with the guest count its title states), checked again by the note rules. Never a follow-up, and never one closing more
- * than 14 days in a row (closedRunOf). Pure. [CONFIRM: TownwiseAI saves a weekly suggestion it rated high on its own: a
- * note, a closure rule, or a spotted private event whose effect it chose]
+ * than 14 days in a row (closedRunOf). Pure.
  */
 export function sureChangeOf(kept: KeptSuggestion, today: string): SureChange | null {
   const sure = sureOf(kept, today);

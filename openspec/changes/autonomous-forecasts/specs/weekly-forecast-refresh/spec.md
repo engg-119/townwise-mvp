@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Forecasts are on by default for every organization
-Every organization, existing and new, SHALL have its forecasts on (G1) unless staff switched them off: an organization with no `forecasts` field SHALL read as on, and a staff switch off SHALL be stored with when and by whom and stay off until staff switch it on again. The console SHALL show "On (default)" for an organization nobody switched. The spec SHALL keep G1's original text ("nothing is published ... unless staff have switched the organization's forecasts on") as history beside a build note. Nothing SHALL publish while the lab runner is off. [CONFIRM: forecasts are on by default for every organization, existing and new (an organization with no `forecasts` field reads as on), reversing the team's G1 rule that nothing is published until staff switch the organization's forecasts on; staff can still switch one off, recorded with when and by whom]
+Every organization, existing and new, SHALL have its forecasts on (G1) unless staff switched them off: an organization with no `forecasts` field SHALL read as on, and a staff switch off SHALL be stored with when and by whom and stay off until staff switch it on again. The console SHALL show "On (default)" for an organization nobody switched. The spec SHALL keep G1's original text ("nothing is published ... unless staff have switched the organization's forecasts on") as history beside a build note. Nothing SHALL publish while the lab runner is off.
 
 #### Scenario: An organization nobody switched
 - **WHEN** an active organization has no `forecasts` field and a calibration's draft passes the gate

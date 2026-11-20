@@ -31,7 +31,7 @@ import { CALENDAR_IMPORT } from './item/copy';
 // answered), the box starts checked and nothing is pressed: the server reads each file once it is stored. The box is read
 // as each upload completes, and only a checked box sends `aiAuto: true` (files/uploadQueue.ts), so a file that finishes
 // while it is unchecked is kept from TownwiseAI. Once the person changes the box, their choice stays until the page
-// closes. [CONFIRM: privacy wording for TownwiseAI working on its own]
+// closes.
 //
 // UI review 2026-11-19: a calendar file (an .ics or .ical file, kept as `other`) is imported as a calendar once stored
 // (D60), never sent to TownwiseAI, checked or not. Beside it, once it finishes, its item is read and the line says what

@@ -8,8 +8,8 @@
 // limit, and applyChange's conflict and dedupe checks. Anything else is the card, as before. The save is ordered for
 // retries as a press is: the proposal is claimed (tw_chat_proposals, which plans the note's id), the note is applied
 // under that id, then the claim is marked saved with its ledger row; a claim whose note was not applied is taken back.
-// The note's author and the audit actor are the person, as for a read they pressed. [CONFIRM: a note a person states
-// plainly in TownwiseAI chat saved with Undo, as theirs] Logs carry ids and the outcome only, never the note.
+// The note's author and the audit actor are the person, as for a read they pressed. Logs carry ids and the outcome
+// only, never the note.
 import { agentAutoOn, applyChange } from '../../agent/apply.ts';
 import { MAX_NOTES, readNoteContent } from '../../handlers/notes.ts';
 import type { NoteContent } from '../../stores/notes.ts';

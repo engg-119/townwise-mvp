@@ -8,8 +8,7 @@
 // reason a whole business shuts (a vacation, repairs, the weather, a family emergency). Any other word after "closed"
 // ("door", "session", "meeting", "catering", "road", "early", "kitchen", a name) makes the title not plain, so a
 // closed-door meeting, a catered buyout or a part of a day never answers a closure question. Pure; the title is read
-// here and never leaves: callers keep only ids and dates, and nothing logs. [CONFIRM: an all-day keyed calendar event
-// whose title plainly says closed, by this word rule, answers a closure question]
+// here and never leaves: callers keep only ids and dates, and nothing logs.
 import { readNoteContent } from '../handlers/notes.ts';
 import { eachDay } from '../forecasts/file.ts';
 import type { NoteContent } from '../stores/notes.ts';

@@ -64,7 +64,7 @@ None. No capability of an unarchived change (notably `refine-calendar-and-home`'
 
 Every `[CONFIRM]` this change adds, most consequential first (each also goes into D42):
 
-1. Forecasts are on by default for every organization, existing and new (an organization with no `forecasts` field reads as on). This reverses the team's G1, "nothing is published until staff switch it on". Staff can still switch one off, recorded with when and by whom.
+1. Forecasts are on by default for every organization, existing and new (an organization with no `forecasts` field reads as on). This reverses the team's G1, "nothing is published until staff switch it on". Staff can still switch one off, recorded with when and by whom. Approved by the owner on 2026-11-19.
 2. A same-engine draft is compared with the current lab run's recorded backtest, not held-out weeks after its cutoff. An engine switch is decided by the lab on the same backtest weeks with a 0.5-point margin, and a tie keeps the current engine. This changes how G2 is scored.
 3. A same-engine refit publishes when it passes its absolute checks and is no more than 0.5 points worse than the best recorded backtest in the current streak. A tie publishes, the one exception to G2's "ties do not publish".
 4. Scheduled calibrations may start from a 230-day span. This supersedes the owner's 2026-11-10 decision of 595 days for the baseline engine on scheduled calibrations only; a calibration a person starts and the model engine keep 595.

@@ -299,4 +299,4 @@ Defaults to confirm, each a [CONFIRM: ...] in D39 and the CONFIRM index (items 7
 - [CONFIRM: no separate Disconnect Google control]
 - [CONFIRM: Google calendars' repeating events are kept, within the 2,000]
 - [CONFIRM: a Google calendar keeps its next 2,000 events first, then earlier ones]
-- [CONFIRM: the explainer's words]
+- Approved by the owner on 2026-11-19: the explainer's words

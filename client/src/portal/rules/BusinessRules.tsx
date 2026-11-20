@@ -61,8 +61,7 @@ const TOWNWISE_AI = 'TownwiseAI';
 /**
  * “Added by owner@example.com, Mar 2, 2026”, “Saved from TownwiseAI by …” for a rule saved from a chat card, or (D59
  * slice 3) “Added by TownwiseAI on its own, …” for one it was sure of, with “, changed since” once someone edited it (it
- * is then a person's, and TownwiseAI's Undo no longer takes it back). [CONFIRM: the words for what TownwiseAI saves from
- * its weekly suggestions and the sales history]
+ * is then a person's, and TownwiseAI's Undo no longer takes it back).
  */
 function addedLine(rule: Rule): string {
   if (rule.createdByEmail === TOWNWISE_AI) {

@@ -282,8 +282,7 @@ function isParty(note: Flagged): boolean {
  * day and a party label marks it a private event, unless a note on the day decides] [CONFIRM: labels never change a day's
  * closed or likely-closed status or its guests]
  * Owner beats agent (D59): on any day, a note a person made that decides the day sets aside every TownwiseAI note
- * covering it (forecasts/adjust.ts ownerBeatsAgent) before the flags are read. [CONFIRM: a note a person made beats a
- * TownwiseAI note on the same day]
+ * covering it (forecasts/adjust.ts ownerBeatsAgent) before the flags are read.
  */
 export function labInputOf(args: {
   calibration: Pick<CalibrationRecord, 'id' | 'regimeStart'>;

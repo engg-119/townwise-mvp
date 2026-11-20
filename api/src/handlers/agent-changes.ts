@@ -9,8 +9,7 @@
 // calendar (slice 2, a `booking.label` change): the notes that calendar's sort made are undone first, each as its own
 // change (one a person changed since is theirs and stays), then the labels that sort set that nobody changed since are
 // cleared and the confirm TownwiseAI made is taken back, so the calendar waits for Use for forecasts again (or reads as
-// never sorted when no label is left); it answers 409 change_in_progress while the calendar's sort still runs. [CONFIRM:
-// Undo per calendar takes back the notes, labels and confirm TownwiseAI made that nobody changed since] Logs and
+// never sorted when no label is left); it answers 409 change_in_progress while the calendar's sort still runs. Logs and
 // audit events carry ids, the action and the source kind only: never a title, a why, a file name or a figure.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
