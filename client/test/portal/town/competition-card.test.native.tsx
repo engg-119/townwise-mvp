@@ -69,10 +69,14 @@ test('the lettered map, each competitor with its events, and the web list', asyn
   const api = setup({ gap: null, map: mapOf(['ChIJa', 'ChIJb']), competitors: COMPETITORS, web: WEB });
   await renderApp('/locations/l1/town', api);
   expect(await screen.findByLabelText('Map of restaurants, bars and cafes near Main Street Bar')).toBeTruthy();
-  expect(screen.getByText('A. Example Tavern')).toBeTruthy();
+  // Each letter once, as its badge, and the name without it (UI review).
+  expect(screen.getByText('A')).toBeTruthy();
+  expect(screen.getByText('Example Tavern')).toBeTruthy();
+  expect(screen.queryByText(/^A\. /)).toBeNull();
   expect(screen.getByText('Bar · 120 m')).toBeTruthy();
   expect(screen.getByText('Trivia night')).toBeTruthy();
-  expect(screen.getByText('B. Example Diner')).toBeTruthy();
+  expect(screen.getByText('B')).toBeTruthy();
+  expect(screen.getByText('Example Diner')).toBeTruthy();
   expect(screen.getByText('American restaurant · 1.2 km')).toBeTruthy();
   expect(screen.getByText(COMPETITION_NO_EVENTS)).toBeTruthy();
   expect(screen.getByText(COMPETITION_SOURCE)).toBeTruthy();
@@ -89,7 +93,7 @@ test('a map that fails to load drops the letters and keeps the list', async () =
   const map = await screen.findByLabelText('Map of restaurants, bars and cafes near Main Street Bar');
   await fireEvent(map, 'error');
   expect(await screen.findByText('Example Tavern')).toBeTruthy();
-  expect(screen.queryByText('A. Example Tavern')).toBeNull();
+  expect(screen.queryByText('A')).toBeNull();
   expect(screen.queryByLabelText('Map of restaurants, bars and cafes near Main Street Bar')).toBeNull();
 });
 

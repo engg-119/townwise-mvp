@@ -86,9 +86,10 @@ function Competitors(props: {
           {data.competitors.map((competitor) => (
             <View key={competitor.placeId} role="listitem" style={styles.competitor}>
               <View style={styles.head}>
-                {letters ? <Text style={styles.letter} aria-hidden>{competitor.letter}</Text> : null}
+                {/* The map's letter once, as its badge (UI review: not again before the name); read before the name. */}
+                {letters ? <Text style={styles.letter}>{competitor.letter}</Text> : null}
                 <View style={styles.headText}>
-                  <Text style={styles.name}>{letters ? `${competitor.letter}. ${competitor.name}` : competitor.name}</Text>
+                  <Text style={styles.name}>{competitor.name}</Text>
                   <Text style={styles.help}>{competitorLine(competitor)}</Text>
                 </View>
               </View>
