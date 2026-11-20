@@ -816,9 +816,10 @@ describe('a private event’s guests (D71)', () => {
     expect((await eventsAt(locationId, 'agent.question_answered')).map((e) => [e.actorUserId, e.details])).toEqual([
       [member.userId, { locationId, questionId: partyId(noteId), answer: 'guests' }],
     ]);
-    // A note on a stored day wants a refit (D59), so the next one takes the party's guests off April 4.
+    // A note on a stored day wants a refit (D59), so the next one takes the party's guests off April 4; a person typed the
+    // count, so its cause is `person_change` (D65).
     const location = await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(locationId) });
-    expect(location?.refit).toEqual({ wantedAt: server.clock.now() });
+    expect(location?.refit).toEqual({ wantedAt: server.clock.now(), causes: ['person_change'] });
     const lines = logLines(server).filter((line) => line.msg === 'townwise.agent_answer');
     expect(lines).toEqual([expect.objectContaining({ orgId, locationId, answer: 'guests' })]);
     expect(server.logs.join('\n')).not.toMatch(/"(guests|expectedGuests)":|Sentinel-party/);
