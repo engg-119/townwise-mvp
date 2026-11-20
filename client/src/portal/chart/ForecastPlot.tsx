@@ -20,6 +20,7 @@ import { Mono } from '../ui/text';
 // and a hovered column beside it doesn't take its place. `words` stand upright in
 // columns too narrow for words across (the month's); a column with a word draws no same-weekday-last-year point and
 // the line breaks around it, so the faint line never runs through the word (D64; `wordedLastYear` keeps the key honest).
+// A word in a column with a stored figure (a likely closed day's few guests) starts just above that point, never under it.
 // The drawing is always aria-hidden: the surface that draws it says each day in words. `PlotKey` names only what is
 // drawn.
 
@@ -93,6 +94,14 @@ export function bandPaths(points: readonly ({ x: number; low: number; high: numb
 /** Whether a day's same weekday last year is drawn: never in a column whose status word stands in it. */
 export function wordedLastYear(day: PlotDay, word: string | null | undefined): boolean {
   return day.lastYear !== null && (word ?? null) === null;
+}
+
+/**
+ * Where a column's upright word starts, bottom up: at the plot's foot, or with a stored figure in the column just above
+ * its point (radius 4.5, then 3px), so the point never covers a letter.
+ */
+export function wordFoot(actual: number | null, height: number, y: (value: number) => number): number {
+  return actual === null ? height - INSET : Math.min(height - INSET, r2(y(actual) - 8));
 }
 
 /** A column's fill: today's shade or the lit column. */
@@ -189,7 +198,7 @@ export function ForecastPlot(props: {
       )))}
       {words.map((word, index) => {
         if (word === null || !drawn(index)) return null;
-        const at = { x: r2(x(index) + 3), y: height - INSET };
+        const at = { x: r2(x(index) + 3), y: wordFoot(days[index]?.actual ?? null, height, y) };
         return (
           <SvgText
             key={days[index]?.date ?? String(index)}

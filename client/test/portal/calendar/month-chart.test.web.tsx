@@ -4,6 +4,7 @@ import { calendarChart } from '../../../src/portal/calendar/chart';
 import { gridDays } from '../../../src/portal/calendar/grid';
 import { MIN_SLOT, MonthChart, monthSlot } from '../../../src/portal/calendar/MonthChart';
 import { ALL_FILTERS, type CalendarInput } from '../../../src/portal/calendar/model';
+import { wordFoot } from '../../../src/portal/chart/ForecastPlot';
 import type { ForecastWindow } from '../../../src/portal/estimates/api';
 import { theme } from '../../../src/theme';
 import { forecastDay, forecastOf } from './fakes';
@@ -198,4 +199,21 @@ test('backtest days (D72) draw apart from the forecast, dotted and text2, the ke
   expect(series('backtest-point')).toHaveLength(1);
   expect(screen.getByTestId('calendar-month-chart-key-items').textContent).toContain('Backtest');
   expect(chart().textContent).not.toContain('No forecast for these days.');
+});
+
+test('a likely closed column’s upright word starts above its stored guests’ point, never under it', () => {
+  // Wednesdays Sep 9 to Oct 28 at 100 guests, then Nov 4 with 2: likely closed (spec D32), with a forecast elsewhere so words draw.
+  const wednesdays = Array.from({ length: 8 }, (_, at) => ({ date: new Date(Date.UTC(2026, 8, 9 + at * 7)).toISOString().slice(0, 10), guests: 100, netSalesCents: 200_000 }));
+  const reads: CalendarInput = {
+    today: TODAY, covered: { from: '2026-10-26', to: '2026-12-06' }, forecast: forecastOf([forecastDay({ date: '2026-11-12' })]) as ForecastWindow,
+    salesDays: [...wednesdays, { date: '2026-11-04', guests: 2, netSalesCents: 4_000 }], events: [], notes: [], rules: [], imported: [], filters: ALL_FILTERS,
+  };
+  renderChart('2026-11-21', calendarChart(NOVEMBER, reads, null));
+  const word = series('status').find((each) => each.textContent === 'LIKELY CLOSED');
+  const foot = Number(/translate\([\d.]+ ([\d.]+)\)/.exec(word?.getAttribute('transform') ?? '')?.[1]);
+  const dot = series('actual')[0];
+  expect(Number(dot?.getAttribute('cy')) - Number(dot?.getAttribute('r'))).toBeGreaterThan(foot);
+  // A word in a column with no stored figure keeps the plot's foot.
+  expect(wordFoot(null, 120, () => 0)).toBe(108);
+  expect(wordFoot(2, 120, () => 107)).toBe(99);
 });

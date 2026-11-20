@@ -365,3 +365,20 @@ test('a forecast’s figure is lighter after a “~” with “forecast” besid
   expect(figure('2026-11-21')?.textContent).toBe('~282');
   expect(figure('2026-10-31')?.textContent).toBe('140');
 });
+
+test('a backtest’s figure (D72) is dotted underneath at every width, so on a phone it never passes for a forecast’s “~”', () => {
+  const backtest = { date: '2026-11-03', engine: 'model', dataThrough: '2026-06-30', low: 200, mid: 221, high: 240, runId: 'r0', actual: null, inRange: null };
+  const window = forecastOf([forecastDay({ date: '2026-11-04', low: 80, mid: 104, high: 120 })]) as ForecastWindow;
+  renderGrid({ reads: input({ backtest: true, forecast: { ...window, backtest: [backtest] } }) });
+  const figure = (date: string): HTMLElement | null => cell(date).querySelector<HTMLElement>('[data-figure]');
+  for (const at of [1280, 375]) {
+    setWidth(at);
+    expect([figure('2026-11-03')?.getAttribute('data-figure'), figure('2026-11-03')?.textContent]).toEqual(['backtest', '~221']);
+    expect(figure('2026-11-03')?.style.textDecorationStyle).toBe('dotted');
+    expect(figure('2026-11-03')?.style.textDecorationLine).toBe('underline');
+    // A forecast's figure, past or ahead, is never underlined.
+    expect([figure('2026-11-04')?.getAttribute('data-figure'), figure('2026-11-04')?.textContent]).toEqual(['forecast', '~104']);
+    expect(figure('2026-11-04')?.style.textDecorationLine).toBe('');
+    expect(cell('2026-11-03').getAttribute('aria-label')).toContain('No data. 221 guests, backtest, likely 200 to 240.');
+  }
+});

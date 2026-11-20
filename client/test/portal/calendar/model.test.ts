@@ -1,6 +1,6 @@
 import type { TownEvent } from '../../../src/portal/analytics/api';
 import {
-  ALL_FILTERS, BACKTEST_LABEL, backtestCheck, backtestWords, calendarMonth, captionOf, checkWords, pastForecastLines, dayCell, dayView, eventsOn, FIGURE_KEY, figureLabel, figureSource, figureTone, forecastCheck,
+  ALL_FILTERS, BACKTEST_LABEL, backtestCheck, backtestWords, calendarMonth, dottedFigure, showsBacktest, captionOf, checkWords, pastForecastLines, dayCell, dayView, eventsOn, FIGURE_KEY, figureLabel, figureSource, figureTone, forecastCheck,
   forecastLabel, forecastWords, insideWords, markedFigure, monthBounds, monthCheckLine, OUTLOOK_KEY, outlookKey, rangeWords, reasonOutcomeWords,
   reasonShortLines, reasonSize, savedNotice, selectedDay, shortReasons, statusTakesFigure, statusWord, tooltipLines, topRightOf, type CalendarCell,
   type CalendarInput, type ImportedEvent,
@@ -1088,6 +1088,13 @@ describe('a backtest day (D72)', () => {
     expect(tooltipLines('2026-11-07', reads())?.lines.join(' ')).not.toContain('Backtest');
     // Today and later never read a backtest.
     expect(dayView(TODAY, { ...reads(), forecast: { ...windowOf([]), backtest: [backtest(TODAY)] } }).forecast).toMatchObject({ kind: 'none' });
+  });
+
+  test('a backtest’s figure is dotted, and the key names it while a shown cell has one', () => {
+    expect([dottedFigure({ kind: 'backtest' }), dottedFigure({ kind: 'past_forecast' }), dottedFigure({ kind: 'forecast' })]).toEqual([true, false, false]);
+    const cells = calendarMonth('2026-11', reads()).flat().filter((cell) => cell !== null);
+    expect(showsBacktest(cells)).toBe(true);
+    expect(showsBacktest(calendarMonth('2026-11', reads({ backtest: false })).flat().filter((cell) => cell !== null))).toBe(false);
   });
 
   test('backtest days never count in the month line', () => {

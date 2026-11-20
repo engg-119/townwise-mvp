@@ -249,6 +249,19 @@ export const FORECAST_TAG = 'forecast';
 /** The word beside a backtest's figure (D72), in place of FORECAST_TAG. */
 export const BACKTEST_TAG = 'backtest';
 
+/**
+ * D72: a backtest's figure is underlined with dots wherever a cell shows it, as the chart draws a backtest dotted, so on
+ * a phone, where no caption fits, its “~” never passes for a forecast's. The key names it (showsBacktest).
+ */
+export function dottedFigure(figure: Pick<CellFigure, 'kind'>): boolean {
+  return figure.kind === 'backtest';
+}
+
+/** Whether a shown cell's figure is a backtest's (D72): the key under the grid then names the dotted figure. */
+export function showsBacktest(cells: readonly Pick<CalendarCell, 'figure'>[]): boolean {
+  return cells.some((cell) => cell.figure !== null && dottedFigure(cell.figure));
+}
+
 /** Each grid's key: its two entries, shown with a sample figure each (“94”, “~82”). */
 export const FIGURE_KEY = { actual: 'Actual guests', forecast: 'Forecast' } as const;
 
