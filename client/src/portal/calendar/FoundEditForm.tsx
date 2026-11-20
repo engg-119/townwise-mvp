@@ -59,7 +59,7 @@ export function FoundEditForm(props: {
 
   // The line and the actions in the popover's view when the sheet opens again on a conflict (web; react-native-web's
   // View is the element).
-  const footer = useRef<View>(null);
+  const footer = useRef<React.ComponentRef<typeof View>>(null);
   useEffect(() => {
     if (!props.conflict || Platform.OS !== 'web') return;
     const node = footer.current as unknown as { scrollIntoView?: (options: { block: 'nearest' }) => void } | null;
