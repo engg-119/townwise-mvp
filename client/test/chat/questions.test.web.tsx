@@ -26,7 +26,11 @@ import { serveAbout } from './about-fakes';
 // side"), so a card is drawn once either way; a message from one opens a conversation, and its card's outcome shows
 // when the person comes back to a new chat.
 
-const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as { panel: { questions: unknown[]; activity: unknown[] } };
+const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as {
+  panel: { questions: unknown[]; activity: unknown[] };
+  /** D71: a private event's question, and the answer a count gets. */
+  partyGuests: { questions: unknown[]; answer: { questionId: string; response: unknown } };
+};
 
 const GAP_ID = 'gap_2026-05-12_2026-05-13';
 const GAP_HEADING = 'Were you closed May 12 to May 13, 2026?';
@@ -632,5 +636,58 @@ describe('?panel=questions (Home’s link)', () => {
     fireEvent.click(row);
     expect(within(within(wrap).getByTestId('agent-side')).getAllByRole('heading')[0]?.textContent).toBe('Suggested rules');
     expect(wrap.nextElementSibling).toBe(screen.getByTestId('chat-landing-questions'));
+  });
+});
+
+// D71: a past private event's guests. The fixture's question is about Sat, Apr 4, 2026, the oldest of the three.
+describe('a private event’s guests (D71)', () => {
+  const PARTY_HEADING = 'How many guests came for the private event on Sat, Apr 4, 2026?';
+  const PARTY_PATH = `/api/org/locations/l1/agent/questions/${fixture.partyGuests.answer.questionId}`;
+  function partyApi(): FakeChatApi {
+    const api = chatApi();
+    api.panel = { ...fixture.panel, questions: [...fixture.panel.questions, ...fixture.partyGuests.questions] };
+    return api;
+  }
+
+  test('Save is on only for a whole count from 1 to 20,000, and saves it into the note', async () => {
+    const api = partyApi();
+    api.respond[PARTY_PATH] = () => fixture.partyGuests.answer.response;
+    renderAt('/locations/l1/agent', api);
+    await openPanel(3);
+    const party = await waitFor(() => card(cards(), PARTY_HEADING));
+    expect(within(party).getByText('Its note has no guest count yet.')).toBeTruthy();
+    expect(within(party).getByText('Townwise takes these guests off that day when it learns from your sales, so the event isn’t read as a normal busy day.')).toBeTruthy();
+    expect(within(party).queryByRole('button', { name: 'Something else…' })).toBeNull();
+    const save = (): HTMLElement => within(party).getByRole('button', { name: 'Save' });
+    expect(save().getAttribute('aria-disabled')).toBe('true');
+    const field = within(party).getByLabelText('Guests who came');
+    for (const value of ['0', '20001', '4.5', 'forty']) {
+      fireEvent.change(field, { target: { value } });
+      expect({ value, off: save().getAttribute('aria-disabled') }).toEqual({ value, off: 'true' });
+      expect(within(party).getByText('Enter a whole number of guests from 1 to 20,000.')).toBeTruthy();
+    }
+    fireEvent.change(field, { target: { value: '43' } });
+    expect(save().getAttribute('aria-disabled')).not.toBe('true');
+    fireEvent.click(save());
+    expect(await findInCards('Saved: 43 guests on the private event note.')).toBeTruthy();
+    expect(api.writes).toEqual([{ method: 'POST', path: PARTY_PATH, body: { answer: 'guests', guests: 43 } }]);
+  });
+
+  test('Skip answers not sure, and the card says it won’t ask again', async () => {
+    const api = partyApi();
+    api.respond[PARTY_PATH] = () => ({ question: { id: fixture.partyGuests.answer.questionId, answer: 'not_sure' }, note: null });
+    renderAt('/locations/l1/agent', api);
+    await openPanel(3);
+    const party = await waitFor(() => card(cards(), PARTY_HEADING));
+    fireEvent.click(within(party).getByRole('button', { name: 'Skip' }));
+    expect(await findInCards('Got it. TownwiseAI won’t ask about this event again.')).toBeTruthy();
+    expect(api.writes).toEqual([{ method: 'POST', path: PARTY_PATH, body: { answer: 'not_sure' } }]);
+  });
+
+  test('under view-as the field, Save and Skip are read-only', async () => {
+    renderAt('/locations/l1/agent', partyApi(), viewAsMe(ACCESS.member));
+    await openPanel(3);
+    const party = await waitFor(() => card(cards(), PARTY_HEADING));
+    for (const name of ['Save', 'Skip']) expect(within(party).getByRole('button', { name }).getAttribute('aria-disabled')).toBe('true');
   });
 });

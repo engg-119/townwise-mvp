@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { Note } from '../../portal/locations/api';
+import { guestsOf } from '../../portal/locations/noteRules';
 import { Button } from '../../portal/ui/Button';
 import { ErrorNotice, Messages } from '../../portal/ui/feedback';
 import { FormField } from '../../portal/ui/FormField';
@@ -24,8 +25,15 @@ import { ChatButton, type ChatButtonHandle } from './controls';
 // saved is the question answered `other`, with no words. A turn that isn't saved answers nothing, and the card keeps
 // the words with the chat's reason. The panel and the chat's landing can both show a card, sharing its state
 // (useAgentPanel); only the copy the person used announces its answer or error.
+//
+// D71: a past private event with no guest count asks how many guests came (each day, for a note over several days): a
+// Guests field, Save (only for a whole count from 1 to 20,000) and Skip. Save writes the count into the event's note, so
+// Townwise takes those guests off the day when it learns; Skip asks no more. The field's text is the card's own.
 
 const SOMETHING_ELSE = 'Something else…';
+/** D71. [CONFIRM: the private event question's help line] */
+const PARTY_HELP_ONE = 'Townwise takes these guests off that day when it learns from your sales, so the event isn’t read as a normal busy day.';
+const PARTY_HELP_MANY = 'Townwise takes these guests off each of those days when it learns from your sales, so the event isn’t read as a normal busy day.';
 const ELSE_HELP = 'Something else lets you tell TownwiseAI in the chat.';
 
 export interface QuestionCopy {
@@ -74,9 +82,30 @@ function joined(...values: readonly (string | null | false)[]): string {
   return values.filter((value): value is string => typeof value === 'string').join(' ');
 }
 
-/** The words of a card. `chat`: TownwiseAI's chat is on, so Something else… is offered. */
+/** D71: whether a private event's question covers more than one day, so it asks for each day's guests. */
+function eachDay(question: Extract<Question, { kind: 'party_guests' }>): boolean {
+  return question.startDate !== question.endDate;
+}
+
+/**
+ * The words of a card. `chat`: TownwiseAI's chat is on, so Something else… is offered (never on a private event's
+ * question, D71, whose answers are Save and Skip: `answers` holds Skip only).
+ */
 export function questionCopy(question: Question, locationName: string, chat: boolean): QuestionCopy {
   const other = chat ? [{ value: 'other' as const, label: SOMETHING_ELSE }] : [];
+  if (question.kind === 'party_guests') {
+    // [CONFIRM: the private event question's heading and context]
+    const many = eachDay(question);
+    const weekdays = weekdaysText(question.weekdays);
+    return {
+      heading: many
+        ? `How many guests came for the private event each day from ${rangeText(question.startDate, question.endDate)}?`
+        : `How many guests came for the private event on ${dayText(question.startDate)}?`,
+      context: sentences([many && weekdays !== null && `On ${weekdays.replace(/ only$/, '')} only.`, 'Its note has no guest count yet.']),
+      answers: [{ value: 'not_sure', label: 'Skip' }],
+      help: many ? PARTY_HELP_MANY : PARTY_HELP_ONE,
+    };
+  }
   if (question.kind === 'likely_closed') {
     const usual = `${weekdaysOf(question.date)} usually have about ${formatCount(question.typicalGuests)}`;
     const recorded = question.guests === 0
@@ -121,6 +150,13 @@ export function questionCopy(question: Question, locationName: string, chat: boo
 
 /** What the stored answer did: the note it saved, or that the question won't come back. */
 export function answeredLine(question: Question, answered: Answered): string {
+  if (question.kind === 'party_guests') {
+    // [CONFIRM: "Saved: {n} guests on the private event note." and the skip's line]
+    if (answered.answer !== 'guests') return 'Got it. TownwiseAI won’t ask about this event again.';
+    const count = answered.note?.expectedGuests ?? null;
+    if (count === null) return 'Saved the guest count on the private event note.';
+    return `Saved: ${count === 1 ? '1 guest' : `${formatCount(count)} guests`}${eachDay(question) ? ' each day' : ''} on the private event note.`;
+  }
   const these = question.kind === 'likely_closed' ? 'this day' : 'these days';
   if (answered.answer === 'closed') return answered.note === null ? 'Saved. TownwiseAI treats those days as closed.' : savedNoteLine(answered.note);
   if (answered.answer === 'open' && question.kind === 'likely_closed') {
@@ -142,6 +178,8 @@ function savedNoteLine(note: Note): string {
 
 /** "About {subject} ({evidence}): ", what Something else… puts before the person's words. */
 function otherPrefix(question: Question): string {
+  // D71: never offered on a private event's question; its subject, should it ever be.
+  if (question.kind === 'party_guests') return `About the private event ${eachDay(question) ? rangeText(question.startDate, question.endDate) : `on ${dayText(question.startDate)}`}: `;
   if (question.kind === 'likely_closed') {
     const recorded = question.guests === 0
       ? 'sales but no guests recorded'
@@ -175,6 +213,46 @@ function CardError(props: { message: string; live: boolean; onRetry?: () => void
       <Messages items={[props.message]} />
       {props.onRetry === undefined ? null : <Button variant="outline" label="Try again" onPress={props.onRetry} />}
     </View>
+  );
+}
+
+/** D71: the Guests field, Save and Skip of a private event's question. */
+function PartyAnswers(props: {
+  id: string; helpId: string; help: string; many: boolean; off: boolean; readOnlyId: string | null;
+  save: (guests: number) => void; skip: () => void;
+}): React.JSX.Element {
+  const [text, setText] = useState('');
+  const count = guestsOf(text);
+  const valid = typeof count === 'number';
+  const message = count === 'invalid' ? 'Enter a whole number of guests from 1 to 20,000.' : null;
+  return (
+    <>
+      <View style={styles.guests}>
+        <FormField
+          label={props.many ? 'Guests who came each day' : 'Guests who came'}
+          value={text}
+          onChangeText={setText}
+          keyboardType="number-pad"
+          numeric
+          maxLength={6}
+          readOnly={props.off}
+          {...(props.readOnlyId === null ? {} : { readOnlyId: props.readOnlyId })}
+          {...(message === null ? {} : { messages: [message] })}
+          onSubmitEditing={() => { if (valid && !props.off) props.save(count); }}
+        />
+      </View>
+      <View role="group" aria-label="Answer" style={styles.partyActions}>
+        <Button
+          variant="outline"
+          label="Save"
+          disabled={props.off || !valid}
+          describedBy={joined(props.readOnlyId, props.helpId)}
+          onPress={() => { if (valid) props.save(count); }}
+        />
+        <Button variant="outline" label="Skip" disabled={props.off} describedBy={joined(props.readOnlyId, props.helpId)} onPress={props.skip} />
+      </View>
+      <Text nativeID={props.helpId} style={styles.help}>{props.help}</Text>
+    </>
   );
 }
 
@@ -217,7 +295,20 @@ export function QuestionCard(props: {
 
   let body: React.ReactNode;
   if (answered !== undefined) body = <Text {...status} style={styles.done}>{answeredLine(question, answered)}</Text>;
-  else if (other?.sent === true) body = <Text {...status} style={styles.help}>{answering ? 'Saving your answer…' : 'Your message is in the chat.'}</Text>;
+  else if (question.kind === 'party_guests') {
+    body = (
+      <PartyAnswers
+        id={id}
+        helpId={helpId}
+        help={answering ? 'Saving your answer…' : copy.help}
+        many={eachDay(question)}
+        off={off}
+        readOnlyId={props.readOnlyId}
+        save={(guests) => { panel.answer(id, 'guests', place, guests); }}
+        skip={() => { panel.answer(id, 'not_sure', place); }}
+      />
+    );
+  } else if (other?.sent === true) body = <Text {...status} style={styles.help}>{answering ? 'Saving your answer…' : 'Your message is in the chat.'}</Text>;
   else {
     body = (
       <>
@@ -313,6 +404,8 @@ const styles = StyleSheet.create({
   context: { ...theme.type.small, color: c.text2 },
   answers: { gap: theme.space[2], alignItems: 'flex-start' },
   other: { gap: theme.space[3] },
+  guests: { maxWidth: 240 },
+  partyActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space[2] },
   otherActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[4], rowGap: theme.space[2] },
   help: { ...theme.type.small, color: c.text3 },
   done: { ...theme.type.small, color: c.white },

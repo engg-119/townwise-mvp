@@ -957,6 +957,8 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
   const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8')) as {
     panel: AgentPanel;
     answer: { questionId: string; body: unknown; response: AnswerResult };
+    /** D71: a private event's question and the count saved from one, at a location asked nothing else. */
+    partyGuests: Pick<AgentPanel, 'questions' | 'activity'> & { answer: { questionId: string; body: unknown; response: AnswerResult } };
   };
 
   it('are the client’s: the fixture and its client copy are identical', () => {
@@ -991,20 +993,6 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
       _id: noteId, orgId: org, locationId: location, kind: 'closure', startDate: '2026-02-10', endDate: '2026-02-11', weekdays: null,
       effect: 'closed', expectedGuests: null, detail: null, createdBy: member.userId,
       createdAt: new Date('2026-06-01T11:00:00.000Z'), updatedAt: new Date('2026-06-01T11:00:00.000Z'),
-    });
-    // D71: a past private event with no count (asked), and one whose count was saved from its question at 06:30.
-    const partyAt = new Date('2026-04-01T12:00:00.000Z');
-    const party = (id: string, startDate: string, expectedGuests: number | null, updatedAt: Date) => ({
-      _id: new Types.ObjectId(id), orgId: org, locationId: location, kind: 'private_event', startDate, endDate: startDate, weekdays: null,
-      effect: 'more_guests', expectedGuests, detail: null, createdBy: member.userId, createdAt: partyAt, updatedAt,
-    });
-    const countedAt = new Date('2026-06-01T06:30:00.000Z');
-    await server.connection.collection('tw_notes').insertMany([
-      party('0000000000000000000000a5', '2026-04-04', null, partyAt), party('0000000000000000000000a6', '2026-04-11', 40, countedAt),
-    ]);
-    await server.connection.collection('tw_agent_answers').insertOne({
-      orgId: org, locationId: location, questionId: 'party_guests_0000000000000000000000a6', answer: 'guests',
-      noteId: new Types.ObjectId('0000000000000000000000a6'), status: 'done', createdAt: countedAt, updatedAt: countedAt,
     });
     // F3: a stored file read from 08:29 for a minute.
     await storedFile(locationId, {
@@ -1121,5 +1109,40 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
 
     expect(await panel(locationId)).toEqual({ status: 200, body: fixture.panel });
     expect(await answer(locationId, fixture.answer.questionId, fixture.answer.body)).toEqual({ status: 200, body: fixture.answer.response });
+  });
+
+  it('D71: GET answers a private event’s question and a saved count as the fixture holds them, and POST a count as it does', async () => {
+    const locationId = await addLocation(server, { orgId, name: `Party Room ${randomUUID().slice(0, 8)}` });
+    const org = new Types.ObjectId(orgId);
+    const location = new Types.ObjectId(locationId);
+    // Ten days with sales and no gap: the location is asked nothing about its days.
+    await server.connection.collection('tw_sales_days').insertMany(Array.from({ length: 10 }, (_, i) => ({
+      orgId: org, locationId: location, date: plus('2026-04-02', i), guests: 100, netSalesCents: null, uploadId: new Types.ObjectId(),
+      updatedAt: server.clock.now(),
+    })));
+    // Written by someone no longer here, so the member answering is not its author.
+    const partyAt = new Date('2026-04-01T12:00:00.000Z');
+    const countedAt = new Date('2026-06-01T06:30:00.000Z');
+    const party = (id: string, startDate: string, expectedGuests: number | null, updatedAt: Date) => ({
+      _id: new Types.ObjectId(id), orgId: org, locationId: location, kind: 'private_event', startDate, endDate: startDate, weekdays: null,
+      effect: 'more_guests', expectedGuests, detail: null, title: null, startTime: null, endTime: null, createdBy: 'fixture-gone',
+      createdAt: partyAt, updatedAt,
+    });
+    await server.connection.collection('tw_notes').insertMany([
+      party('0000000000000000000000a5', '2026-04-04', null, partyAt), party('0000000000000000000000a6', '2026-04-11', 40, countedAt),
+    ]);
+    await server.connection.collection('tw_agent_answers').insertOne({
+      orgId: org, locationId: location, questionId: 'party_guests_0000000000000000000000a6', answer: 'guests',
+      noteId: new Types.ObjectId('0000000000000000000000a6'), status: 'done', createdAt: countedAt, updatedAt: countedAt,
+    });
+    const { status, body } = await panel(locationId);
+    expect(status).toBe(200);
+    expect({ questions: body.questions, activity: body.activity }).toEqual({
+      questions: fixture.partyGuests.questions, activity: fixture.partyGuests.activity,
+    });
+    const { questionId, body: json, response } = fixture.partyGuests.answer;
+    // The note's updatedAt is the answer's time: the suite's clock has moved on since 12:00 by now.
+    const note = response.note === null ? null : { ...response.note, updatedAt: server.clock.now().toISOString() };
+    expect(await answer(locationId, questionId, json)).toEqual({ status: 200, body: { ...response, note } });
   });
 });
