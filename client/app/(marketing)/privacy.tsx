@@ -52,7 +52,7 @@ const Mail = (): React.JSX.Element => <A href={CONTACT_HREF}>{CONTACT_EMAIL}</A>
 // every org admin of an organization, once per location, when that location's first forecast is published, and the date
 // it was sent kept on the location (tw_locations.firstForecastMailedAt). Built on the owner's request of 2026-11-19; the
 // page's date (November 19, 2026) covers it.
-// [CONFIRM: the privacy page's words for research, awaiting the owner before TOWNWISE_RESEARCH is true in production] The
+// [CONFIRM: the privacy page's words for research, awaiting the owner; research is on in production] The
 // “Town research” item, the Changes TownwiseAI makes item's sentences on correcting a researched event, the TownwiseAI
 // conversations item's sentence on events research found, the Google item's sentences on the Competition card, and the
 // Anthropic item's exception for town research, its sentence on research's searches and pages, and the weekly reading's
