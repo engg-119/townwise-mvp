@@ -1046,10 +1046,19 @@ describe('found by research (D66)', () => {
       fake.found = [theirs];
       return new ApiError('http', 'The request was refused.', { status: 409, code: 'changed_since', detail: { event: theirs } });
     };
+    const scrolled = jest.fn();
+    const scrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value: scrolled });
     fireEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
-    expect(await screen.findByText('Someone changed this event since you opened it. It now reads as shown. Make your change again, then save.')).toBeTruthy();
+    const line = await screen.findByText('Someone changed this event since you opened it. It now reads as shown. Make your change again, then save.');
     const again = screen.getByRole('dialog', { name: 'Edit event' });
     expect(within(again).getByLabelText<HTMLInputElement>('Title').value).toBe('Pub quiz');
+    // The line sits just above Save, after the fields, and the sheet scrolls them into view (UI review: Save was out of sight).
+    expect(within(again).getByLabelText('Where (optional)').compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(line.compareDocumentPosition(within(again).getByRole('button', { name: 'Save' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(scrolled).toHaveBeenCalledWith({ block: 'nearest' });
+    if (scrollIntoView === undefined) delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    else Object.defineProperty(Element.prototype, 'scrollIntoView', scrollIntoView);
     expect(writes(api)[0]?.body).toEqual({
       op: 'edit', basedOn: 'base',
       fields: { title: 'Quiz night', start: '2026-11-21', end: '2026-11-21', weekdays: null, startTime: '19:00', where: 'Example Tavern' },
