@@ -454,7 +454,7 @@ describe('the runner: merges', () => {
     expect(found?.[0]?.sources.map((source) => source.url).sort()).toEqual([PAGE_A, otherPage].sort());
   });
 
-  it('a location run waits to merge while its town’s run is under way, then merges after it and stores no copy', async () => {
+  it('a location run waits to merge while its town’s run is under way, then merges as the town’s merge ends and stores no copy', async () => {
     const t = await tenant();
     const [locationId = ''] = t.locationIds;
     // The town's run has started, its thread not due for an hour.
@@ -469,7 +469,7 @@ describe('the runner: merges', () => {
     clock = new Date(NOW.getTime() + 2 * 3_600_000);
     await run(runner(answering().model));
     expect((await stores.researchTowns.findRun(town.id))?.status).toBe('done');
-    await runner(answering().model, { lanes: 0 }).plan();
+    // No planner sweep: the town's merge merged the location run it held back.
     expect(await stores.researchLocations.findRun(t.scope, own.id)).toMatchObject({ status: 'done', counts: { added: 0 } });
     expect(await stores.researchLocations.events(t.scope, locationId)).toHaveLength(0);
     expect(await stores.researchTowns.events('hanover-nh')).toHaveLength(1);

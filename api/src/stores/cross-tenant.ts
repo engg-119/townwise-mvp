@@ -1111,7 +1111,8 @@ export interface ClaimedLocationResearchMerge {
  * `queued` (its threads not due yet) does not hold it, so Research now never waits hours for the town's Monday.
  */
 export async function claimLocationResearchMerge(
-  connection: Connection, input: { readonly runId?: string; readonly owner: string; readonly now: Date; readonly leaseMs: number },
+  connection: Connection,
+  input: { readonly runId?: string; readonly town?: string; readonly owner: string; readonly now: Date; readonly leaseMs: number },
 ): Promise<ClaimedLocationResearchMerge | null> {
   const Run = locationResearchRunModel(connection);
   const Thread = locationResearchThreadModel(connection);
@@ -1119,7 +1120,9 @@ export async function claimLocationResearchMerge(
   let where: Record<string, unknown>;
   if (input.runId === undefined) {
     const off = await researchOffOrgs(connection);
-    where = off.length === 0 ? due : { ...due, orgId: trusted({ $nin: off }) };
+    // `town`: only that town's runs (a town merge's follow-up, for the runs it held back).
+    const subject = input.town === undefined ? due : { ...due, town: input.town };
+    where = off.length === 0 ? subject : { ...subject, orgId: trusted({ $nin: off }) };
   } else {
     where = { _id: new Types.ObjectId(input.runId), ...due };
   }

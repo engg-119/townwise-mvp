@@ -568,10 +568,11 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     };
   }
 
-  async function mergeTown(runId: string, owner: string): Promise<void> {
+  /** Merges a claimed town run; answers its town once the merge ran to its end, else null. */
+  async function mergeTown(runId: string, owner: string): Promise<TownId | null> {
     const store = stores.researchTowns;
     const run = await store.findRun(runId);
-    if (run?.status !== 'merging') return;
+    if (run?.status !== 'merging') return null;
     const held = holder((input) => store.holdMerge(runId, input), owner);
     const townKey = run.townKey;
     const at = now();
@@ -611,6 +612,25 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     if (await store.finishRun(runId, { status, code: null, counts, costMicroUsd: cost, now: now() }, owner)) {
       await store.clearFound(runId);
       logger.info({ townKey, runId, subject: 'town', status, added: counts.added, updated: counts.updated }, 'townwise.research_run');
+    }
+    return townKey;
+  }
+
+  /**
+   * The town's location runs whose threads all ended while its run was live (held back by decision 8), merged as soon as
+   * it ends instead of at the planner's next sweep (UI review: up to 15 minutes of "running" with every topic done).
+   * A failed merge holds its lease, so this ends; the sweep takes it over later.
+   */
+  async function mergeHeldLocations(townKey: TownId): Promise<void> {
+    for (;;) {
+      const owner = `${replica}:merge:${randomUUID()}`;
+      const claimed = await claimLocationResearchMerge(connection, { town: townKey, owner, now: now(), leaseMs: MERGE_LEASE_MS });
+      if (claimed === null) return;
+      try {
+        await merge({ kind: 'location', scope: scopeForResearch(claimed), runId: claimed.runId, locationId: claimed.locationId, owner });
+      } catch (err) {
+        logger.warn({ runId: claimed.runId, errType: errType(err) }, 'townwise.research_merge_failed');
+      }
     }
   }
 
@@ -721,13 +741,15 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
   }
 
   async function merge(claimed: ClaimedMerge): Promise<void> {
+    let town: TownId | null = null;
     try {
-      if (claimed.kind === 'town') await mergeTown(claimed.runId, claimed.owner);
+      if (claimed.kind === 'town') town = await mergeTown(claimed.runId, claimed.owner);
       else await mergeLocation(claimed.scope, claimed.locationId, claimed.runId, claimed.owner);
     } catch (err) {
       if (!(err instanceof MergeLost)) throw err;
       logger.info({ runId: claimed.runId, subject: claimed.kind }, 'townwise.research_merge_lost');
     }
+    if (town !== null) await mergeHeldLocations(town);
   }
 
   // ---- The stale sweep -----------------------------------------------------------------------------------------------
