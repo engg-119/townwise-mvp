@@ -188,3 +188,12 @@ test('every string says topics, never threads, and has no em dash', () => {
     expect(text).not.toContain('—');
   }
 });
+
+describe('Google Maps credit (Places policies)', () => {
+  test('"Google Maps" never wraps and is in a color Google allows', () => {
+    expect(copy.GOOGLE_MAPS).toBe('Google Maps');
+    expect(copy.googleMapsCreditColor('light')).toBe('#5E5E5E');
+    expect(copy.googleMapsCreditColor('dark')).toBe('#FFFFFF');
+    expect(copy.COMPETITION_SOURCE).toBe(`${copy.COMPETITION_SOURCE_BEFORE}${copy.GOOGLE_MAPS}${copy.COMPETITION_SOURCE_AFTER}`);
+  });
+});

@@ -277,7 +277,15 @@ export const COMPETITION_NONE = 'No restaurants, bars or cafes found within 1.5 
 export const COMPETITION_NO_EVENTS = 'No public events found.';
 export const COMPETITION_WEB_HEADING = 'Competing events found on the web';
 export const COMPETITION_FAILED = 'Couldn’t load the competition.';
-export const COMPETITION_SOURCE = 'Nearby places from Google Maps, read live for this page. Townwise doesn’t keep their names.';
+/** Google's attribution words, joined by a no-break space so they never wrap (Places policies). */
+export const GOOGLE_MAPS = 'Google Maps';
+/** The colors Google allows for its text attribution: #5E5E5E on light, white on dark. */
+export function googleMapsCreditColor(mode: 'light' | 'dark'): string {
+  return mode === 'dark' ? '#FFFFFF' : '#5E5E5E';
+}
+export const COMPETITION_SOURCE_BEFORE = 'Nearby places from ';
+export const COMPETITION_SOURCE_AFTER = ', read live for this page. Townwise doesn’t keep their names.';
+export const COMPETITION_SOURCE = `${COMPETITION_SOURCE_BEFORE}${GOOGLE_MAPS}${COMPETITION_SOURCE_AFTER}`;
 
 export function competitionMapLabel(name: string): string {
   return `Map of restaurants, bars and cafes near ${name}`;

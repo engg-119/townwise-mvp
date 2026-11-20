@@ -14,8 +14,10 @@ import { ErrorNotice, LoadingLine } from '../ui/feedback';
 import { Section } from '../ui/layout';
 import {
   COMPETITION_DAYS, COMPETITION_FAILED, COMPETITION_HEADING, COMPETITION_LEAD, COMPETITION_NO_EVENTS, COMPETITION_NO_PLACE, COMPETITION_NONE,
-  COMPETITION_PLACES_OFF, COMPETITION_SOURCE, COMPETITION_WEB_HEADING, competitionMapLabel, competitorLine,
+  COMPETITION_PLACES_OFF, COMPETITION_SOURCE_AFTER, COMPETITION_SOURCE_BEFORE, COMPETITION_WEB_HEADING, competitionMapLabel,
+  competitorLine,
 } from './research-copy';
+import { GoogleMapsCredit } from './GoogleMapsCredit';
 import { EventItem, firstDay } from './EventItem';
 
 // P15's Competition card (D66, OpenSpec change town-research-agent, design decisions 10 and 15): GET .../competition
@@ -98,7 +100,13 @@ function Competitors(props: {
           ))}
         </View>
       )}
-      {data.competitors.length === 0 ? null : <Text style={styles.help}>{COMPETITION_SOURCE}</Text>}
+      {data.competitors.length === 0 ? null : (
+        <Text style={styles.help}>
+          {COMPETITION_SOURCE_BEFORE}
+          <GoogleMapsCredit />
+          {COMPETITION_SOURCE_AFTER}
+        </Text>
+      )}
       {data.web.length === 0 ? null : (
         <View style={styles.block}>
           <Text style={styles.subhead} role="heading" aria-level={3}>{COMPETITION_WEB_HEADING}</Text>
