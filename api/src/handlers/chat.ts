@@ -39,8 +39,11 @@ import { sameNoteContent } from './notes.ts';
 import { filesUnavailable } from './sales.ts';
 import { actorOf } from './team.ts';
 
-/** Section 2. */
-export interface ChatBudget { month: string; usedUsd: number; limitUsd: number; exhausted: boolean }
+/**
+ * Section 2. `researchUsd` (D66, town-research-agent design decision 15): location research's part of `usedUsd`, rounded
+ * to cents, 0 when it spent nothing; only GET .../chat reads it, for the budget line's "Research used $X of this month".
+ */
+export interface ChatBudget { month: string; usedUsd: number; limitUsd: number; exhausted: boolean; researchUsd?: number }
 /**
  * `running` (spec P25 build note, 2026-11-18): the conversation's newest turn is running with a live lease and the
  * conversation has not saved it, so History shows it replying.
@@ -162,8 +165,9 @@ export async function getChat(ctx: TownwiseContext, req: Request, res: Response,
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const owner = ownerOf(caller, location.id);
-  const [budget, conversations, running] = await Promise.all([
+  const [budget, researchMicroUsd, conversations, running] = await Promise.all([
     budgetOf(ctx, caller.scope),
+    ctx.stores.chatUsage.researchMicroUsd(caller.scope, monthOf(ctx.now())),
     ctx.stores.chatConversations.list(caller.scope, owner, MAX_LISTED),
     ctx.stores.chatTurns.runningFor(caller.scope, { locationId: location.id, userId: caller.userId }),
   ]);
@@ -176,7 +180,7 @@ export async function getChat(ctx: TownwiseContext, req: Request, res: Response,
   const live = conversation === null ? null : await liveTurnOf(ctx, caller.scope, conversation.id, nodesOf(conversation.messages));
   const runningId = conversation !== null && live !== null && isRunning(ctx, live) ? conversation.id : null;
   const body: ChatSummary = {
-    enabled: ctx.chat !== null, budget, conversations: conversations.map((item) => listItem(item, runningId)), liveTurn,
+    enabled: ctx.chat !== null, budget: { ...budget, researchUsd: Math.round(researchMicroUsd / 10_000) / 100 }, conversations: conversations.map((item) => listItem(item, runningId)), liveTurn,
   };
   res.status(200).json(body);
 }

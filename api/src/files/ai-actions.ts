@@ -476,7 +476,7 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
             fileId: file.id, via: 'townwise_ai',
           },
         });
-        await wantRefitFor(ctx, scope, file.locationId, 'always');
+        await wantRefitFor(ctx, scope, file.locationId, 'always', 'townwise_ai');
       }
       return upload;
     };

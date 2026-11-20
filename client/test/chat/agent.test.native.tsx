@@ -437,6 +437,32 @@ describe('the side panel', () => {
     expect(within(screen.getByTestId('chat-panel-row')).getByTestId('agent-side')).toBeTruthy();
   });
 
+  test('D65: ?panel=activity opens the row expanded at 390px, What it’s been doing first, and drops the parameter', async () => {
+    at(390);
+    const { router } = await renderAgent(meOf(ACCESS.member), fakeChatApi(), orgOf('member'), '/locations/l1/agent?panel=activity');
+    const row = within(await screen.findByTestId('chat-landing')).getByRole('button', { name: 'Questions and activity (2)' });
+    expect(row.props.accessibilityState).toMatchObject({ expanded: true });
+    const side = within(screen.getByTestId('chat-panel-row')).getByTestId('agent-side');
+    await within(side).findByText('Saved a note you approved: Closure, Nov 26, 2026.');
+    const headings = within(side).getAllByRole('heading').map((heading) => heading.props.children as unknown);
+    expect(headings[0]).toBe('What it’s been doing');
+    await waitFor(() => { expect(router.getSearchParams().panel).toBeUndefined(); });
+    expect(router.getPathname()).toBe('/locations/l1/agent');
+    // Closed and opened again by the person, the panel is back in its own order.
+    await fireEvent.press(row);
+    await fireEvent.press(within(screen.getByTestId('chat-landing')).getByRole('button', { name: 'Questions and activity (2)' }));
+    const again = within(within(screen.getByTestId('chat-panel-row')).getByTestId('agent-side')).getAllByRole('heading');
+    expect(again[0]?.props.children).not.toBe('What it’s been doing');
+  });
+
+  test('D65: ?panel=activity opens the column from 641px with What it’s been doing first', async () => {
+    at(1280);
+    await renderAgent(meOf(ACCESS.member), fakeChatApi(), orgOf('member'), '/locations/l1/agent?panel=activity');
+    const side = await screen.findByTestId('agent-side');
+    expect(screen.getByRole('button', { name: 'Questions and activity (2)' }).props.accessibilityState).toMatchObject({ expanded: true });
+    expect(within(side).getAllByRole('heading')[0]?.props.children).toBe('What it’s been doing');
+  });
+
   test('questions with what each answer does; an answer saves and says what it did', async () => {
     // While TownwiseAI is off the landing doesn't list the questions, so the panel's own heading, count and Planned
     // tag show here.
@@ -453,7 +479,7 @@ describe('the side panel', () => {
     expect(within(side).getByText('Townwise treats this day as likely closed until you say. Yes saves a note that you were open with fewer guests, so the day counts. No saves a closure note for it.')).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'Were you closed Feb 1 to Feb 3, 2026?' })).toBeTruthy();
     expect(within(side).getByText('There are no sales for these 3 days.')).toBeTruthy();
-    expect(within(side).getByText('TownwiseAI’s own research (unusual nights, town events it finds) is planned.')).toBeTruthy();
+    expect(within(side).getByText('TownwiseAI’s own research into unusual nights is planned.')).toBeTruthy();
 
     await fireEvent.press(within(side).getByRole('button', { name: 'No, we were closed' }));
     expect(await within(side).findByText('Saved a note: Closure, Sat, Jan 24, 2026. TownwiseAI treats that day as closed.')).toBeTruthy();
@@ -471,9 +497,38 @@ describe('the side panel', () => {
     expect(await within(side).findByText('Saved a note you approved: Closure, Nov 26, 2026.')).toBeTruthy();
     expect(within(side).getByText('Read your upload for Oct 26 to Nov 1, 2026, 7 days.')).toBeTruthy();
     expect(within(side).getByText('You said the data is missing for Jan 1 to Jan 2, 2026.')).toBeTruthy();
-    // A kind this client doesn't know (forecast_made) shows as nothing.
+    // A kind this client doesn't know (the helper's made-up one) shows as nothing.
     expect(within(side).getAllByText(/^(Saved|Read|You said)/)).toHaveLength(3);
     expect(within(side).getByText('November: 6% used. Resets Dec 1.')).toBeTruthy();
+  });
+
+  test('D65: a finished forecast run shows what happened, what started it and the days it used, and one with a reason this client doesn’t know shows as nothing', async () => {
+    at(1280);
+    const chat = fakeChatApi();
+    const run = {
+      at: '2026-11-16T09:20:00.000Z', kind: 'forecast_made', calibrationId: '0000000000000000000000e7', causes: ['weekly'],
+      outcome: 'kept', reason: 'not_more_accurate', firstForecast: false, dayCount: 1035, firstDate: '2024-01-01', lastDate: '2026-11-15', newDays: 6,
+    };
+    chat.panel = {
+      questions: [],
+      activity: [
+        run,
+        { ...run, at: '2026-11-09T09:20:00.000Z', calibrationId: '0000000000000000000000e6', reason: 'later_reason' },
+        {
+          ...run, at: '2026-06-01T08:15:00.000Z', calibrationId: '0000000000000000000000e5', causes: ['staff'], outcome: 'published',
+          reason: 'published', firstForecast: true, dayCount: null, firstDate: null, lastDate: null, newDays: null,
+        },
+      ],
+    };
+    await renderAgent(meOf(ACCESS.member), chat);
+    const side = await openPanel();
+    expect(await within(side).findByText('Kept your current forecast: the new one wasn’t more accurate on the weeks it was tested on.')).toBeTruthy();
+    expect(within(side).getByText('Weekly refresh. 1,035 days, Jan 1, 2024 to Nov 15, 2026, 6 new.')).toBeTruthy();
+    expect(within(side).getByText('Your first forecast was published.')).toBeTruthy();
+    expect(within(side).getByText('Started by Townwise staff.')).toBeTruthy();
+    // Two runs drawn, the unknown reason left out: two dates, two outcome lines.
+    expect(within(side).getAllByText(/^(Kept|Your first)/)).toHaveLength(2);
+    expect(within(side).queryByText(/Nov 9/)).toBeNull();
   });
 
   test('How TownwiseAI works says what it reads, that it can search the web, what it can’t see, that no forecast exists, and who receives the data', async () => {

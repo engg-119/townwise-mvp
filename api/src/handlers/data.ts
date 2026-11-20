@@ -922,7 +922,7 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
   }
   // D59: the file's changes in TownwiseAI's ledger read as undone, so none of them is ever made again.
   await ctx.stores.agentChanges.markSourceUndone(scope, location.id, { kind: 'file', id: file.id }, { by: member.userId, now: ctx.now() });
-  if (notes > 0 || days > 0) await wantRefitFor(ctx, scope, location.id, 'always');
+  if (notes > 0 || days > 0) await wantRefitFor(ctx, scope, location.id, 'always', 'person_change');
   if (await ctx.stores.files.finishAiUndo(scope, location.id, file.id)) {
     await recordAfter(ctx, {
       ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'file.ai_undone',

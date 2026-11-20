@@ -3,12 +3,13 @@ import { usePathname, useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
+import { useWhileRunning } from '../hooks';
 import { locationEyebrow } from '../locations/naming';
 import { useOrg, usePortal } from '../PortalProvider';
 import { greeting } from '../profile/greeting';
 import { useProfile } from '../profile/useProfile';
 import { isFillRoute, locationHref, locationIdOf, pageTitle, tabOf } from '../routing';
-import type { LocationSummary, MeResponse, OrgResponse } from '../schemas';
+import { updatingOf, type LocationSummary, type MeResponse, type OrgResponse } from '../schemas';
 import { LinkButton } from '../ui/Button';
 import { Skeleton, SkeletonHeading, SkeletonText } from '../skeleton/kit';
 import { ErrorNotice, InlineNotice } from '../ui/feedback';
@@ -27,7 +28,7 @@ import { PageHeader, PageNotice } from './Page';
 // under the top bar and draws its own hidden h1. The location's sections are in the top bar (Frame), so the pages
 // render only their content. The page notice and the page share a MessageFocus, so a page that opens with a notice
 // meant for it (Your data after an item's delete) can give that notice focus; a page with its own MessageFocus keeps
-// its messages to it.
+// its messages to it. While the location's forecast updates (D65), the layout re-reads the organization in place.
 
 /** The organization the layout is showing (see LocationShell), for its pages. */
 const ShownOrgContext = createContext<OrgResponse | null>(null);
@@ -59,7 +60,7 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   const pathname = usePathname();
   const locationId = locationIdOf(pathname);
   const router = useRouter();
-  const { me, openedLocation } = usePortal();
+  const { me, openedLocation, refreshOrg } = usePortal();
   const { state, reload } = useOrg();
   // While the organization reloads after a write, the layout keeps showing the answer before it, so the page
   // stays mounted. Hiding it would unmount the location's navigator, and expo-router would move the address to
@@ -74,6 +75,9 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   const shownId = location?.id;
   // The top bar's sections open this location from pages outside one, until another opens (memory only).
   useEffect(() => { if (shownId !== undefined) openedLocation(shownId); }, [shownId, openedLocation]);
+  // D65: while this location's forecast updates, the organization is read again in place every 30 seconds, so its pages
+  // (Home's first-forecast line, the model card) follow the run to its end with no loading state.
+  useWhileRunning(location !== undefined && updatingOf(location.calibration) !== null, refreshOrg);
 
   if (state.status === 'failed') {
     return <Wrap><Content><ErrorNotice error={state.error} onRetry={reload} /></Content></Wrap>;

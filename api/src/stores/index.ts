@@ -32,6 +32,10 @@ import { createOrderStore, type OrderStore } from './orders.ts';
 import { createOrgStore, type OrgStore } from './orgs.ts';
 import { createOwnerCalendarStore, type OwnerCalendarStore } from './owner-calendars.ts';
 import { createProfileStore, type ProfileStore } from './profiles.ts';
+import { createLocationResearchStore, type LocationResearchStore } from './research-locations.ts';
+import { createResearchRevisionStore, type ResearchRevisionStore } from './research-revisions.ts';
+import { createResearchSpendStore, type ResearchSpendStore } from './research-spend.ts';
+import { createTownResearchStore, type TownResearchStore } from './research-towns.ts';
 import { createSalesDayStore, type SalesDayStore } from './sales-days.ts';
 import { createUploadDayStore, type UploadDayStore } from './upload-days.ts';
 import { createUploadStore, type UploadStore } from './uploads.ts';
@@ -91,6 +95,14 @@ export interface TownwiseStores {
   readonly googleConnections: GoogleConnectionStore;
   /** The days each person used the app (openspec change staff-overview). */
   readonly activityDays: ActivityDayStore;
+  /**
+   * D66, town research: a town's runs, threads, events and entities and the system month they spend (no tenant data),
+   * and a location's runs, threads, events and entities and its hand edits (tenant).
+   */
+  readonly researchTowns: TownResearchStore;
+  readonly researchSpend: ResearchSpendStore;
+  readonly researchLocations: LocationResearchStore;
+  readonly researchRevisions: ResearchRevisionStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -144,5 +156,10 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     googleConnections: createGoogleConnectionStore(connection),
     // The days each person used the app.
     activityDays: createActivityDayStore(connection),
+    // D66, town research.
+    researchTowns: createTownResearchStore(connection),
+    researchSpend: createResearchSpendStore(connection),
+    researchLocations: createLocationResearchStore(connection),
+    researchRevisions: createResearchRevisionStore(connection),
   };
 }

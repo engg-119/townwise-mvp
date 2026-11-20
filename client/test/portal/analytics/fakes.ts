@@ -122,6 +122,7 @@ export function calendarBody(fields: Partial<Calendar> = {}): Calendar {
     researched: true,
     covers: { from: '2026-09-14', to: '2027-01-05' },
     events: [],
+    found: [],
     ...fields,
   };
 }

@@ -13,7 +13,8 @@ import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import {
   addActivityDay, addAuditEvent, addChatTurn, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar,
-  addRemovedSeat, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
+  addRemovedSeat, addRequest, addResearchRecords, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
+  RESEARCH_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { addGoogleCalendar, addGoogleConnection, createFakeGoogle, REFRESH_TOKEN, SHARED_ID } from './helpers/google.ts';
 import {
@@ -57,6 +58,8 @@ const TENANT_COLLECTIONS = [
   ...ORDER_COLLECTIONS,
   // The days each person used the app (staff-overview).
   'tw_activity_days',
+  // D66: a location's research runs, threads, events, entities and its people's edits.
+  ...RESEARCH_COLLECTIONS,
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
@@ -156,6 +159,8 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   const locationNames = [`${name} Main Room`, `${name} Patio`];
   const locationIds = [await addLocation(server, { orgId, name: locationNames[0] ?? '' }), await addLocation(server, { orgId, name: locationNames[1] ?? '' })];
   const locationId = locationIds[0] ?? '';
+  // D65: the date its first-forecast email was sent, which goes with the location.
+  await server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(locationId) }, { $set: { firstForecastMailedAt: server.clock.now() } });
   await addSalesDay(server, { orgId, locationId, date: '2026-05-01', guests: 120, netSalesCents: 345_600 });
   await addSalesDay(server, { orgId, locationId, date: '2026-05-02', guests: 98, netSalesCents: 287_100 });
   await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
@@ -170,6 +175,8 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   await addChatTurn(server, { orgId, locationId, conversationId, userId: member.session.userId });
   // Orders: a record in each of its collections, the card in the member's conversation.
   await addOrderRecords(server, { orgId, locationId, conversationId });
+  // D66: a record in each of research's tenant collections.
+  await addResearchRecords(server, { orgId, locationId });
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-03_2026-05-04',
@@ -250,6 +257,8 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     const doomed = await populatedOrg('Doomed Harbor Grill', 'suspended');
     const kept = await populatedOrg('Surviving Pine Cafe', 'suspended');
     const keptBefore = await snapshotOf(kept);
+    const mailed = { orgId: new Types.ObjectId(doomed.orgId), firstForecastMailedAt: { $exists: true } };
+    expect(await count('tw_locations', mailed)).toBe(1);
 
     let res: Response | undefined;
     const writes = await writesDuring(server, async () => { res = await deleteOrg(doomed.orgId); });
@@ -261,17 +270,20 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     // records, chat usage and (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
     // Stored files (none here) are swept again after the row too: imports first. Then (staff-overview) active days, (D42)
-    // week rows, the weekly suggestions' pass rows and suggestions, (D59) TownwiseAI's changes, and (U13B) forecast rows,
-    // then runs.
-    expect(writes.slice(-18)).toEqual([
+    // week rows, the weekly suggestions' pass rows and suggestions, (D59) TownwiseAI's changes, (U13B) forecast rows,
+    // then runs, and (D66) research's runs and threads, then its events, entities and edits.
+    expect(writes.slice(-23)).toEqual([
       'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_item_sales', 'delete tw_order_counts',
       'delete tw_order_setups', 'delete tw_order_decisions', 'delete tw_order_rules', 'delete tw_order_cards',
       'delete tw_chat_usage', 'delete tw_activity_days', 'delete tw_calibrations', 'delete tw_forecast_weeks', 'delete tw_suggestion_passes',
       'delete tw_agent_suggestions', 'delete tw_agent_changes', 'delete tw_forecasts', 'delete tw_forecast_runs',
+      'delete tw_location_research_runs', 'delete tw_location_research_threads', 'delete tw_location_events', 'delete tw_location_entities',
+      'delete tw_research_revisions',
     ]);
 
     const orgId = new Types.ObjectId(doomed.orgId);
     for (const name of TENANT_COLLECTIONS) expect({ name, n: await count(name, { orgId }) }).toEqual({ name, n: 0 });
+    expect(await count('tw_locations', mailed)).toBe(0);
     expect(await count('tw_orgs', { _id: orgId })).toBe(0);
     expect(await count('tw_access_requests', { _id: new Types.ObjectId(doomed.requestId) })).toBe(0);
     // The member's Google grant was revoked (connect-google-calendar), and the other organization's was not.
@@ -356,7 +368,7 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     expect(await count('tw_orgs', { _id: orgId })).toBe(0);
   });
 
-  it('sales days, ordering’s records and chat usage written after the first sweep, by requests in flight, are swept too', async () => {
+  it('sales days, ordering’s records, chat usage and research written after the first sweep, by requests in flight, are swept too', async () => {
     const org = await populatedOrg('Late Writes Grill', 'suspended');
     const model = server.connection.models.TwOrg as unknown as { deleteOne: (...args: unknown[]) => Promise<unknown> };
     const deleteOne = model.deleteOne.bind(model);
@@ -369,6 +381,8 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
       await addActivityDay(server, { orgId: org.orgId, userId: org.member.session.userId, day: '2026-06-02' });
       // A setup save, an item sales upload, a count, an edit, a rule and a card save still running (A14).
       await addOrderRecords(server, { orgId: org.orgId, locationId });
+      // D66: a planner tick, a merge or an edit already past its organization check.
+      await addResearchRecords(server, { orgId: org.orgId, locationId });
       return removed;
     });
     let res: Response;
@@ -648,6 +662,26 @@ describe('POST /api/admin/people/delete', () => {
     expect((await deletePerson(former.email)).status).toBe(200);
     const docs = await changes.find({ _id: { $in: Object.values(insertedIds) } }).sort({ _id: 1 }).toArray();
     expect(docs.map((doc): unknown[] => [doc.status, doc.onBehalfOf, doc.statusBy])).toEqual([['applied', null, 'townwise_ai'], ['undone', null, null]]);
+  });
+
+  it('clears a former org admin’s id from the research switch and a former member’s from their edits of researched events, which stay (D66)', async () => {
+    const former = await person('former-researcher');
+    const orgId = await createOrg(server, { name: `Research Kitchen ${randomUUID().slice(0, 6)}` });
+    const scope = { orgId } as OrgScope;
+    const locationId = await addLocation(server, { orgId, name: 'Research Room' });
+    const at = server.clock.now();
+    expect(await server.ctx.stores.orgs.setResearch(scope, { on: false, at, by: former.session.userId })).toBe(true);
+    const edit = await server.ctx.stores.researchRevisions.append(scope, {
+      locationId, eventId: `l-${new Types.ObjectId().toHexString()}`, op: 'edit', fields: { title: 'Trivia at the Hall' }, reverts: null,
+      basedOn: 'base', by: { kind: 'person', userId: former.session.userId }, now: at,
+    });
+    expect((await deletePerson(former.email)).status).toBe(200);
+    const doc = await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(orgId) });
+    expect(doc?.research).toEqual({ on: false, at, by: null });
+    expect(await server.ctx.stores.researchRevisions.find(scope, locationId, edit?.id ?? '')).toMatchObject({
+      op: 'edit', fields: { title: 'Trivia at the Hall' }, by: { kind: 'person', userId: null },
+    });
+    expect(JSON.stringify(await server.connection.collection('tw_research_revisions').find({}).toArray())).not.toContain(former.session.userId);
   });
 
   it('deletes an address that never signed in: its invitations and the events that name it', async () => {

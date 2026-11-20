@@ -75,7 +75,8 @@ export const PANEL = {
     { at: '2026-11-03T15:00:00.000Z', kind: 'note_saved', via: 'chat', noteId: 'n1', noteKind: 'closure', startDate: '2026-11-26', endDate: '2026-11-26' },
     { at: '2026-11-02T15:00:00.000Z', kind: 'upload_applied', firstDate: '2026-10-26', lastDate: '2026-11-01', dayCount: 7 },
     { at: '2026-11-01T15:00:00.000Z', kind: 'question_answered', questionId: 'gap_2026-01-01_2026-01-02', answer: 'open' },
-    { at: '2026-10-31T15:00:00.000Z', kind: 'forecast_made', modelVersion: 'later' },
+    // A kind this client doesn't know yet (D65 made forecast_made a real one): left out.
+    { at: '2026-10-31T15:00:00.000Z', kind: 'something_later', modelVersion: 'later' },
   ],
 };
 

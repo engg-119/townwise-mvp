@@ -1,5 +1,5 @@
 // The Google Places client (src/places/google.ts) over a fake fetch, and the town an address maps to
-// (townOfAddress in src/handlers/places.ts). Tests never call Google.
+// (townOfAddress in src/handlers/places.ts), with D66's nearby and profile. Tests never call Google.
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { TOWNWISE_ROUTES } from '../src/access/routes.ts';
@@ -193,10 +193,98 @@ describe('details', () => {
   });
 });
 
+describe('nearby (D66)', () => {
+  const CENTER = { lat: 43.7, lng: -72.29 };
+  const place = (id: string, name: string, extra: Record<string, unknown> = {}): unknown => ({
+    id, displayName: { text: name, languageCode: 'en' }, primaryType: 'american_restaurant', location: { latitude: 43.701, longitude: -72.289 }, ...extra,
+  });
+
+  it('asks for food and drink places by distance around the point, at most 20, with the field mask and no website', async () => {
+    fake.script({ kind: 'json', body: {} });
+    expect(await client.nearby(CENTER, { radiusM: 1500, withWebsite: false })).toEqual([]);
+    const call = fake.calls[0];
+    expect(call?.url).toBe('https://places.googleapis.com/v1/places:searchNearby');
+    expect(call?.method).toBe('POST');
+    expect(call?.headers).toEqual({
+      'content-type': 'application/json', 'x-goog-api-key': KEY, 'x-goog-fieldmask': 'places.id,places.displayName,places.primaryType,places.location',
+    });
+    expect(call?.body).toEqual({
+      includedTypes: ['restaurant', 'bar', 'cafe', 'coffee_shop', 'pub', 'bakery', 'fast_food_restaurant'], maxResultCount: 20,
+      rankPreference: 'DISTANCE', languageCode: 'en', locationRestriction: { circle: { center: { latitude: 43.7, longitude: -72.29 }, radius: 1500 } },
+    });
+    expect(call?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('adds the website to the field mask only for a research run, and keeps an http(s) website only then', async () => {
+    const body = { places: [place('ChIJTestPlace0001', 'Fixture Diner', { websiteUri: 'https://diner.example.com/' }), place('ChIJTestPlace0002', 'Fixture Pub', { websiteUri: 'javascript:alert(1)' })] };
+    fake.script({ kind: 'json', body }, { kind: 'json', body });
+    const withSite = await client.nearby(CENTER, { radiusM: 1500, withWebsite: true });
+    expect(fake.calls[0]?.headers['x-goog-fieldmask']).toBe('places.id,places.displayName,places.primaryType,places.location,places.websiteUri');
+    expect(withSite.map((each) => each.website)).toEqual(['https://diner.example.com/', null]);
+    const without = await client.nearby(CENTER, { radiusM: 1500, withWebsite: false });
+    expect(without.map((each) => each.website)).toEqual([null, null]);
+  });
+
+  it('answers each place as id, name, primary type and point, skipping one without an id, a name or a point', async () => {
+    fake.script({
+      kind: 'json',
+      body: {
+        places: [
+          place('ChIJTestPlace0001', 'Fixture Diner'),
+          place('ChIJTestPlace0002', 'No Type', { primaryType: undefined }),
+          place('short', 'Bad Id'),
+          place('ChIJTestPlace0003', ''),
+          { id: 'ChIJTestPlace0004', displayName: { text: 'No Point' } },
+          'not a place',
+        ],
+      },
+    });
+    expect(await client.nearby(CENTER, { radiusM: 1500, withWebsite: false })).toEqual([
+      { placeId: 'ChIJTestPlace0001', name: 'Fixture Diner', primaryType: 'american_restaurant', lat: 43.701, lng: -72.289, website: null },
+      { placeId: 'ChIJTestPlace0002', name: 'No Type', primaryType: null, lat: 43.701, lng: -72.289, website: null },
+    ]);
+  });
+
+  it('a 2xx answer with the wrong shape is bad_response', async () => {
+    fake.script({ kind: 'json', body: { places: 'not a list' } });
+    expect(await failureOf(() => client.nearby(CENTER, { radiusM: 1500, withWebsite: false }))).toMatchObject({ code: 'bad_response' });
+  });
+});
+
+describe('profile (D66)', () => {
+  it('gets the place’s id, name and address with no session', async () => {
+    fake.script({ kind: 'json', body: { id: PLACE_ID, displayName: { text: 'Fixture Google Bistro', languageCode: 'en' }, formattedAddress: '1 Fixture Lane, Hanover, NH' } });
+    expect(await client.profile(PLACE_ID)).toEqual({ placeId: PLACE_ID, name: 'Fixture Google Bistro', address: '1 Fixture Lane, Hanover, NH' });
+    const call = fake.calls[0];
+    expect(call?.url).toBe(`https://places.googleapis.com/v1/places/${PLACE_ID}`);
+    expect(call?.method).toBe('GET');
+    expect(call?.headers).toEqual({ 'x-goog-api-key': KEY, 'x-goog-fieldmask': 'id,displayName,formattedAddress' });
+    expect(call?.body).toBeUndefined();
+  });
+
+  it('answers null for Google’s 404, a 400 on the id, and a place with no name', async () => {
+    fake.script(
+      { kind: 'json', status: 404, body: { error: { code: 404, status: 'NOT_FOUND' } } },
+      { kind: 'json', status: 400, body: { error: { code: 400, status: 'INVALID_ARGUMENT' } } },
+      { kind: 'json', body: { id: PLACE_ID, formattedAddress: 'Somewhere' } },
+    );
+    expect(await client.profile(PLACE_ID)).toBeNull();
+    expect(await client.profile(PLACE_ID)).toBeNull();
+    expect(await client.profile(PLACE_ID)).toBeNull();
+  });
+
+  it('treats a 400 for a bad API key as unavailable', async () => {
+    fake.script({ kind: 'json', status: 400, body: { error: { status: 'INVALID_ARGUMENT', details: [{ reason: 'API_KEY_INVALID' }] } } });
+    expect(await failureOf(() => client.profile(PLACE_ID))).toMatchObject({ code: 'upstream_status', status: 400 });
+  });
+});
+
 describe('failures', () => {
   const both: [string, () => Promise<unknown>][] = [
     ['autocomplete', () => client.autocomplete('lou', TOKEN)],
     ['details', () => client.details(PLACE_ID, TOKEN)],
+    ['nearby', () => client.nearby({ lat: 43.7, lng: -72.29 }, { radiusM: 1500, withWebsite: true })],
+    ['profile', () => client.profile(PLACE_ID)],
   ];
 
   it.each(both)('%s: a non-2xx answer is upstream_status with Google’s status, and the error carries none of its body', async (_name, run) => {

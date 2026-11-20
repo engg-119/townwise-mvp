@@ -8,7 +8,7 @@ jest.mock('expo-splash-screen', () => ({
 }));
 
 import { fireEvent, render, screen } from '@testing-library/react-native';
-import { cleanup as cleanupApp, screen as appScreen } from 'expo-router/testing-library';
+import { act, cleanup as cleanupApp, screen as appScreen } from 'expo-router/testing-library';
 
 import { ApiError } from '../../../src/api/client';
 import { ModelCard } from '../../../src/portal/estimates/ModelCard';
@@ -190,5 +190,79 @@ describe('the calibration state on a location page (D42: calibrated and stale)',
     await withState({ state: 'calibrated', ...SALES, dataThrough: '2026-11-21', newerDays: 0, nextRefresh: '2026-11-23' });
     expect(appScreen.queryByText(/^Forecast made from your sales/)).toBeNull();
     expect(appScreen.queryByText(/days? since/)).toBeNull();
+  });
+});
+
+describe('D65: a forecast being updated, on a location page', () => {
+  const PATH = '/api/org/locations/l1';
+  const SALES = { dayCount: 400, firstDate: '2025-01-01', lastDate: '2026-11-21' };
+  // Today at 2:14 PM local, so the line states the time alone.
+  const today = new Date();
+  today.setHours(14, 14, 0, 0);
+  const since = today.toISOString();
+
+  afterEach(async () => {
+    await cleanupApp();
+    jest.useRealTimers();
+  });
+
+  async function withState(calibration: LocationSummary['calibration'], about: unknown = { ...ABOUT, forecast: { run: RUN, live: null } }) {
+    const [first, ...rest] = LOCATIONS;
+    if (first === undefined) throw new Error('no location');
+    const fake = analyticsFake({
+      [`${PATH}/sales/history`]: historyBody(run('2026-10-01', '2026-10-31', () => 100)),
+      [`${PATH}/notes`]: { notes: [] },
+      [`${PATH}/calendar?from=2026-01-01&to=2026-12-31`]: calendarBody(),
+      [`${PATH}/estimates/about`]: about,
+    });
+    const locations = [{ ...first, calibration }, ...rest];
+    const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', locations), fallback: fake });
+    await renderApp('/locations/l1/analytics', api);
+    return { api, fake, first, rest };
+  }
+
+  test('a refit running: its new days and start time, linked to the runs in TownwiseAI’s activity', async () => {
+    await withState({ state: 'stale', ...SALES, dataThrough: '2026-11-15', newerDays: 6, nextRefresh: '2026-11-23', updating: { stage: 'running', since } });
+    const link = await appScreen.findByRole('link', { name: 'Updating your forecast with 6 new days, started 2:14 PM.' });
+    expect(link.props.href).toBe('/locations/l1/agent?panel=activity');
+    // Beside the stale line, which still says what the published forecast saw, but not that the refit is next Monday.
+    expect(appScreen.getByText('Forecast made from your sales through Sun, Nov 15. The 6 days since aren’t in it yet.')).toBeTruthy();
+    expect(appScreen.queryByText(/Townwise refits on/)).toBeNull();
+  });
+
+  test('a first forecast building and next, in the In progress block', async () => {
+    const noRun = ABOUT;
+    await withState({ state: 'not_calibrated', ...SALES, updating: { stage: 'running', since }, lastRun: null }, noRun);
+    expect(await appScreen.findByRole('link', { name: 'Building your first forecast, started 2:14 PM.' })).toBeTruthy();
+    expect(appScreen.getByText('In progress')).toBeTruthy();
+    await cleanupApp();
+    await withState({ state: 'not_calibrated', ...SALES, updating: { stage: 'waiting', since }, lastRun: null }, noRun);
+    // Plain words, not a link: TownwiseAI's activity has no run of it yet (design decision 4).
+    expect(await appScreen.findByText('Your first forecast is next. Townwise starts building it soon.')).toBeTruthy();
+    expect(appScreen.queryByRole('link', { name: 'Your first forecast is next. Townwise starts building it soon.' })).toBeNull();
+  });
+
+  test('nothing updating, or an API from before D65: no line', async () => {
+    await withState({ state: 'calibrated', ...SALES, dataThrough: '2026-11-21', newerDays: 0, nextRefresh: '2026-11-23' });
+    await appScreen.findByText(/^Forecast: Townwise demand model v9/);
+    expect(appScreen.queryByText(/^(Updating|Building) your/)).toBeNull();
+  });
+
+  test('when the update ends, the card reads its estimates again in place, with no loading line', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance', 'Date'] });
+    const { api, fake, first, rest } = await withState(
+      { state: 'not_calibrated', ...SALES, updating: { stage: 'running', since }, lastRun: null }, ABOUT,
+    );
+    await appScreen.findByRole('link', { name: 'Building your first forecast, started 2:14 PM.' });
+    const reads = (): number => fake.paths.filter((path) => path === `${PATH}/estimates/about`).length;
+    expect(reads()).toBe(1);
+    // The run publishes: the next re-read of the organization finds it, and the card reads the published run.
+    api.org = orgOf('member', [{ ...first, calibration: { state: 'calibrated', ...SALES, dataThrough: '2026-11-21', newerDays: 0, nextRefresh: '2026-11-23', updating: null } }, ...rest]);
+    fake.answers[`${PATH}/estimates/about`] = { ...ABOUT, forecast: { run: RUN, live: null } };
+    await act(() => jest.advanceTimersByTimeAsync(30_000));
+    expect(await appScreen.findByText(/^Forecast: Townwise demand model v9/)).toBeTruthy();
+    expect(reads()).toBe(2);
+    expect(appScreen.queryByText('Loading how Townwise estimates…')).toBeNull();
+    expect(appScreen.queryByText(/^Building your first/)).toBeNull();
   });
 });

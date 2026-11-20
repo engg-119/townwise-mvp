@@ -1200,10 +1200,10 @@ describe('refits after training changes (D59)', () => {
       kind: 'closure', startDate: date, endDate: date, weekdays: null, effect: 'closed', expectedGuests: null, detail: null, title: null,
       startTime: null, endTime: null,
     }, { createdBy: 'person', now: server.clock.now() });
-    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now());
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now(), 'person_change');
   }
 
-  async function refitOf(p: Place): Promise<{ wantedAt: Date | null; startedAt: Date | null }> {
+  async function refitOf(p: Place): Promise<{ wantedAt: Date | null; startedAt: Date | null; causes: readonly string[] }> {
     return server.ctx.stores.locations.refitState(p.scope, p.locationId);
   }
 
@@ -1220,7 +1220,7 @@ describe('refits after training changes (D59)', () => {
     expect(result.refits).toEqual({ started: 1, cleared: 0, held: 0, failed: 0 });
     expect(jobs()).toHaveLength(1);
     expect(await calibration(jobs()[0]?.calibrationId ?? '')).toMatchObject({ requestedBy: SYSTEM_REQUESTER, chargedMicroUsd: 0 });
-    expect(await refitOf(p)).toEqual({ wantedAt: null, startedAt: server.clock.now() });
+    expect(await refitOf(p)).toEqual({ wantedAt: null, startedAt: server.clock.now(), causes: [] });
     expect(logLines(server).filter((line) => line.msg === 'townwise.refit_pass').at(-1)).toMatchObject({ started: 1 });
     // Nothing more is wanted: the next pass starts nothing.
     expect((await pass()).refits.started).toBe(0);
@@ -1242,7 +1242,7 @@ describe('refits after training changes (D59)', () => {
 
   it('a mark whose lab input did not change is cleared, with no start', async () => {
     const p = await settled();
-    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now());
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now(), 'sales');
     server.clock.advance(16 * MINUTE);
     expect((await pass()).refits).toEqual({ started: 0, cleared: 1, held: 0, failed: 0 });
     expect(jobs()).toHaveLength(0);
@@ -1288,9 +1288,53 @@ describe('refits after training changes (D59)', () => {
     await changed(p, '2026-05-10');
     server.clock.advance(16 * MINUTE);
     const newer = new Date(server.clock.now().getTime() + 1000);
-    runner.onStart = async () => { await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, newer); };
+    runner.onStart = async () => { await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, newer, 'townwise_ai'); };
     expect((await pass()).refits.started).toBe(1);
-    expect(await refitOf(p)).toEqual({ wantedAt: newer, startedAt: server.clock.now() });
+    // D65: the missed clear keeps every cause, the one that landed included, for the next refit.
+    expect(await refitOf(p)).toEqual({ wantedAt: newer, startedAt: server.clock.now(), causes: ['person_change', 'townwise_ai'] });
+    expect(await calibration(jobs()[0]?.calibrationId ?? '')).toMatchObject({ causes: ['person_change'] });
+  });
+
+  // D65 (openspec change forecast-training-status, design decision 5): what started each system calibration.
+  it('a weekly start stores weekly; a refit after an upload and a note stores both; via stays scheduled', async () => {
+    const p = await place();
+    expect(await pass()).toMatchObject({ started: 1 });
+    const [weekly] = jobs();
+    expect(await calibration(weekly?.calibrationId ?? '')).toMatchObject({ causes: ['weekly'], requestedBy: SYSTEM_REQUESTER });
+    await finishJob(weekly?.calibrationId ?? '');
+    start = runner.jobs.length;
+    // An upload's mark, then a person's note on a history day, before the pass.
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now(), 'sales');
+    server.clock.advance(MINUTE);
+    await changed(p, '2026-05-10');
+    server.clock.advance(16 * MINUTE);
+    expect((await pass()).refits.started).toBe(1);
+    expect(await calibration(jobs()[0]?.calibrationId ?? '')).toMatchObject({
+      causes: ['sales', 'person_change'], requestedBy: { userId: null, role: 'system', via: 'scheduled' },
+    });
+    expect(await refitOf(p)).toEqual({ wantedAt: null, startedAt: server.clock.now(), causes: [] });
+  });
+
+  it('a mark from before D65, with no causes, still starts a refit, which stores no causes key, and is cleared', async () => {
+    const p = await settled();
+    await server.ctx.stores.notes.create(p.scope, p.locationId, {
+      kind: 'closure', startDate: '2026-05-10', endDate: '2026-05-10', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
+      title: null, startTime: null, endTime: null,
+    }, { createdBy: 'person', now: server.clock.now() });
+    // Written as the store wrote it before D65: the mark alone.
+    await server.connection.collection('tw_locations').updateOne(
+      { _id: new Types.ObjectId(p.locationId) }, { $set: { 'refit.wantedAt': server.clock.now() } },
+    );
+    expect((await refitOf(p)).causes).toEqual([]);
+    server.clock.advance(16 * MINUTE);
+    server.logs.length = 0;
+    expect((await pass()).refits).toEqual({ started: 1, cleared: 0, held: 0, failed: 0 });
+    const stored = await calibration(jobs()[0]?.calibrationId ?? '');
+    expect(stored).not.toBeNull();
+    expect(stored).not.toHaveProperty('causes');
+    expect(stored).toMatchObject({ requestedBy: SYSTEM_REQUESTER });
+    expect(await refitOf(p)).toEqual({ wantedAt: null, startedAt: server.clock.now(), causes: [] });
+    expect(logLines(server).some((line) => line.msg === 'townwise.refit_location_failed')).toBe(false);
   });
 
   it('starts no refit while TOWNWISE_WEEKLY_FORECASTS is false or the schedule is paused, and keeps the mark', async () => {

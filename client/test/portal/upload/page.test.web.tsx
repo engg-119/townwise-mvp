@@ -119,14 +119,14 @@ function optionsOf(name: string): string[] {
   return choicesOf(select(name));
 }
 
-function answerFor(counts: { dayCount: number; inserted: number; replaced: number; kept: number }): () => unknown {
+function answerFor(counts: { dayCount: number; inserted: number; replaced: number; kept: number }, calibration?: unknown): () => unknown {
   return () => ({
     upload: {
       id: 'up1', uploadedAt: '2026-11-04T15:00:00.000Z', uploadedByEmail: EMAIL, status: 'applied', ...counts,
       firstDate: '2025-03-04', lastDate: '2025-03-07', hasGuests: true, hasNetSales: true,
     },
     coverage: { dayCount: 402, guestsDayCount: 402, netSalesDayCount: 382, firstDate: '2025-01-01', lastDate: '2026-02-04', missingDays: 0 },
-    calibration: { state: 'not_calibrated', dayCount: 402, firstDate: '2025-01-01', lastDate: '2026-02-04' },
+    calibration: calibration ?? { state: 'not_calibrated', dayCount: 402, firstDate: '2025-01-01', lastDate: '2026-02-04' },
   });
 }
 
@@ -196,6 +196,39 @@ test('an org admin’s upload: match, check, send one body of days, and the repl
   // The file is gone: no control holds it and no step can go back to it.
   expect(fileInput()).toBeNull();
   expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+});
+
+test('D65: the result says when the first forecast is next, or that the forecast is updating with these days', async () => {
+  const history = { dayCount: 402, firstDate: '2025-01-01', lastDate: '2026-02-04' };
+  const since = '2026-11-04T15:00:00.000Z';
+  const api = adminApi();
+  api.answers[UPLOAD] = answerFor({ dayCount: 3, inserted: 2, replaced: 1, kept: 0 }, { state: 'not_calibrated', ...history, updating: { stage: 'waiting', since }, lastRun: null });
+  renderAt(api);
+  await toCheck(csvFile(FILE));
+  await click('Send 3 days');
+  expect(await screen.findByText('Townwise starts on the first forecast soon.')).toBeTruthy();
+  expect(screen.getByText('Not calibrated yet')).toBeTruthy();
+  cleanup();
+
+  const refit = adminApi();
+  refit.answers[UPLOAD] = answerFor(
+    { dayCount: 3, inserted: 2, replaced: 1, kept: 0 },
+    { state: 'stale', ...history, dataThrough: '2026-01-31', newerDays: 4, nextRefresh: null, updating: { stage: 'running', since } },
+  );
+  renderAt(refit);
+  await toCheck(csvFile(FILE));
+  await click('Send 3 days');
+  expect(await screen.findByText('Townwise is updating the forecast with these days.')).toBeTruthy();
+  cleanup();
+
+  // Nothing updating, or an API from before D65: no line.
+  const quiet = adminApi();
+  quiet.answers[UPLOAD] = answerFor({ dayCount: 3, inserted: 2, replaced: 1, kept: 0 }, { state: 'not_calibrated', ...history, updating: null, lastRun: null });
+  renderAt(quiet);
+  await toCheck(csvFile(FILE));
+  await click('Send 3 days');
+  await screen.findByText('Saved 3 days for Main Street Bar: 2 new, 1 replaced.');
+  expect(pageText()).not.toMatch(/first forecast|updating the forecast/);
 });
 
 test('the browser-only upload never offers TownwiseAI and never sends anything to it, on any step (D34)', async () => {

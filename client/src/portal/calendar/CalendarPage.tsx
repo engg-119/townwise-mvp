@@ -2,13 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 
-import type { ApiClient } from '../../api/client';
+import { ApiError, type ApiClient } from '../../api/client';
+import { forgetChat, lastChatKey } from '../../chat/lastChat';
+import { lastChatStore } from '../../chat/lastChatStore';
 import { theme } from '../../theme';
-import { fetchCalendar } from '../analytics/api';
+import { fetchCalendar, type ResearchedEvent } from '../analytics/api';
 import { noteCovers, trustedGuestDays } from '../analytics/days';
 import { dayMonthRange } from '../analytics/week';
 import { MONTH_NAMES } from '../analytics/words';
-import { hasCode } from '../errors';
+import { errorCopy, hasCode } from '../errors';
 import { fetchForecast } from '../estimates/api';
 import { useAction, useBreakpoint, useLoad } from '../hooks';
 import { createNote, deleteNote, fetchNotes, fetchSalesDays, updateNote, type NewNoteInput, type Note, type NoteInput } from '../locations/api';
@@ -19,9 +21,14 @@ import { draftOf, draftOfImported, emptyDraft, type NoteDraft } from '../locatio
 import { LoadFailure, useOrgRefreshOnLeave } from '../locations/parts';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
+import { fetchResearch, updateResearchedEvent, type ResearchedEventChange, type ResearchedEventFields } from '../research/api';
+import { ASK_FOUND_QUERY, handOffAsk } from '../research/ask';
+import { askDraft, BANNER_DISMISS, BANNER_DISMISS_LABEL, BANNER_LINK, bannerWords, EDIT_SHEET, FOUND_NOTICES } from '../research/copy';
+import { bannerShows, markSeen, readSeen, runMark } from '../research/seen';
 import { fetchRules } from '../rules/api';
 import { useLocation } from '../shell/LocationShell';
 import { CalendarSkeleton } from '../skeleton';
+import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { ErrorNotice, InlineNotice } from '../ui/feedback';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
@@ -31,6 +38,7 @@ import { clearArrival, isRevealArrival } from './arrival';
 import { CalendarDay, PANEL_ID } from './CalendarDay';
 import { CalendarGrid } from './CalendarGrid';
 import { CalendarWeek } from './CalendarWeek';
+import { FoundEditForm } from './FoundEditForm';
 import { fetchOwnerCalendarEvents, fetchOwnerCalendars, GOOGLE_OFF, type OwnerCalendarEvent } from './api';
 import { calendarChart, chartDraws, lastYearRange } from './chart';
 import {
@@ -80,6 +88,17 @@ import { FigureKey } from './FigureKey';
 // the forecast: stored events change it only through notes), and "Your calendar" turns on. Make a note opens the form from one of their
 // events with its dates and hours but never its title, and the saved note is linked to that event by its calendar id and
 // uid (calendar-event-suggestions), so the day panel says "Made from a calendar event" on it; it is disabled under view-as.
+// Town research (D66, design decisions 11, 12 and 15): the calendar read's `found` shows under "Found by research" (a
+// filter on by default, shown while the read holds a found event or the filter is off), last on each day. A found
+// event's Edit opens the edit sheet (FoundEditForm) in the same popover, headed "Edit event"; Save, Hide and Reset each
+// send the event's `head` as `basedOn` and read the range's calendar again. When someone changed the event since (409
+// `changed_since`), an open sheet shows the event as it reads now, from the answer or the calendar read again, and
+// says so; Hide and Reset say so in the panel. A 404 says the event isn't available. Ask TownwiseAI leaves a draft
+// naming the event's title and date in memory (research/ask.ts), forgets the conversation kept for coming back, and
+// opens TownwiseAI on a new conversation. A banner above the toolbar, linking to the Town tab, says what a run a person
+// started (Research now, or the early run after the location was created or its place picked) is doing or found, until
+// dismissed or the Town tab is opened (remembered on the device, research/seen.ts); a weekly run shows none, and a
+// failed status read shows none. The status is read once per visit (no polling here; the Town tab polls).
 // "Today" is the device's date.
 // D64 (2026-11-19, owner request): the selected day stands out in both views (CalendarGrid*, CalendarWeek*); a forecast
 // chart (chart.ts over these reads, with the sales days 364 days before the range read beside them for last year, a
@@ -105,11 +124,16 @@ const sticky = (Platform.OS === 'web' ? { position: 'sticky', top: 16 } : {}) as
  * Add an event's. A note made from a stored event sends that event's `fromEvent` with it, so the API links the note
  * to the event (calendar-event-suggestions).
  */
-type FormState = { mode: 'new'; draft: NoteDraft; source: string; fromEvent?: NonNullable<NewNoteInput['fromEvent']> } | { mode: 'edit'; note: Note } | null;
+type FormState =
+  | { mode: 'new'; draft: NoteDraft; source: string; fromEvent?: NonNullable<NewNoteInput['fromEvent']> }
+  | { mode: 'edit'; note: Note }
+  | { mode: 'found'; event: ResearchedEvent; conflict: boolean; stale: string | null }
+  | null;
 
 /** The note form popover's heading, which names it: by the button that opened it. */
 function formLabel(form: NonNullable<FormState>): string {
   if (form.mode === 'edit') return 'Edit note';
+  if (form.mode === 'found') return EDIT_SHEET.heading;
   return form.source === 'add' ? 'Add an event' : 'Make a note';
 }
 
@@ -179,7 +203,7 @@ export function CalendarPage(): React.JSX.Element {
 
 function CalendarView(): React.JSX.Element {
   const { location, org } = useLocation();
-  const { api } = usePortal();
+  const { api, me } = usePortal();
   const { readOnly, line } = useReadOnly();
   const router = useRouter();
   const params = useLocalSearchParams<{ day?: string; view?: string }>();
@@ -262,6 +286,17 @@ function CalendarView(): React.JSX.Element {
     [api, location.id, from, to],
   ));
   const calendars = useKept(useCallback(() => fetchOwnerCalendars(api, location.id), [api, location.id]));
+  // The location's research status, for the banner only: a failed read shows no banner.
+  const research = useLoad(useCallback(() => fetchResearch(api, location.id), [api, location.id]));
+  // The run the person last saw (dismissed, or the Town tab opened); undefined until the device's store answers.
+  const [seenRun, setSeenRun] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    void readSeen(lastChatStore, me.user.id, location.id).then((mark) => { if (live) setSeenRun(mark); });
+    return () => { live = false; };
+  }, [me.user.id, location.id]);
+  // A found event's Hide or Reset that is out.
+  const [foundPending, setFoundPending] = useState<string | null>(null);
 
   // Below 1024px on web the panel is under the grid: a day clicked or entered there brings it into view (an arrow key
   // keeps the focused cell in view instead).
@@ -311,7 +346,7 @@ function CalendarView(): React.JSX.Element {
     // D67: a guest count a note marks wrong reads as none, as the API's forecast read gives it no actual.
     today, covered: shown.range, forecast: forecastWindow, salesDays: trustedGuestDays(shown.days, notes.data.list), events: shown.calendar.events,
     notes: notes.data.list,
-    rules: notes.data.rules, imported: hasCalendars ? shown.stored : [], filters,
+    rules: notes.data.rules, imported: hasCalendars ? shown.stored : [], found: shown.calendar.found, filters,
   }), [today, shown, forecastWindow, notes.data, hasCalendars, filters]);
   const rows = useMemo(() => (input === null || view === 'week' ? [] : buildGrid(month, input, bounds)), [input, view, month, bounds]);
   const stripDays = useMemo(() => stripDates(strip), [strip]);
@@ -364,6 +399,65 @@ function CalendarView(): React.JSX.Element {
     setNotice({ text, stays: true });
     reloadDay();
   }, [reloadDay]);
+
+  // A found event's Save, Hide or Reset, with the event's head as basedOn; the range's calendar reads again after any
+  // answer. 'conflict': someone changed it since, `current` the event as it reads now when the answer carried it.
+  const changeFound = useCallback(async (event: ResearchedEvent, change: ResearchedEventChange): Promise<'saved' | { conflict: ResearchedEvent | null; hidden: boolean } | 'gone'> => {
+    try {
+      const result = await updateResearchedEvent(api, location.id, event.id, change);
+      return result.status === 'saved' ? 'saved' : { conflict: result.current, hidden: result.hidden };
+    } catch (error) {
+      if (hasCode(error, 404, 'not_found')) return 'gone';
+      throw error;
+    } finally {
+      reloadMonth();
+    }
+  }, [api, location.id, reloadMonth]);
+
+  const saveFound = useCallback(async (event: ResearchedEvent, fields: ResearchedEventFields): Promise<void> => {
+    const answer = await changeFound(event, { op: 'edit', fields, basedOn: event.head });
+    if (answer === 'saved') {
+      setForm(null);
+      setNotice({ text: FOUND_NOTICES.saved });
+    } else if (answer === 'gone') {
+      openerGone.current = true;
+      setForm(null);
+      setNotice({ text: FOUND_NOTICES.gone, stays: true });
+    } else if (answer.hidden) {
+      // Another member hid it meanwhile: an edit would change an event the Calendar no longer shows.
+      setForm(null);
+      setNotice({ text: FOUND_NOTICES.hiddenSince, stays: true });
+    } else {
+      // The sheet opens again on the event as it reads now (the answer's, else the calendar read again's).
+      setForm(answer.conflict === null
+        ? { mode: 'found', event, conflict: true, stale: event.head }
+        : { mode: 'found', event: answer.conflict, conflict: true, stale: null });
+    }
+  }, [changeFound]);
+
+  const foundAction = useCallback((event: ResearchedEvent, op: 'hide' | 'restore') => {
+    setFoundPending(event.id);
+    setNotice(null);
+    changeFound(event, { op, basedOn: event.head }).then(
+      (answer) => {
+        if (answer === 'saved') setNotice({ text: op === 'hide' ? FOUND_NOTICES.hidden : FOUND_NOTICES.reset });
+        else if (answer === 'gone') setNotice({ text: FOUND_NOTICES.gone, stays: true });
+        else setNotice({ text: FOUND_NOTICES.changedSinceAction, stays: true });
+      },
+      (error: unknown) => {
+        const tooMany = error instanceof ApiError && error.status === 409 && error.code === 'too_many_edits';
+        setNotice({ text: tooMany ? FOUND_NOTICES.tooManyEdits : errorCopy(error), stays: true });
+      },
+    ).finally(() => { setFoundPending(null); });
+  }, [changeFound]);
+
+  const askFound = useCallback((event: ResearchedEvent) => {
+    handOffAsk(location.id, askDraft(event.title, selected < event.start || selected > event.end ? event.start : selected, today));
+    // A new conversation: forget the one kept for coming back before TownwiseAI opens.
+    void forgetChat(lastChatStore, lastChatKey(me.user.id, location.id, me.viewAs?.target.userId ?? null)).finally(() => {
+      router.push(`${locationHref(location.id, 'agent')}?${ASK_FOUND_QUERY}`);
+    });
+  }, [location.id, me.user.id, me.viewAs, router, selected, today]);
 
   const editing = form?.mode === 'edit' ? form.note : null;
   const fromEvent = form?.mode === 'new' ? form.fromEvent : undefined;
@@ -478,10 +572,17 @@ function CalendarView(): React.JSX.Element {
   // One calendars notice at a time: a failed list read says so (the popover says it too, when open); a failed
   // stored-events read only while the list answered with a calendar, since with none there are no events to miss.
   const listFailed = calendars.error !== null;
+  // The research banner: the location's last run, when a person started it and it was not seen yet.
+  const lastRun = research.state.status === 'ready' ? research.state.data.location : null;
+  const banner = seenRun !== undefined && bannerShows(lastRun, seenRun) ? bannerWords(lastRun, locationName) : null;
   const storedFailed = hasCalendars && shown.storedFailed && sameRange(shown.range, range);
 
+  const anyFound = (shown.calendar.found ?? []).length > 0;
   const filtersNode = (
-    <CalendarFilters filters={filters} onFilter={toggle} imported={hasCalendars} chart={chartOn} onChart={() => { setChartOn((on) => !on); }} />
+    <CalendarFilters
+      filters={filters} onFilter={toggle} imported={hasCalendars} researched={anyFound || !filters.researched} chart={chartOn}
+      onChart={() => { setChartOn((on) => !on); }}
+    />
   );
   /** A scroll of the week stopped with `next` first in view: it follows, and so does the selected day when it left the view. */
   const onSettle = (next: string): void => {
@@ -489,7 +590,20 @@ function CalendarView(): React.JSX.Element {
     const follow = clampToBounds(followSelection(selected, next));
     if (follow !== selected) select(follow, true);
   };
-  const formNode = form === null ? null : (
+  // The edit sheet stands on the event the 409 answered with; when the answer carried none (`stale`, the head refused),
+  // on the calendar read again once it holds another head. The sheet starts again whenever its head changes.
+  const foundForm = form?.mode === 'found' ? form : null;
+  const foundBasis = foundForm === null ? null : foundForm.stale === null ? foundForm.event
+    : (shown.calendar.found ?? []).find((event) => event.id === foundForm.event.id && event.head !== foundForm.stale) ?? foundForm.event;
+  const formNode = form === null ? null : foundForm !== null && foundBasis !== null ? (
+    <FoundEditForm
+      key={`${foundBasis.id}:${foundBasis.head}`}
+      event={foundBasis}
+      conflict={foundForm.conflict}
+      save={(fields) => saveFound(foundBasis, fields)}
+      onCancel={() => { setForm(null); }}
+    />
+  ) : form.mode === 'found' ? null : (
     <NoteForm
       key={form.mode === 'edit' ? form.note.id : `${form.source}-${selected}`}
       initial={form.mode === 'edit' ? draftOf(form.note) : form.draft}
@@ -531,6 +645,10 @@ function CalendarView(): React.JSX.Element {
             fromEvent: { calendarId: event.calendarId, uid: event.uid },
           }, pressed);
         }}
+        onEditFound={(event, pressed) => { openForm({ mode: 'found', event, conflict: false, stale: null }, pressed); }}
+        onFoundAction={foundAction}
+        onAskFound={askFound}
+        foundPending={foundPending}
       />
       <NotePopover
         visible={form !== null}
@@ -558,6 +676,21 @@ function CalendarView(): React.JSX.Element {
           text={`Townwise hasn’t published a forecast for ${locationName} yet. Days show your history, your notes and ${location.town.name}’s calendar. Notes you add now count as soon as a forecast is published.`}
         />
       ) : null}
+      {banner === null ? null : (
+        <View style={styles.banner}>
+          <InlineNotice text={banner} link={{ label: BANNER_LINK, href: locationHref(location.id, 'town') }} />
+          <Button
+            variant="link"
+            label={BANNER_DISMISS}
+            accessibilityLabel={BANNER_DISMISS_LABEL}
+            onPress={() => {
+              if (lastRun === null) return;
+              setSeenRun(runMark(lastRun));
+              void markSeen(lastChatStore, me.user.id, location.id, lastRun);
+            }}
+          />
+        </View>
+      )}
       <Toolbar
         {...nav}
         onToday={() => {
@@ -645,4 +778,5 @@ const styles = StyleSheet.create({
   column: { gap: theme.space[4] },
   wide: { flex: 8, minWidth: 0 },
   narrow: { flex: 4, minWidth: 0 },
+  banner: { gap: theme.space[2], alignItems: 'flex-start' },
 });

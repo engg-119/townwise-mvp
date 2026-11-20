@@ -2,8 +2,11 @@
 import { z } from 'zod';
 
 import { TOWNWISE_AI_AUTHOR } from '../../agent/apply.ts';
+import { eachDay } from '../../forecasts/file.ts';
+import { researchedEventsFor, type DayRange } from '../../research/read.ts';
 import type { NoteRecord } from '../../stores/notes.ts';
-import type { ToolView } from './registry.ts';
+import { weekdayOf } from '../../time-zones.ts';
+import type { ToolContext, ToolView } from './registry.ts';
 
 /**
  * D59 slice 4: whether a note's words may be ones nobody typed into Townwise: TownwiseAI wrote it from a file or a
@@ -52,4 +55,38 @@ export function sourceLinks(urls: readonly string[]): { host: string; url: strin
     const parsed = URL.parse(url);
     return parsed?.protocol === 'https:' ? [{ host: parsed.hostname.replace(/^www\./, ''), url }] : [];
   }).slice(0, MAX_SOURCE_LINKS);
+}
+
+/** The days of `from` to `to` (inclusive) that fall on `weekdays` (0 Sunday to 6), every one when null. */
+export function daysOn(from: string, to: string, weekdays: readonly number[] | null): string[] {
+  return eachDay(from, to).filter((day) => weekdays === null || weekdays.includes(new Date(`${day}T00:00:00.000Z`).getUTCDay()));
+}
+
+/**
+ * D66 (design decision 12): the researched events of the location falling on a day of `range` (by their dates and
+ * weekdays), after this location's edits, hidden ones left out, as get_town_calendar and get_day hand them to the model
+ * (`found`: `[]` while research is off, null when the read fails). Each carries its id and head, the eventId and basedOn
+ * a correction names. The days of `range` they fall on are added to the turn's `readResearchedDays`, so propose_note
+ * saves no note on one of them itself: those events came from web pages nobody typed into Townwise.
+ */
+export async function researchedForModel(tc: ToolContext, range: DayRange): Promise<Record<string, unknown>[] | null> {
+  const read = await researchedEventsFor(tc.ctx, tc.scope, tc.location, range);
+  if (read === null) return null;
+  const views = read.flatMap((view) => {
+    const from = view.start < range.from ? range.from : view.start;
+    const to = view.end > range.to ? range.to : view.end;
+    const days = from <= to ? daysOn(from, to, view.weekdays) : [];
+    return days.length === 0 ? [] : [{ view, days }];
+  });
+  if (views.length > 0) {
+    const seen = tc.turn.readResearchedDays ?? new Set<string>();
+    for (const { days } of views) for (const day of days) seen.add(day);
+    tc.turn.readResearchedDays = seen;
+  }
+  return views.map(({ view }) => ({
+    id: view.id, head: view.head, title: view.title, start: view.start, startWeekday: weekdayOf(view.start), end: view.end,
+    endWeekday: weekdayOf(view.end), weekdays: view.weekdays, startTime: view.startTime, kind: view.kind, category: view.category,
+    status: view.status, origin: view.origin, confidence: view.confidence, where: view.where, who: view.who, sources: view.sources,
+    edited: view.edited, lastConfirmed: view.lastSeenAt.slice(0, 10),
+  }));
 }

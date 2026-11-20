@@ -5,6 +5,7 @@ import { shortDate } from '../analytics/words';
 import { formatDate } from '../format';
 import { addDays, daysBetween, monthRange } from '../locations/dates';
 import { hoursLine } from '../locations/noteRules';
+import { FOUND_LABEL, foundTime } from '../research/copy';
 import { compactEntries, dayEntries, type DayEntry } from './entries';
 import {
   captionOf, dayCell, dayView, rangeWords, stepMonth, type CalendarCell, type CalendarInput, type monthBounds,
@@ -213,7 +214,7 @@ export function buildGrid(month: string, input: CalendarInput, bounds: MonthBoun
 }
 
 /** What a week card is: a holiday, town event, term or season, a note, a business rule, or an imported event. */
-export type WeekCardKind = TownEvent['kind'] | 'note' | 'rule' | 'imported';
+export type WeekCardKind = TownEvent['kind'] | 'note' | 'rule' | 'imported' | 'researched';
 
 /** One entry of a day in the week view: every compact entry gets a card, in the entries' order (weekCards). */
 export interface WeekCard {
@@ -248,6 +249,10 @@ function cardOf(entry: DayEntry): WeekCard {
     // A rule's end date may be null, so its schedule summary says when it runs rather than a span.
     case 'rule': return { ...card, kind: 'rule', hours: hoursLine(entry.rule.schedule ?? {}), sub: entry.rule.scheduleSummary ?? 'Your rule' };
     case 'imported': return { ...card, kind: 'imported', hours: hoursLine(entry.imported), sub: withSpan('Your calendar', entry.imported.startDate, entry.imported.endDate) };
+    case 'researched': {
+      const { researched } = entry;
+      return { ...card, kind: 'researched', hours: foundTime(researched), sub: withSpan(FOUND_LABEL, researched.start, researched.end) };
+    }
     default: {
       const { event } = entry;
       return { ...card, kind: event.kind, hours: null, sub: withSpan(event.kind === 'holiday' && event.scope === 'national' ? 'Federal holiday' : EVENT_WORDS[event.kind], event.start, event.end) };
@@ -266,7 +271,7 @@ function weekCards(date: string, input: CalendarInput): WeekCard[] {
 
 /** A card's 2px left rule, a theme token: a holiday or town event `white`, a note or rule `text2`, an imported event `mint`, a period `line`. */
 export const CARD_MARK: Readonly<Record<WeekCardKind, 'white' | 'text2' | 'mint' | 'line'>> = {
-  holiday: 'white', event: 'white', note: 'text2', rule: 'text2', imported: 'mint', term: 'line', season: 'line',
+  holiday: 'white', event: 'white', note: 'text2', rule: 'text2', imported: 'mint', term: 'line', season: 'line', researched: 'line',
 };
 
 /**

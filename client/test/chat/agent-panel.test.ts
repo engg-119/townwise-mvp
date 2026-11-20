@@ -22,7 +22,7 @@ test('the fixture holds every question kind and every activity kind the API send
   // D46: the sales history's weekday question became a suggested rule, so the API sends no weekday question.
   expect(fixture.panel.questions.map((q) => (q as { kind: string }).kind)).toEqual(['likely_closed', 'gap']);
   expect(fixture.panel.activity.map((a) => (a as { kind: string }).kind)).toEqual([
-    'note_saved', 'question_answered', 'upload_applied', 'file_processed', 'agent_change', 'question_answered',
+    'note_saved', 'question_answered', 'upload_applied', 'file_processed', 'forecast_made', 'agent_change', 'question_answered',
   ]);
   // D71: a past private event's guests, and the count saved from one, held apart so the panel's cards stay as they were.
   expect(fixture.partyGuests.questions.map((q) => (q as { kind: string }).kind)).toEqual(['party_guests']);
@@ -38,6 +38,41 @@ test('the side panel reads every question and activity item the API answers, dro
   const api = fakeChatApi();
   api.panel = fixture.panel;
   expect(await loadAgentPanel(api, 'l1')).toEqual(fixture.panel);
+});
+
+test('D65: a forecast run with a cause, reason or outcome this client does not know is left out, and the rest kept', async () => {
+  const api = fakeChatApi();
+  const run = fixture.panel.activity.find((a) => (a as { kind: string }).kind === 'forecast_made') as Record<string, unknown>;
+  api.panel = {
+    ...fixture.panel,
+    activity: [run, { ...run, causes: ['research'] }, { ...run, reason: 'later_reason' }, { ...run, outcome: 'paused' }, { ...run, dayCount: undefined }],
+  };
+  expect((await loadAgentPanel(api, 'l1')).activity).toEqual([run]);
+});
+
+test('D66: research runs and TownwiseAI’s corrections read as the API sends them; an unknown status or subject is left out', async () => {
+  // Shapes copied from api/test/agent-activity.test.ts (research_done) and api/src/agent/activity.ts (an event.correct
+  // change: no dates, kind or count). The shared fixture is unchanged; these items sit beside it.
+  const done = {
+    at: '2026-06-01T09:00:00.000Z', kind: 'research_done', subject: 'location', status: 'done', found: 9, added: 3, competitors: 2, threadsFailed: 0,
+    threadsBudget: 0, finishedAt: '2026-06-01T09:00:00.000Z',
+  };
+  const town = { ...done, subject: 'town', status: 'budget', found: 0, added: 0, competitors: null, threadsFailed: 3, threadsBudget: 3 };
+  const corrected = {
+    at: '2026-06-01T08:30:00.000Z', kind: 'agent_change', changeId: '0000000000000000000000e9', action: 'event.correct', sourceKind: 'chat',
+    status: 'applied', startDate: null, endDate: null, noteKind: null, weekdays: null, count: null, undoable: true, sourcePasted: false,
+  };
+  const api = fakeChatApi();
+  api.panel = {
+    ...fixture.panel,
+    activity: [done, town, corrected, { ...done, status: 'off' }, { ...done, subject: 'region' }, { ...corrected, action: 'event.later' }],
+  };
+  expect((await loadAgentPanel(api, 'l1')).activity).toEqual([done, town, corrected]);
+  // An item from an API before threadsBudget reads as none skipped for budget.
+  const older: Record<string, unknown> = { ...done };
+  delete older.threadsBudget;
+  api.panel = { ...fixture.panel, activity: [older] };
+  expect((await loadAgentPanel(api, 'l1')).activity).toEqual([done]);
 });
 
 test('an answer sends the body the API takes and reads the response it gives', async () => {

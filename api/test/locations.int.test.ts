@@ -7,14 +7,15 @@ import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { TownwiseContext } from '../src/app.ts';
-import type { Principal } from '../src/access/policy.ts';
+import { scopeForNewOrg, type OrgScope, type Principal } from '../src/access/policy.ts';
 import { createLocation, type LocationSummary } from '../src/handlers/locations.ts';
 import type { TownProfile } from '../src/handlers/towns.ts';
 import { createGooglePlacesClient } from '../src/places/google.ts';
 import {
-  addChatTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
-  ORDER_COLLECTIONS,
+  addChatTurn, addLocation, addNote, addOpenAsAdminGrant, addOrderRecords, addOwnerCalendar, addRequest, addResearchRecords, addSalesDay, addSeat, addUpload,
+  auditEvents, createOrg, ORDER_COLLECTIONS, RESEARCH_COLLECTIONS,
 } from './helpers/fixtures.ts';
+import { scriptedModel } from './helpers/chat-model.ts';
 import { fakePlaces, placeDetails, usAddress } from './helpers/places-fetch.ts';
 import {
   call, limiterKey, logLines, signIn, signInStaff, startTownwiseServer, writesDuring, type TestSession, type TownwiseTestServer,
@@ -29,10 +30,11 @@ beforeEach(async () => { await server.redis.flushdb(); });
 const NO_SALES = {
   placeId: null,
   coverage: { dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, firstDate: null, lastDate: null, missingDays: 0 },
-  calibration: { state: 'no_sales_data' },
+  calibration: { state: 'no_sales_data', updating: null },
   notesCount: 0,
   lastUploadAt: null,
   offDayCount: 0,
+  researching: null,
 };
 
 interface Team { orgId: string; admin: TestSession; adminEmail: string; member: TestSession }
@@ -87,8 +89,8 @@ describe('GET /api/org', () => {
         {
           id: busy, name: 'Busy Room', town, placeId: null,
           coverage: { dayCount: 2, guestsDayCount: 1, netSalesDayCount: 1, firstDate: '2026-05-01', lastDate: '2026-05-04', missingDays: 2 },
-          calibration: { state: 'not_calibrated', dayCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-04' },
-          notesCount: 1, lastUploadAt: uploadedAt.toISOString(), offDayCount: 0,
+          calibration: { state: 'not_calibrated', dayCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-04', updating: null, lastRun: null },
+          notesCount: 1, lastUploadAt: uploadedAt.toISOString(), offDayCount: 0, researching: null,
         },
         { id: quiet, name: 'Quiet Room', town, ...NO_SALES },
       ],
@@ -106,6 +108,45 @@ describe('GET /api/org', () => {
     expect(await (await call(server, '/api/org', { session: t.admin })).json()).toMatchObject({ locations: [], requestedLocationCount: null });
     const outsider = await signIn(server, `outside-${randomUUID().slice(0, 8)}@example.test`);
     expect(await errorOf(await call(server, '/api/org', { session: outsider }))).toEqual({ status: 403, error: 'no_access' });
+  });
+});
+
+describe('GET /api/org while a forecast updates (D65)', () => {
+  const MINUTE = 60_000;
+
+  it('reads running for the location whose calibration is live, and a failed last run with no write once it is past 20 minutes', async () => {
+    const t = await team('Updating Diner');
+    const busy = await addLocation(server, { orgId: t.orgId, name: 'Busy Room' });
+    const stuck = await addLocation(server, { orgId: t.orgId, name: 'Stuck Room' });
+    const quiet = await addLocation(server, { orgId: t.orgId, name: 'Quiet Room' });
+    for (const locationId of [busy, stuck, quiet]) {
+      await addSalesDay(server, { orgId: t.orgId, locationId, date: '2026-05-01', guests: 80, netSalesCents: null });
+    }
+    const queue = async (locationId: string, requestedAt: Date): Promise<string> => {
+      const id = new Types.ObjectId().toHexString();
+      await server.ctx.stores.calibrations.insertQueued({ orgId: t.orgId } as OrgScope, {
+        id, locationId, requestedBy: { userId: t.admin.userId, role: 'org_admin', via: 'chat' }, regimeStart: null, championRunId: null,
+        tokenExpiresAt: new Date(requestedAt.getTime() + 20 * MINUTE), now: requestedAt,
+      });
+      return id;
+    };
+    const now = server.clock.now();
+    await queue(busy, now);
+    const old = new Date(now.getTime() - 25 * MINUTE);
+    const id = await queue(stuck, old);
+    const before = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(id) });
+    let read: Record<string, unknown> = {};
+    const writes = await writesDuring(server, async () => {
+      const body = await (await call(server, '/api/org', { session: t.member })).json() as { locations: LocationSummary[] };
+      read = Object.fromEntries(body.locations.map((location) => [location.id, location.calibration]));
+    });
+    expect(writes.filter((write) => write.includes('tw_calibrations'))).toEqual([]);
+    expect(read[busy]).toMatchObject({ state: 'not_calibrated', updating: { stage: 'running', since: now.toISOString() }, lastRun: null });
+    expect(read[stuck]).toMatchObject({
+      updating: null, lastRun: { outcome: 'not_run', reason: 'failed', finishedAt: new Date(old.getTime() + 20 * MINUTE).toISOString() },
+    });
+    expect(read[quiet]).toMatchObject({ state: 'not_calibrated', updating: null, lastRun: null });
+    expect(await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(id) })).toEqual(before);
   });
 });
 
@@ -286,6 +327,23 @@ describe('DELETE /api/org/locations/:locationId', () => {
       const of = (locationId: string) => server.connection.collection(collection).countDocuments({ locationId: new Types.ObjectId(locationId) });
       expect({ collection, doomed: await of(doomed), kept: await of(kept) }).toEqual({ collection, doomed: 0, kept: collection === 'tw_calendar_sources' ? 1 : 3 });
     }
+  });
+
+  it('deletes the location’s research with it (runs, threads, events, entities, edits), and no other location’s; the town’s rows stay (D66)', async () => {
+    const t = await team('Research Group');
+    const doomed = await addLocation(server, { orgId: t.orgId, name: 'Doomed' });
+    const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
+    for (const locationId of [doomed, kept]) await addResearchRecords(server, { orgId: t.orgId, locationId });
+    const townEvents = server.connection.collection('tw_town_events');
+    const { insertedId } = await townEvents.insertOne({ townKey: 'hanover-nh', title: 'Fixture Town Fair', start: '2026-06-12', end: '2026-06-12' });
+    expect((await remove(t.admin, doomed)).status).toBe(204);
+    for (const name of RESEARCH_COLLECTIONS) {
+      const collection = server.connection.collection(name);
+      expect({ name, doomed: await collection.countDocuments({ locationId: new Types.ObjectId(doomed) }) }).toEqual({ name, doomed: 0 });
+      expect({ name, kept: await collection.countDocuments({ locationId: new Types.ObjectId(kept) }) }).toEqual({ name, kept: 1 });
+    }
+    expect(await townEvents.countDocuments({ _id: insertedId })).toBe(1);
+    await townEvents.deleteOne({ _id: insertedId });
   });
 
   it('deletes the location’s ordering records with it (edits, rules, cards, setup, item sales, counts), and no other location’s', async () => {
@@ -550,5 +608,146 @@ describe('the Places budget while its store is down', () => {
     await expect(createLocation(ctx, byHand, res, admin)).rejects.toMatchObject({ status: 409, code: 'location_name_taken' });
     expect(counted).toBe(2);
     expect(asked).toBe(0);
+  });
+});
+
+describe('D66: research after an org admin adds a location or changes its place', () => {
+  // A third server with research running here (an Anthropic key, standing in as a scripted model, and web search on)
+  // and Google Places over a fake fetch. The runner itself does not run in tests: only what the requests queue.
+  const fake = fakePlaces();
+  let live: TownwiseTestServer;
+  const PLACE_A = 'ChIJTestResearchA001';
+  const PLACE_B = 'ChIJTestResearchB001';
+  const STAFF = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
+  const hanoverPlace = (id: string): unknown => placeDetails(id, '8 Test Street, Hanover, NH 03755, USA', usAddress({ locality: 'Hanover', state: 'NH' }));
+
+  beforeAll(async () => {
+    live = await startTownwiseServer({
+      env: { TOWNWISE_CHAT_WEB_SEARCH: 'true' }, chat: scriptedModel(),
+      places: createGooglePlacesClient('test-places-key', { fetch: fake.fetch, timeoutMs: 200 }),
+    });
+  });
+  afterAll(async () => { await live.close(); });
+  beforeEach(async () => {
+    fake.reset();
+    await live.redis.flushdb();
+  });
+
+  async function liveTeam(): Promise<Team> {
+    const orgId = await createOrg(live, { name: `Research Group ${randomUUID().slice(0, 6)}` });
+    const adminEmail = `admin-${randomUUID().slice(0, 8)}@example.test`;
+    const admin = await signIn(live, adminEmail);
+    await addSeat(live, { orgId, userId: admin.userId, email: adminEmail, role: 'org_admin' });
+    return { orgId, admin, adminEmail, member: admin };
+  }
+
+  const runsOf = (locationId: string) => live.connection.collection('tw_location_research_runs')
+    .find({ locationId: new Types.ObjectId(locationId) }).sort({ createdAt: 1, _id: 1 }).toArray();
+  const createAt = (session: TestSession, body: unknown): Promise<Response> => call(live, '/api/org/locations', { session, json: body });
+  const patchAt = (session: TestSession, locationId: string, body: unknown): Promise<Response> =>
+    call(live, `/api/org/locations/${locationId}`, { method: 'PATCH', session, json: body });
+
+  async function created(session: TestSession, body: unknown): Promise<string> {
+    const res = await createAt(session, body);
+    expect(res.status).toBe(201);
+    return (await res.json() as { location: LocationSummary }).location.id;
+  }
+
+  it('creating a location queues its early run, due at once, and never its town’s run (another tenant would see it); a rename queues nothing', async () => {
+    const t = await liveTeam();
+    fake.script({ kind: 'json', body: hanoverPlace(PLACE_A) });
+    const locationId = await created(t.admin, { name: 'Lantern Room', town: { townId: 'hanover-nh' }, placeId: PLACE_A });
+    const [run] = await runsOf(locationId);
+    expect(run).toMatchObject({ trigger: 'early', status: 'queued', placeId: PLACE_A, town: 'hanover-nh', threads: ['neighborhood', 'competitors'] });
+    expect(String(run?.key)).toMatch(/^s:[0-9a-f]{24}$/);
+    expect(await live.connection.collection('tw_location_research_threads').countDocuments({ runId: run?._id, notBefore: live.clock.now() })).toBe(2);
+    expect(await live.connection.collection('tw_town_research_runs').countDocuments({ townKey: 'hanover-nh' })).toBe(0);
+    expect((await patchAt(t.admin, locationId, { name: 'Lantern Hall' })).status).toBe(200);
+    expect(await runsOf(locationId)).toHaveLength(1);
+  });
+
+  it('a place change mid-run ends the run `place_changed`, drops the old place’s rows and edits, and queues a run for the new place; back again queues another', async () => {
+    const t = await liveTeam();
+    const scope = scopeForNewOrg(STAFF, t.orgId);
+    fake.script({ kind: 'json', body: hanoverPlace(PLACE_A) });
+    const locationId = await created(t.admin, { name: 'Mill Room', town: { townId: 'hanover-nh' }, placeId: PLACE_A });
+    const [first] = await runsOf(locationId);
+    if (first === undefined) throw new Error('no early run');
+    // A lane is running one of its threads, and an earlier run found an event for place A that a member edited.
+    await live.connection.collection('tw_location_research_runs').updateOne({ _id: first._id }, { $set: { status: 'running' } });
+    await live.connection.collection('tw_location_research_threads').updateOne({ runId: first._id, thread: 'neighborhood' }, {
+      $set: { status: 'running', owner: 'lane-a', leaseUntil: new Date(live.clock.now().getTime() + 90_000) },
+    });
+    const eventId = await addResearchRecords(live, { orgId: t.orgId, locationId });
+    // The fixture's own ended run is not this test's.
+    await live.connection.collection('tw_location_research_runs').deleteMany({ locationId: new Types.ObjectId(locationId), status: 'done' });
+    await live.connection.collection('tw_location_events').updateMany({ locationId: new Types.ObjectId(locationId) }, { $set: { placeId: PLACE_A } });
+    await live.connection.collection('tw_location_entities').updateMany({ locationId: new Types.ObjectId(locationId) }, { $set: { placeId: PLACE_A } });
+    await live.connection.collection('tw_research_revisions').insertOne({
+      orgId: new Types.ObjectId(t.orgId), locationId: new Types.ObjectId(locationId), eventId: 't-0123456789abcdef01234567', op: 'hide', fields: null,
+      reverts: null, basedOn: 'base', by: { kind: 'person', userId: t.admin.userId }, createdAt: live.clock.now(),
+    });
+    expect(await live.connection.collection('tw_research_revisions').countDocuments({ eventId: `l-${eventId}` })).toBe(1);
+
+    fake.script({ kind: 'json', body: hanoverPlace(PLACE_B) });
+    expect((await patchAt(t.admin, locationId, { town: { townId: 'hanover-nh' }, placeId: PLACE_B })).status).toBe(200);
+    const [ended, next] = await runsOf(locationId);
+    expect(ended).toMatchObject({ status: 'off', code: 'place_changed' });
+    expect(ended).not.toHaveProperty('liveSubject');
+    expect((await live.connection.collection('tw_location_research_threads').find({ runId: ended?._id }).toArray()).map((thread) => [thread.status as string, thread.code as string]))
+      .toEqual([['failed', 'place_changed'], ['failed', 'place_changed']]);
+    expect(await live.ctx.stores.researchLocations.events(scope, locationId)).toEqual([]);
+    expect(await live.connection.collection('tw_location_entities').countDocuments({ locationId: new Types.ObjectId(locationId) })).toBe(0);
+    // The edit of the gone event goes; the town row's edit stays, since the town did not change.
+    expect((await live.connection.collection('tw_research_revisions').find({ locationId: new Types.ObjectId(locationId) }).toArray()).map((rev) => rev.eventId as string))
+      .toEqual(['t-0123456789abcdef01234567']);
+    expect(next).toMatchObject({ trigger: 'early', status: 'queued', placeId: PLACE_B });
+
+    fake.script({ kind: 'json', body: hanoverPlace(PLACE_A) });
+    expect((await patchAt(t.admin, locationId, { town: { townId: 'hanover-nh' }, placeId: PLACE_A })).status).toBe(200);
+    const runs = await runsOf(locationId);
+    expect(runs.map((run) => [run.status as string, run.placeId as string | null])).toEqual([['off', PLACE_A], ['off', PLACE_B], ['queued', PLACE_A]]);
+    // A change of town drops the town rows' edits too.
+    expect((await patchAt(t.admin, locationId, { town: { townId: 'stowe-vt' } })).status).toBe(200);
+    expect(await live.connection.collection('tw_research_revisions').countDocuments({ locationId: new Types.ObjectId(locationId) })).toBe(0);
+    expect((await runsOf(locationId)).at(-1)).toMatchObject({ status: 'queued', placeId: null, town: 'stowe-vt' });
+  });
+
+  it('queues nothing for staff open as admin, staff setup, or an organization with research off', async () => {
+    const t = await liveTeam();
+    const staff = await signInStaff(live);
+    await addOpenAsAdminGrant(live, { actorUserId: staff.userId, sessionId: staff.sessionId, orgId: t.orgId });
+    const opened = await created(staff, { name: 'Opened Room', town: { townId: 'hanover-nh' }, orgId: t.orgId });
+    expect(await runsOf(opened)).toEqual([]);
+    await live.connection.collection('tw_view_as_grants').deleteMany({});
+
+    const made = await call(live, '/api/admin/orgs', { session: staff, json: { name: `Setup Kitchen ${randomUUID().slice(0, 6)}`, adminEmail: `first-${randomUUID().slice(0, 8)}@example.test` } });
+    const setupOrgId = (await made.json() as { org: { id: string } }).org.id;
+    const setup = await call(live, `/api/admin/orgs/${setupOrgId}/locations`, { session: staff, json: { name: 'Setup Room', town: { townId: 'hanover-nh' } } });
+    expect(setup.status).toBe(201);
+    expect(await live.connection.collection('tw_location_research_runs').countDocuments({ orgId: new Types.ObjectId(setupOrgId) })).toBe(0);
+
+    await live.connection.collection('tw_orgs').updateOne({ _id: new Types.ObjectId(t.orgId) }, { $set: { research: { on: false, at: live.clock.now(), by: t.admin.userId } } });
+    const off = await created(t.admin, { name: 'Quiet Room', town: { townId: 'hanover-nh' } });
+    expect(await runsOf(off)).toEqual([]);
+  });
+
+  it('a failing enqueue is logged by code and the request still answers 201 and 200', async () => {
+    const t = await liveTeam();
+    const db = live.connection.db;
+    if (db === undefined) throw new Error('not connected');
+    // Every write of a location run fails at the database.
+    await db.command({ collMod: 'tw_location_research_runs', validator: { $expr: { $eq: [1, 0] } } });
+    try {
+      const locationId = await created(t.admin, { name: 'Failing Room', town: { townId: 'hanover-nh' } });
+      fake.script({ kind: 'json', body: hanoverPlace(PLACE_B) });
+      expect((await patchAt(t.admin, locationId, { town: { townId: 'hanover-nh' }, placeId: PLACE_B })).status).toBe(200);
+      expect(await runsOf(locationId)).toEqual([]);
+      const failed = logLines(live).filter((line) => line.msg === 'townwise.research_enqueue_failed');
+      expect(failed.map((line) => line.locationId)).toEqual([locationId, locationId]);
+      expect(JSON.stringify(failed)).not.toContain(PLACE_B);
+    } finally {
+      await db.command({ collMod: 'tw_location_research_runs', validator: {} });
+    }
   });
 });

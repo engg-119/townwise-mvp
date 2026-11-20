@@ -8,14 +8,14 @@
 // middle of its searches (pause_turn) is sent back unchanged to resume.
 import { AnthropicError, APIConnectionError, APIError, InternalServerError, RateLimitError } from '@anthropic-ai/sdk';
 import type {
-  BetaContentBlock, BetaContentBlockParam, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaRawContentBlockDelta,
-  BetaRawContentBlockStartEvent, BetaRawMessageStreamEvent, BetaToolResultBlockParam, BetaToolUseBlock,
+  BetaContentBlock, BetaContentBlockParam, BetaMessage, BetaMessageParam, BetaMessageStreamParams,
+  BetaRawContentBlockStartEvent, BetaToolResultBlockParam, BetaToolUseBlock,
 } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
 import type { NoteContent } from '../stores/notes.ts';
 import type { StoredMessage } from '../stores/chat-conversations.ts';
 import type { ChatModel } from './model.ts';
-import { costMicroUsd, messageCostMicroUsd, SEARCH_MICRO_USD, tokensOf, type TokenCounts } from './pricing.ts';
+import { messageCostMicroUsd, runningSpend, tokensOf } from './pricing.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
 import { UNANSWERED_RESULT } from './tools/next.ts';
 import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, TOOLS, type SavedNote, type ToolContext, type ToolView } from './tools/registry.ts';
@@ -159,74 +159,6 @@ export function failureCode(err: unknown): FailureCode {
  */
 function isUnparseableToolInput(err: unknown): boolean {
   return err instanceof AnthropicError && !(err instanceof APIError);
-}
-
-/** The characters a content delta streams: text, thinking and tool input. */
-function streamedCharacters(delta: BetaRawContentBlockDelta): number {
-  switch (delta.type) {
-    case 'text_delta': return delta.text.length;
-    case 'thinking_delta': return delta.thinking.length;
-    case 'input_json_delta': return delta.partial_json.length;
-    default: return 0;
-  }
-}
-
-/**
- * What a call that never finished used so far, for its cost. Input tokens come from message_start and output tokens
- * only from message_delta. A call aborted or failed after message_start but before message_delta is charged an output
- * estimate instead of the token or so message_start reports:
- *
- *   min(max_tokens, max(ceil(streamed characters / 3), ceil(seconds since message_start x 150)))
- *
- * at the price of the model that was answering. Streamed characters are those of text, thinking and tool input
- * deltas; the time term covers thinking that is billed but not streamed (a summary is shorter than the thinking behind it).
- * Its web searches (D37) are charged as message_delta reports them, and before it does, one for each search the call
- * started that did not come back as an error (a failed search is not billed).
- */
-function usageTracker(now: () => Date): {
-  observe(event: BetaRawMessageStreamEvent): void; costMicroUsd(): number; searches(): number;
-} {
-  let model: string | null = null;
-  let tokens: TokenCounts | null = null;
-  let startedAt = 0;
-  let characters = 0;
-  let outputReported = false;
-  let searchesStarted = 0;
-  let searchesReported: number | null = null;
-  const searches = (): number => searchesReported ?? Math.max(0, searchesStarted);
-  return {
-    observe(event) {
-      if (event.type === 'message_start') {
-        model = event.message.model;
-        tokens = tokensOf(event.message.usage);
-        startedAt = now().getTime();
-      } else if (event.type === 'content_block_start') {
-        const block = event.content_block;
-        if (block.type === 'server_tool_use' && block.name === WEB_SEARCH) searchesStarted += 1;
-        if (block.type === 'web_search_tool_result' && !Array.isArray(block.content)) searchesStarted -= 1;
-      } else if (event.type === 'content_block_delta') {
-        characters += streamedCharacters(event.delta);
-      } else if (event.type === 'message_delta' && tokens !== null) {
-        outputReported = true;
-        searchesReported = event.usage.server_tool_use?.web_search_requests ?? searchesReported;
-        tokens = {
-          input: event.usage.input_tokens ?? tokens.input,
-          output: event.usage.output_tokens,
-          cacheRead: event.usage.cache_read_input_tokens ?? tokens.cacheRead,
-          cacheWrite: event.usage.cache_creation_input_tokens ?? tokens.cacheWrite,
-        };
-      }
-    },
-    costMicroUsd() {
-      if (model === null || tokens === null) return 0;
-      const searched = searches() * SEARCH_MICRO_USD;
-      if (outputReported) return costMicroUsd(model, tokens) + searched;
-      const seconds = (now().getTime() - startedAt) / 1000;
-      const output = Math.min(MAX_TOKENS, Math.max(Math.ceil(characters / 3), Math.ceil(seconds * 150)));
-      return costMicroUsd(model, { ...tokens, output }) + searched;
-    },
-    searches,
-  };
 }
 
 /**
@@ -462,7 +394,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       // ends after its last complete step, whose tool calls all have results, so the saved history stays valid.
       if (calls > 0 && await input.budgetSpent()) return done('budget');
       calls += 1;
-      const usage = usageTracker(input.now);
+      const usage = runningSpend(input.now, MAX_TOKENS);
       let message: BetaMessage;
       try {
         const stream = input.model.stream(requestParams(requestMessages(), input.webSearch === true), { signal: input.signal });

@@ -2,17 +2,21 @@
 // import finished by a retry, publish and withdraw by compare-and-set, no publish while the organization's forecasts
 // are switched off (G1), delete, staff-only routes, another organization's ids answering 404, audit events with no figure that the org's admins see in their staff activity,
 // log lines with ids and counts only, and the runs deleted with the organization, the location and its sales data,
-// with staff ids cleared on person deletion. The fixture's numbers are synthetic.
+// with staff ids cleared on person deletion; and the first-forecast email (D65) a staff publish of a location's first run
+// sends, which never changes the answer. The fixture's numbers are synthetic.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import mongoose, { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { scopeForNewOrg } from '../src/access/policy.ts';
 import type { StaffActivityView } from '../src/audit.ts';
 import type { StaffForecastRunView } from '../src/handlers/forecast-runs.ts';
 import type { RunTrainingView } from '../src/lab/training.ts';
+import { SUBJECTS } from '../src/mail/templates.ts';
 import { addLocation, addSalesDay, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { createCapturingTransport } from './helpers/mail.ts';
 import { call, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
 const FIXTURE = JSON.parse(readFileSync(new URL('fixtures/forecast-run.json', import.meta.url), 'utf8')) as Record<string, unknown>;
@@ -21,15 +25,16 @@ const ROWS = 17;
 
 let server: TownwiseTestServer;
 let staff: TestSession;
+const mail = createCapturingTransport();
 
 beforeAll(async () => {
-  server = await startTownwiseServer();
+  server = await startTownwiseServer({ mailTransport: mail });
   staff = await signInStaff(server);
 });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => { await server.redis.flushdb(); });
 
-interface Team { orgId: string; locationId: string; admin: TestSession }
+interface Team { orgId: string; locationId: string; admin: TestSession; adminEmail: string }
 
 /** An organization whose forecasts are switched on (G1) unless `forecastsOn` is false. */
 async function team(name = `Forecast Kitchen ${randomUUID().slice(0, 6)}`, opts: { forecastsOn?: boolean } = {}): Promise<Team> {
@@ -38,7 +43,7 @@ async function team(name = `Forecast Kitchen ${randomUUID().slice(0, 6)}`, opts:
   const admin = await signIn(server, email);
   await addSeat(server, { orgId, userId: admin.userId, email, role: 'org_admin' });
   const locationId = await addLocation(server, { orgId, name: 'Hanover Room' });
-  return { orgId, locationId, admin };
+  return { orgId, locationId, admin, adminEmail: email };
 }
 
 function withMadeAt(madeAt: string): Record<string, unknown> {
@@ -281,6 +286,107 @@ describe('publish, withdraw and delete', () => {
     const { runs } = await res.json() as { runs: StaffForecastRunView[] };
     expect(runs.map((run) => run.id)).toEqual([second.id, first.id]);
     expect(JSON.stringify(runs)).not.toMatch(/"(low|mid|high|days)":/);
+  });
+});
+
+describe('run states and the first published run (D65)', () => {
+  const principal = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
+  const scopeOf = (t: Pick<Team, 'orgId'>) => scopeForNewOrg(principal, t.orgId);
+
+  it('the first published run is the earliest publishedAt, a withdrawn run included', async () => {
+    const t = await team();
+    expect(await server.ctx.stores.forecasts.firstPublished(scopeOf(t), t.locationId)).toBeNull();
+    const draft = await imported(t);
+    expect(await server.ctx.stores.forecasts.firstPublished(scopeOf(t), t.locationId)).toBeNull();
+    const first = await imported(t, withMadeAt('2026-05-02'));
+    expect((await change(t, first.id, 'publish')).status).toBe(200);
+    const at = server.clock.now();
+    expect((await change(t, first.id, 'withdraw')).status).toBe(200);
+    server.clock.advance(60_000);
+    expect((await change(t, draft.id, 'publish')).status).toBe(200);
+    expect(await server.ctx.stores.forecasts.firstPublished(scopeOf(t), t.locationId)).toEqual({ runId: first.id, publishedAt: at });
+  });
+
+  it('reads run states by id in one read, scoped to the organization', async () => {
+    const t = await team();
+    const other = await team();
+    const mine = await imported(t);
+    const published = await imported(t, withMadeAt('2026-05-02'));
+    expect((await change(t, published.id, 'publish')).status).toBe(200);
+    const theirs = await imported(other);
+    expect((await change(other, theirs.id, 'publish')).status).toBe(200);
+    const gone = new Types.ObjectId().toHexString();
+    server.commands.length = 0;
+    const states = await server.ctx.stores.forecasts.runStates(scopeOf(t), [mine.id, published.id, theirs.id, gone]);
+    expect(server.commands.filter((name) => name === 'find')).toHaveLength(1);
+    expect([...states.keys()].sort()).toEqual([mine.id, published.id].sort());
+    expect(states.get(mine.id)).toEqual({ status: 'draft', publishedAt: null, publishedBy: null });
+    expect(states.get(published.id)).toEqual({ status: 'published', publishedAt: server.clock.now(), publishedBy: staff.userId });
+    expect(await server.ctx.stores.forecasts.firstPublished(scopeOf(t), t.locationId)).toMatchObject({ runId: published.id });
+    expect((await server.ctx.stores.forecasts.runStates(scopeOf(t), [])).size).toBe(0);
+  });
+});
+
+describe('the first-forecast email (D65)', () => {
+  async function firstForecastMails(to: string): Promise<unknown[]> {
+    await server.mailer.idle();
+    return mail.sent.filter((message) => message.subject === SUBJECTS.first_forecast && message.to === to);
+  }
+
+  async function mailedAt(locationId: string): Promise<unknown> {
+    return (await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(locationId) }))?.firstForecastMailedAt;
+  }
+
+  it('a staff publish of a location’s first run mails its org admin once; a repeat and a later run mail none', async () => {
+    const t = await team();
+    const first = await imported(t);
+    expect((await change(t, first.id, 'publish')).status).toBe(200);
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+    expect(await mailedAt(t.locationId)).toEqual(server.clock.now());
+    expect((await change(t, first.id, 'publish')).status).toBe(200);
+    const later = await imported(t, withMadeAt('2026-05-02'));
+    expect((await change(t, later.id, 'publish')).status).toBe(200);
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+  });
+
+  it('sales data deleted and a first run published again mails no one: the marker stays on the location', async () => {
+    const t = await team();
+    const first = await imported(t);
+    expect((await change(t, first.id, 'publish')).status).toBe(200);
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+    const marked = await mailedAt(t.locationId);
+    // Deleting the sales data deletes the runs (U13B), so the next run is the location's first again; only the marker holds.
+    await addSalesDay(server, { orgId: t.orgId, locationId: t.locationId, date: '2026-05-01', guests: 90, netSalesCents: 100_000 });
+    expect((await call(server, `/api/org/locations/${t.locationId}/sales`, { method: 'DELETE', session: t.admin })).status).toBe(200);
+    const again = await imported(t);
+    // A later time, so a claim that overwrote the marker would show as modified rather than an equal $set.
+    server.clock.advance(1000);
+    expect((await change(t, again.id, 'publish')).status).toBe(200);
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+    expect(await mailedAt(t.locationId)).toEqual(marked);
+  });
+
+  it('a throwing mail step still answers 200 with the run published, and logs only ids', async () => {
+    const t = await team();
+    const run = await imported(t);
+    // The claim is the mail step's one write; nothing else in a publish writes the location.
+    const claim = vi.spyOn(server.connection.model('TwLocation'), 'updateOne').mockImplementation(() => { throw new Error(`sentinel ${t.adminEmail}`); });
+    server.logs.length = 0;
+    let res: Response;
+    try {
+      res = await change(t, run.id, 'publish');
+    } finally {
+      claim.mockRestore();
+    }
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ run: { id: run.id, status: 'published' } });
+    expect(await firstForecastMails(t.adminEmail)).toEqual([]);
+    expect(await mailedAt(t.locationId)).toBeUndefined();
+    const failed = server.logs.map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((line) => line.msg === 'townwise.first_forecast_mail_failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({ orgId: t.orgId, locationId: t.locationId });
+    expect(server.logs.join('\n')).not.toContain('sentinel');
   });
 });
 

@@ -80,14 +80,14 @@ const NO_COVERAGE = { dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, first
 
 export function locationOf(id: string, name: string, town: LocationSummary['town'], extra?: Partial<LocationSummary>): LocationSummary {
   return {
-    id, name, town, coverage: NO_COVERAGE, calibration: { state: 'no_sales_data' }, notesCount: 0, lastUploadAt: null, ...extra,
+    id, name, town, coverage: NO_COVERAGE, calibration: { state: 'no_sales_data', updating: null }, notesCount: 0, lastUploadAt: null, ...extra,
   };
 }
 
 export const LOCATIONS: LocationSummary[] = [
   locationOf('l1', 'Main Street Bar', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, {
     coverage: { dayCount: 400, guestsDayCount: 400, netSalesDayCount: 380, firstDate: '2025-01-01', lastDate: '2026-02-04', missingDays: 0 },
-    calibration: { state: 'not_calibrated', dayCount: 400, firstDate: '2025-01-01', lastDate: '2026-02-04' },
+    calibration: { state: 'not_calibrated', dayCount: 400, firstDate: '2025-01-01', lastDate: '2026-02-04', updating: null, lastRun: null },
     notesCount: 2,
   }),
   locationOf('l2', 'River Grill', { townId: null, name: 'Norwich', state: 'VT' }),

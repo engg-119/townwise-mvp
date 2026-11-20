@@ -98,6 +98,12 @@ export const ACTION_GROUP: Readonly<Record<AuditAction, ActionGroup | null>> = {
   'owner_calendar.bookings_confirmed': 'notes',
   'google_calendar.connected': 'notes',
   'google_calendar.disconnected': 'notes',
+  // D66: a person's edit of an event research found is a calendar change.
+  'research.event_edited': 'notes',
+  'research.event_hidden': 'notes',
+  'research.event_restored': 'notes',
+  // Staff taking a town row down for everyone: no organization's action.
+  'research.town_event_suppressed': null,
   'chat.turn_completed': 'townwiseAi',
   'chat.conversation_deleted': 'townwiseAi',
   'agent.question_answered': 'townwiseAi',
@@ -105,6 +111,8 @@ export const ACTION_GROUP: Readonly<Record<AuditAction, ActionGroup | null>> = {
   'org.calendar_titles_ai_changed': 'team',
   // D59: the switch is the team's; a change TownwiseAI saved on its own is nobody's action, an undo is a person's.
   'org.agent_auto_switched': 'team',
+  // D66: the research switch is the team's, as the other switches.
+  'org.research_switched': 'team',
   'agent.change_applied': null,
   'agent.calendar_answered': null,
   'agent.change_undone': 'townwiseAi',

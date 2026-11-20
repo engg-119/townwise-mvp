@@ -199,7 +199,7 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     const counts = { inserted, replaced: replace ? matched : 0, kept: replace ? 0 : matched };
     await stores.uploads.finish(scope, uploadId, counts);
     // D59: the days a file wrote change what the lab trains on.
-    await stores.locations.wantRefit(scope, file.locationId, now());
+    await stores.locations.wantRefit(scope, file.locationId, now(), 'sales');
     const csv = cleanCsv(days);
     await blobs.writeClean(scope, { locationId: file.locationId, fileId: file.id }, csv);
     const result: FileResult = {

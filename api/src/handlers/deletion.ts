@@ -88,6 +88,11 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.forecastWeeks.removeForOrg(scope);
     // U13B: forecast runs and their rows.
     await stores.forecasts.removeForOrg(scope);
+    // D66: research runs and threads first, then events and entities, then the edits. Town rows stay: they hold no
+    // organization's data. A suspended organization's merge writes nothing (it checks the organization is active); one
+    // already past that check is caught by the second sweep below.
+    await stores.researchLocations.removeForOrg(scope);
+    await stores.researchRevisions.removeForOrg(scope);
     const deletedLocations = await stores.locations.removeForOrg(scope);
     const deletedSeats = await stores.members.removeForOrg(scope);
     if (org.fromRequestId !== null) await stores.requests.remove(org.fromRequestId);
@@ -123,6 +128,12 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.agentChanges.removeForOrg(scope);
     // U13B: a staff forecast import already past its organization check can still write a run and rows.
     await stores.forecasts.removeForOrg(scope);
+    // D66: a planner tick, a merge or an edit already past its organization check can still write a run, its threads,
+    // an event, an entity or an edit (with a member's words) after the first sweep. A research lane still in a call
+    // settles its reservation when its heartbeat misses (up to 30 seconds later), but only into an existing month
+    // (chatUsage.addResearch never upserts), so it cannot bring back the usage swept above.
+    await stores.researchLocations.removeForOrg(scope);
+    await stores.researchRevisions.removeForOrg(scope);
     return { deletedDays: firstDays + lateDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents };
   });
   if (counts === 'files_unavailable') {

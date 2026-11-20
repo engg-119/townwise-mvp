@@ -79,19 +79,21 @@ export function Toolbar(props: {
 
 /**
  * “Show on the calendar”: the filters hide marks and list items, never a figure; "Your calendar" shows only when the
- * location has a calendar. The last chip, “Forecast chart”, shows or hides the forecast chart (D64), on by default.
- * Filters and the chart's chip are page state, not stored.
+ * location has a calendar, and "Found by research" while research found something. The last chip, “Forecast chart”,
+ * shows or hides the forecast chart (D64), on by default. Filters and the chart's chip are page state, not stored.
  */
 export function CalendarFilters(props: {
   filters: Filters;
   onFilter: (key: FilterKey) => void;
   /** Whether the location has a calendar, so its chip shows. */
   imported: boolean;
+  /** Whether "Found by research" shows (D66): while the read holds a found event, or the filter is off. */
+  researched?: boolean;
   /** Whether the forecast chart shows (D64), and its chip's press. */
   chart: boolean;
   onChart: () => void;
 }): React.JSX.Element {
-  const keys = FILTER_KEYS.filter((key) => key !== 'imported' || props.imported);
+  const keys = FILTER_KEYS.filter((key) => (key !== 'imported' || props.imported) && (key !== 'researched' || props.researched === true));
   return (
     <ToggleGroup<FilterKey | 'chart'>
       label="Show on the calendar"

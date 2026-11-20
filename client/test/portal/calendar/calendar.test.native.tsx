@@ -15,7 +15,7 @@ import { townEvent } from '../analytics/fakes';
 import { noteOf } from '../locations/fakes';
 import { ruleOf } from '../rules/fakes';
 import {
-  CALENDARS_PATH, calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, savedNote, type CalendarFake,
+  CALENDARS_PATH, calendarFake, forecastDay, forecastOf, foundEvent, NOTES_PATH, ownerCalendar, ownerEvent, PATH, researchBody, savedNote, type CalendarFake,
 } from './fakes';
 
 // P28 Calendar on native (spec 16.3): the same reads and grid as on web, a Pressable grid with the day
@@ -64,7 +64,7 @@ function november(guests = 0): unknown {
 }
 
 function setup(
-  init: Partial<Pick<CalendarFake, 'calendars' | 'ownerEvents' | 'notes' | 'rules'>> = {}, me = meOf(ACCESS.member),
+  init: Partial<Pick<CalendarFake, 'calendars' | 'ownerEvents' | 'notes' | 'rules' | 'found' | 'research'>> = {}, me = meOf(ACCESS.member),
 ): { api: FakePortalApi; fake: CalendarFake } {
   const fake = calendarFake({ events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })], forecasts: { '2026-11': november() }, ...init });
   return { api: fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake }), fake };
@@ -310,4 +310,48 @@ test('an outlook day on native (D52): its cell’s label says outlook, its panel
   expect(within(panel()).getByText('About 212 guests')).toBeTruthy();
   expect(within(panel()).getByText('Likely 150 to 290. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.')).toBeTruthy();
   expect(within(panel()).queryByText(/8 in 10/)).toBeNull();
+});
+
+describe('found by research (D66)', () => {
+  const LOW = foundEvent({ id: `t-${'b'.repeat(24)}`, title: 'Jazz brunch', origin: 'town', competitor: null, confidence: 'low', where: null, who: null });
+
+  test('the day panel lists them last with where and who and Unconfirmed; the filter hides them; Hide sends the head', async () => {
+    const { api, fake } = setup({ found: [foundEvent(), LOW] });
+    await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+    expect(await within(panel()).findByText('Trivia night')).toBeTruthy();
+    expect(within(panel()).getByText('Found by research')).toBeTruthy();
+    expect(within(panel()).getByText('at Example Tavern · by Example Quiz Club')).toBeTruthy();
+    expect(within(panel()).getByText('Unconfirmed')).toBeTruthy();
+    expect(screen.getByLabelText(`${LABEL} Found by research: Trivia night. Found by research: Jazz brunch.`)).toBeTruthy();
+
+    api.answers[`${PATH}/research/events/l-${'a'.repeat(24)}`] = () => {
+      fake.found = [LOW];
+      return { event: null };
+    };
+    await fireEvent.press(within(panel()).getByRole('button', { name: 'Hide Trivia night' }));
+    expect(await screen.findByText('Hidden for this location. Restore it from the Town tab.')).toBeTruthy();
+    await waitFor(() => { expect(within(panel()).queryByText('Trivia night')).toBeNull(); });
+    expect(writes(api)).toEqual([{ method: 'PATCH', path: `${PATH}/research/events/l-${'a'.repeat(24)}`, body: { op: 'hide', basedOn: 'base' } }]);
+
+    await fireEvent.press(screen.getByRole('button', { name: 'Found by research' }));
+    expect(within(panel()).queryByText('Jazz brunch')).toBeNull();
+  });
+
+  test('view-as: no Edit or Hide, and Ask TownwiseAI stays; a weekly run shows no banner', async () => {
+    const { api, fake } = setup({ found: [foundEvent()], research: researchBody('weekly', 'done', 2) }, viewAsMe(ACCESS.admin));
+    await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+    expect(await within(panel()).findByText('Trivia night')).toBeTruthy();
+    expect(within(panel()).queryByRole('button', { name: 'Edit Trivia night' })).toBeNull();
+    expect(within(panel()).queryByRole('button', { name: 'Hide Trivia night' })).toBeNull();
+    expect(within(panel()).getByRole('button', { name: 'Ask TownwiseAI about Trivia night' })).toBeTruthy();
+    await waitFor(() => { expect(fake.paths).toContain(`${PATH}/research`); });
+    expect(screen.queryByText(/Research for/)).toBeNull();
+  });
+
+  test('the banner shows for Research now on native too', async () => {
+    const { api } = setup({ research: researchBody('press', 'running') });
+    await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+    expect(await screen.findByText(/^Researching .+ and nearby\. What it finds shows on the calendar when it finishes\./)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Dismiss the research notice' })).toBeTruthy();
+  });
 });

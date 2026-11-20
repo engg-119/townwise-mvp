@@ -127,8 +127,8 @@ export function salesOf(days: readonly SalesDay[], uploads: Upload[] = []): Sale
   return {
     coverage,
     calibration: coverage.firstDate === null || coverage.lastDate === null
-      ? { state: 'no_sales_data' }
-      : { state: 'not_calibrated', dayCount: coverage.dayCount, firstDate: coverage.firstDate, lastDate: coverage.lastDate },
+      ? { state: 'no_sales_data', updating: null }
+      : { state: 'not_calibrated', dayCount: coverage.dayCount, firstDate: coverage.firstDate, lastDate: coverage.lastDate, updating: null, lastRun: null },
     months: [...months.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([month, sum]) => ({ month, ...sum })),
     uploads,
   };

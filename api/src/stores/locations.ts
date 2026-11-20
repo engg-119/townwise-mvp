@@ -1,7 +1,8 @@
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { Schema, Types, type Connection, type Model } from 'mongoose';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import { CAUSES, type Cause } from '../lab/causes.ts';
 import type { Town } from '../towns.ts';
 
 /** `{ townId, name, state }`, shared by locations and access requests. townId is validated on input. */
@@ -27,15 +28,24 @@ export interface LocationFields {
    * D59 (openspec change auto-apply-agent-reads, design decision 12): a change to the days the lab trains on wants a
    * refit: `wantedAt`, the latest such change (set with `$max`, cleared by compare-and-set on the value read), and
    * `startedAt`, when the hourly pass last tried one for it (a start or a refusal), and `starts`, when it actually started
-   * one, the last REFIT_STARTS_KEPT (the weekly cap counts them). Absent until the first.
+   * one, the last REFIT_STARTS_KEPT (the weekly cap counts them). Absent until the first. D65 (openspec change
+   * forecast-training-status, design decision 5): `causes`, what wanted it since the mark was last cleared (`$addToSet`
+   * beside the `$max`, unset by the same clear); absent on a mark from before D65.
    */
-  refit?: { wantedAt?: Date; startedAt?: Date; starts?: Date[] };
+  refit?: { wantedAt?: Date; startedAt?: Date; starts?: Date[]; causes?: Cause[] };
   /**
    * D59 slice 3 (design decision 1): a calendar refresh added or moved a keyed event in the next 91 days, so the weekly
    * pass is brought forward: `wantedAt`, the latest such refresh (`$max`), cleared by compare-and-set on the value the
    * hourly pass read. Absent until the first.
    */
   earlyPass?: { wantedAt?: Date };
+  /**
+   * D65 (openspec change forecast-training-status, design decision 9): when the location's first-forecast email was
+   * claimed for sending, by compare-and-set on absent, so it goes at most once. Absent until then, and on a location
+   * whose first forecast was published before D65, while email was off or with no admin to send to; such a location gets
+   * no email for a later run, unless its sales data is deleted (taking its runs) and a new first run is published.
+   */
+  firstForecastMailedAt?: Date;
 }
 
 function locationSchema(): Schema<LocationFields> {
@@ -48,8 +58,14 @@ function locationSchema(): Schema<LocationFields> {
     createdAt: { type: Date, required: true },
     createdBy: { type: String, required: true },
     byStaff: { type: Boolean },
-    refit: { type: new Schema({ wantedAt: { type: Date }, startedAt: { type: Date }, starts: { type: [Date], default: undefined } }, { _id: false, strict: true }) },
+    refit: {
+      type: new Schema({
+        wantedAt: { type: Date }, startedAt: { type: Date }, starts: { type: [Date], default: undefined },
+        causes: { type: [String], enum: CAUSES, default: undefined },
+      }, { _id: false, strict: true }),
+    },
     earlyPass: { type: new Schema({ wantedAt: { type: Date } }, { _id: false, strict: true }) },
+    firstForecastMailedAt: { type: Date },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, nameKey: 1 }, { unique: true });
   schema.index({ orgId: 1, createdAt: 1 });
@@ -101,11 +117,17 @@ export interface LocationStore {
     Promise<{ id: string; inserted: boolean; placeId: string | null }>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
   removeForOrg(scope: OrgScope): Promise<number>;
-  /** D59: marks the location as wanting a refit at `at`, or later (`$max`). False when the location is gone. */
-  wantRefit(scope: OrgScope, locationId: string, at: Date): Promise<boolean>;
+  /**
+   * D59: marks the location as wanting a refit at `at`, or later (`$max`), adding `cause` to the mark's causes (D65).
+   * False when the location is gone.
+   */
+  wantRefit(scope: OrgScope, locationId: string, at: Date, cause: Cause): Promise<boolean>;
   /** D59: the location's refit marks; nulls when none (or the location is gone). */
   refitState(scope: OrgScope, locationId: string): Promise<RefitState>;
-  /** D59: clears the mark only while it is still `wantedAt` (a compare-and-set), so a change landing meanwhile stays. */
+  /**
+   * D59: clears the mark and its causes only while it is still `wantedAt` (a compare-and-set), so a change landing
+   * meanwhile stays, with every cause.
+   */
   clearRefitWanted(scope: OrgScope, locationId: string, wantedAt: Date): Promise<boolean>;
   /**
    * D59: records that the hourly pass tried a refit at `at`, so the next waits a day; `started` when one actually started,
@@ -116,13 +138,21 @@ export interface LocationStore {
   wantEarlyPass(scope: OrgScope, locationId: string, at: Date): Promise<boolean>;
   /** D59 slice 3: clears that mark only while it is still `wantedAt` (a compare-and-set), so a refresh meanwhile stays. */
   clearEarlyPass(scope: OrgScope, locationId: string, wantedAt: Date): Promise<boolean>;
+  /**
+   * D65: claims the location's first-forecast email at `at`, only while no claim exists (a compare-and-set on absent).
+   * True for the one caller that won; false when it was claimed before or the location is gone.
+   */
+  claimFirstForecastMail(scope: OrgScope, locationId: string, at: Date): Promise<boolean>;
 }
 
 /** D59: the refit starts a location keeps: at most one a day, so a week's worth and one more. */
 export const REFIT_STARTS_KEPT = 8;
 
-/** D59: when a training change last wanted a refit, and when the hourly pass last started one. */
-export interface RefitState { readonly wantedAt: Date | null; readonly startedAt: Date | null }
+/**
+ * D59: when a training change last wanted a refit, and when the hourly pass last started one; D65: what wanted it since
+ * the mark was last cleared (`[]` when none was recorded).
+ */
+export interface RefitState { readonly wantedAt: Date | null; readonly startedAt: Date | null; readonly causes: readonly Cause[] }
 
 function toLocation(doc: LocationFields & { _id: Types.ObjectId }): LocationRecord {
   return {
@@ -214,8 +244,10 @@ export function createLocationStore(connection: Connection): LocationStore {
     async removeForOrg(scope) {
       return (await Location.deleteMany({ orgId: scope.orgId })).deletedCount;
     },
-    async wantRefit(scope, locationId, at) {
-      return (await Location.updateOne({ _id: locationId, orgId: scope.orgId }, { $max: { 'refit.wantedAt': at } })).matchedCount === 1;
+    async wantRefit(scope, locationId, at, cause) {
+      return (await Location.updateOne(
+        { _id: locationId, orgId: scope.orgId }, { $max: { 'refit.wantedAt': at }, $addToSet: { 'refit.causes': cause } },
+      )).matchedCount === 1;
     },
     async wantEarlyPass(scope, locationId, at) {
       return (await Location.updateOne({ _id: locationId, orgId: scope.orgId }, { $max: { 'earlyPass.wantedAt': at } })).matchedCount === 1;
@@ -228,10 +260,18 @@ export function createLocationStore(connection: Connection): LocationStore {
     },
     async refitState(scope, locationId) {
       const doc = await Location.findOne({ _id: locationId, orgId: scope.orgId }, { refit: 1 }).lean();
-      return { wantedAt: doc?.refit?.wantedAt ?? null, startedAt: doc?.refit?.startedAt ?? null };
+      return { wantedAt: doc?.refit?.wantedAt ?? null, startedAt: doc?.refit?.startedAt ?? null, causes: doc?.refit?.causes ?? [] };
     },
     async clearRefitWanted(scope, locationId, wantedAt) {
-      const result = await Location.updateOne({ _id: locationId, orgId: scope.orgId, 'refit.wantedAt': wantedAt }, { $unset: { 'refit.wantedAt': 1 } });
+      const result = await Location.updateOne(
+        { _id: locationId, orgId: scope.orgId, 'refit.wantedAt': wantedAt }, { $unset: { 'refit.wantedAt': 1, 'refit.causes': 1 } },
+      );
+      return result.modifiedCount === 1;
+    },
+    async claimFirstForecastMail(scope, locationId, at) {
+      const result = await Location.updateOne(
+        { _id: locationId, orgId: scope.orgId, firstForecastMailedAt: trusted({ $exists: false }) }, { $set: { firstForecastMailedAt: at } },
+      );
       return result.modifiedCount === 1;
     },
     async markRefitStarted(scope, locationId, at, started) {

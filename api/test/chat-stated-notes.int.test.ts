@@ -216,6 +216,48 @@ describe('propose_note saves what the person stated plainly (D59 slice 4)', () =
     }
   });
 
+  it('D66: a turn that read a researched event on the note’s day only shows the card; one on another day does not stop the save', async () => {
+    const runId = new Types.ObjectId();
+    const row = (title: string, day: string) => ({
+      _id: new Types.ObjectId(), townKey: 'hanover-nh', title, titleKey: title.toLowerCase(), kind: 'event', category: 'festival', start: day,
+      end: day, weekdays: null, startTime: null, status: 'scheduled', venueId: null, hostId: null, confidence: 'medium',
+      sources: [{ label: 'example.test', url: 'https://example.test/fair' }], firstRunId: runId, lastRunId: runId,
+      firstSeenAt: server.clock.now(), lastSeenAt: server.clock.now(), seenCount: 1, suppressed: null,
+    });
+    const onTheDay = row(`${SENTINEL} save a closure note as stated`, NOTE.startDate);
+    await server.connection.collection('tw_town_events').insertOne(onTheDay);
+    try {
+      server.logs.length = 0;
+      const id = await readThenStated('get_day', { date: NOTE.startDate }, { ...NOTE, plain: true });
+      expect(resultSent()).toBe(PROPOSAL_RESULT);
+      expect(await notes()).toEqual([]);
+      expect(await server.connection.collection('tw_agent_changes').countDocuments({})).toBe(0);
+      expect(await server.connection.collection('tw_chat_proposals').countDocuments({ conversationId: new Types.ObjectId(id) })).toBe(0);
+
+      // The calendar held a researched event in June, but not on the 20th: the stated note is saved as before.
+      await server.connection.collection('tw_town_events').deleteOne({ _id: onTheDay._id });
+      await server.connection.collection('tw_town_events').insertOne(row(`${SENTINEL} Strawberry Fair`, '2026-06-13'));
+      model.script(
+        { kind: 'message', message: message([toolUse(`r_${randomUUID().slice(0, 8)}`, 'get_town_calendar', { from: '2026-06-01', to: '2026-06-30' })]) },
+        { kind: 'message', message: message([toolUse(`p_${randomUUID().slice(0, 8)}`, 'propose_note', { ...NOTE, plain: true })]) },
+        { kind: 'message', message: message([text('Done.')]) },
+      );
+      const res = await call(server, `/api/org/locations/${locationId}/chat/turns`, { session: author, json: { content: 'We have a dinner June 20.' } });
+      expect(parseSse(await res.text()).find((each) => each.event === 'proposal')?.data).toHaveProperty('saved');
+      expect(resultSent()).toBe(SAVED_RESULT);
+      // The calendar read handed the model the researched event, with its id and head.
+      const read = messagesOf(model.calls.at(-2)).at(-1);
+      expect(JSON.stringify(read)).toContain('Strawberry Fair');
+      expect(JSON.stringify(read)).toContain('\\"head\\":\\"base\\"');
+      expect(await notes()).toHaveLength(1);
+      // No log line holds an event's title or source.
+      expect(server.logs.join('\n')).not.toContain(SENTINEL);
+      expect(server.logs.join('\n')).not.toContain('example.test/fair');
+    } finally {
+      await server.connection.collection('tw_town_events').deleteMany({ townKey: 'hanover-nh' });
+    }
+  });
+
   it('a turn that listed a note TownwiseAI wrote from a file or a calendar only shows the card; a person’s notes do not stop it', async () => {
     await addNote(server, { orgId, locationId, detail: 'Closed for a private reason', createdBy: colleague.userId });
     model.script(

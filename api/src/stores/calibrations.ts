@@ -7,11 +7,13 @@
 // fetch, which the result is posted with, and `finish` removes it, so a finished calibration takes no result
 // (cross-tenant.ts findLabCallback). Every transition is a compare-and-set (no transactions), so a retried result
 // completes the work once. Results are the scorecard as a JSON string (a chat-messages precedent), never read as a
-// figure by anything that logs. Nothing here logs.
+// figure by anything that logs. A system calibration stores what started it (`causes`, D65); a person's stores none.
+// Nothing here logs.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import { CAUSES, type Cause } from '../lab/causes.ts';
 
 export const CALIBRATIONS_COLLECTION = 'tw_calibrations';
 
@@ -43,6 +45,11 @@ interface CalibrationFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
   requestedBy: CalibrationRequester;
+  /**
+   * What started a system calibration (D65, lab/causes.ts): `['weekly']` for the weekly path, the refit mark's causes for
+   * a D59 refit. Absent on a person's, on a refit of a mark from before D65, and on every one from before D65; never empty.
+   */
+  causes?: Cause[];
   regimeStart: string | null;
   status: CalibrationStatus;
   championRunId: string | null;
@@ -56,6 +63,14 @@ interface CalibrationFields {
   inputSha256: string | null;
   /** The fingerprint the weekly refresh compares (D42, lab/input.ts labInputFingerprint); null on one from before it. */
   dataSha256: string | null;
+  /**
+   * D65 (design decision 6), set with the input: the input's history days with guests (`dayCount`), its first day
+   * (`dataFrom`), and how many of those days come after the last day of data of the location's newest published run,
+   * current or lapsed (`newDays`, null with none). Absent before the fetch and on a calibration from before D65.
+   */
+  dayCount?: number;
+  dataFrom?: string;
+  newDays?: number | null;
   imageDigest: string | null;
   codeVersion: string | null;
   runId: string | null;
@@ -87,6 +102,8 @@ function calibrationSchema(): Schema<CalibrationFields> {
     orgId: { type: Schema.Types.ObjectId, required: true },
     locationId: { type: Schema.Types.ObjectId, required: true },
     requestedBy: { type: requestedBy, required: true },
+    // `default: undefined`: with minimize false a plain array path would store [] on every record.
+    causes: { type: [String], enum: CAUSES, default: undefined },
     regimeStart: { type: String, default: null },
     status: { type: String, required: true, enum: CALIBRATION_STATUSES },
     championRunId: { type: String, default: null },
@@ -94,6 +111,9 @@ function calibrationSchema(): Schema<CalibrationFields> {
     termsThrough: { type: String },
     inputSha256: { type: String, default: null },
     dataSha256: { type: String, default: null },
+    dayCount: { type: Number },
+    dataFrom: { type: String },
+    newDays: { type: Number },
     imageDigest: { type: String, default: null },
     codeVersion: { type: String, default: null },
     runId: { type: String, default: null },
@@ -125,6 +145,8 @@ export interface CalibrationRecord {
   readonly id: string;
   readonly locationId: string;
   readonly requestedBy: CalibrationRequester;
+  /** What started a system calibration (D65); `[]` when none is stored (a person's, or one from before D65). */
+  readonly causes: readonly Cause[];
   readonly regimeStart: string | null;
   readonly status: CalibrationStatus;
   readonly championRunId: string | null;
@@ -134,6 +156,15 @@ export interface CalibrationRecord {
   readonly inputSha256: string | null;
   /** The fingerprint the weekly refresh compares (D42), set with the input; null before the fetch or on one from before D42. */
   readonly dataSha256: string | null;
+  /** D65: the history days with guests the input held, set with it; null before the fetch or on one from before D65. */
+  readonly dayCount: number | null;
+  /** D65: the input's first day, set with it; null before the fetch or on one from before D65. */
+  readonly dataFrom: string | null;
+  /**
+   * D65: of those days, how many come after the last day of data of the newest published run at the fetch; null with no
+   * published run, before the fetch, or on one from before D65.
+   */
+  readonly newDays: number | null;
   readonly imageDigest: string | null;
   readonly codeVersion: string | null;
   readonly runId: string | null;
@@ -150,9 +181,12 @@ export type CalibrationOutcome = { status: 'succeeded' } | { status: 'failed'; f
 
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
 export interface CalibrationStore {
-  /** Inserts a queued calibration holding the location's live slot; null when the slot is taken. */
+  /**
+   * Inserts a queued calibration holding the location's live slot; null when the slot is taken. `causes` (D65) are stored
+   * only when non-empty: an empty or absent list stores no key.
+   */
   insertQueued(scope: OrgScope, input: {
-    id: string; locationId: string; requestedBy: CalibrationRequester; regimeStart: string | null;
+    id: string; locationId: string; requestedBy: CalibrationRequester; causes?: readonly Cause[] | undefined; regimeStart: string | null;
     championRunId: string | null; tokenExpiresAt: Date; now: Date;
   }): Promise<CalibrationRecord | null>;
   find(scope: OrgScope, id: string): Promise<CalibrationRecord | null>;
@@ -166,13 +200,16 @@ export interface CalibrationStore {
   recordImageDigest(scope: OrgScope, id: string, imageDigest: string): Promise<boolean>;
   /**
    * The job's one input fetch, by compare-and-set on running with no input recorded yet: the hash of the input it is
-   * given, its fingerprint (D42), the last day it holds, the town's last researched term day it names (D52), and the
-   * sha256 of the result token the API hands only to that fetch, the one the result is posted with. False for any
-   * second fetch.
+   * given, its fingerprint (D42), the last day it holds, the town's last researched term day it names (D52), the days
+   * it used (D65: `dayCount`, `dataFrom`, `newDays`, each stored only when given), and the sha256 of the result token
+   * the API hands only to that fetch, the one the result is posted with. False for any second fetch.
    */
   recordInput(
     scope: OrgScope, id: string,
-    input: { inputSha256: string; dataSha256: string; dataThrough: string; termsThrough: string | null; resultTokenSha256: string },
+    input: {
+      inputSha256: string; dataSha256: string; dataThrough: string; termsThrough: string | null; dayCount?: number; dataFrom?: string;
+      newDays?: number | null; resultTokenSha256: string;
+    },
   ): Promise<boolean>;
   /** Compare-and-set on running with no run recorded yet: a run id, once set, is kept. */
   recordResult(scope: OrgScope, id: string, result: { runId: string; scorecardJson: string; codeVersion: string }): Promise<boolean>;
@@ -204,6 +241,7 @@ function toCalibration(doc: CalibrationDoc): CalibrationRecord {
     id: doc._id.toHexString(),
     locationId: doc.locationId.toHexString(),
     requestedBy: { userId: doc.requestedBy.userId, role: doc.requestedBy.role, via: doc.requestedBy.via },
+    causes: doc.causes ?? [],
     regimeStart: doc.regimeStart,
     status: doc.status,
     championRunId: doc.championRunId,
@@ -211,6 +249,9 @@ function toCalibration(doc: CalibrationDoc): CalibrationRecord {
     termsThrough: doc.termsThrough ?? null,
     inputSha256: doc.inputSha256,
     dataSha256: doc.dataSha256 ?? null,
+    dayCount: doc.dayCount ?? null,
+    dataFrom: doc.dataFrom ?? null,
+    newDays: doc.newDays ?? null,
     imageDigest: doc.imageDigest,
     codeVersion: doc.codeVersion,
     runId: doc.runId,
@@ -237,6 +278,7 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
           ...org(scope),
           locationId: new Types.ObjectId(input.locationId),
           requestedBy: { userId: input.requestedBy.userId, role: input.requestedBy.role, via: input.requestedBy.via },
+          ...(input.causes !== undefined && input.causes.length > 0 ? { causes: [...input.causes] } : {}),
           regimeStart: input.regimeStart,
           status: 'queued',
           championRunId: input.championRunId,
@@ -281,6 +323,9 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
           $set: {
             inputSha256: input.inputSha256, dataSha256: input.dataSha256, dataThrough: input.dataThrough,
             termsThrough: input.termsThrough, tokenSha256: input.resultTokenSha256,
+            ...(input.dayCount === undefined ? {} : { dayCount: input.dayCount }),
+            ...(input.dataFrom === undefined ? {} : { dataFrom: input.dataFrom }),
+            ...(input.newDays === undefined ? {} : { newDays: input.newDays }),
           },
         },
       );

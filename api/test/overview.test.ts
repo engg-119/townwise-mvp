@@ -19,6 +19,8 @@ const DESIGN_TABLE = {
     'note.created', 'note.updated', 'note.deleted', 'rule.created', 'rule.updated', 'rule.deleted', 'owner_calendar.added',
     'owner_calendar.removed', 'owner_calendar.refreshed', 'google_calendar.connected', 'google_calendar.disconnected',
     'owner_calendar.booking_labeled', 'owner_calendar.bookings_confirmed',
+    // D66: a person's edit, hide or restore of a researched event.
+    'research.event_edited', 'research.event_hidden', 'research.event_restored',
   ],
   townwiseAi: [
     'chat.turn_completed', 'chat.conversation_deleted', 'agent.question_answered', 'agent.suggestion_accepted', 'agent.suggestion_dismissed',
@@ -29,7 +31,7 @@ const DESIGN_TABLE = {
   team: [
     'member.invited', 'member.joined', 'member.role_changed', 'member.removed', 'member.left', 'location.created', 'location.updated',
     'location.deleted', 'org.renamed', 'org.weekly_suggestions_changed', 'org.calendar_titles_ai_changed',
-    'org.agent_auto_switched',
+    'org.agent_auto_switched', 'org.research_switched',
   ],
   none: [
     'access_request.created', 'access_request.approved', 'access_request.rejected', 'access_request.withdrawn', 'org.created',
@@ -37,7 +39,7 @@ const DESIGN_TABLE = {
     'forecast.published', 'forecast.withdrawn', 'forecast.deleted', 'calibration.finished', 'calibration.scheduled',
     'org.forecasts_switched', 'forecast_schedule.paused', 'forecast_schedule.resumed', 'view_as.started', 'view_as.ended',
     'open_as_admin.started', 'open_as_admin.ended', 'people.signed_out_everywhere', 'person.deleted', 'staff_action.not_applied',
-    'agent.change_applied', 'agent.calendar_answered',
+    'agent.change_applied', 'agent.calendar_answered', 'research.town_event_suppressed',
   ],
 } as const;
 

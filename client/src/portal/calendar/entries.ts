@@ -1,16 +1,17 @@
-import type { TownEvent } from '../analytics/api';
+import type { ResearchedEvent, TownEvent } from '../analytics/api';
 import { noteCovers } from '../analytics/days';
 import { formatCount } from '../format';
 import type { Note } from '../locations/api';
 import { EFFECT_LABEL, KIND_LABEL } from '../locations/noteRules';
+import { foundWords } from '../research/copy';
 import type { Rule } from '../rules/api';
 import type { Filters, FilterKey, ImportedEvent } from './model';
 
 // Everything on a day (D49, calendar-shows-everything design decisions 1 and 4), pure: the one list every Calendar
 // (P28) and Home (P11) surface reads, on web and native. The order is the owner's notes (in start order), the business
 // rules whose schedule covers the day (oldest first, whatever the filters), the holidays then town events the filters
-// allow, and the imported calendar events (by start time); term and season periods come last, and only for the
-// surfaces that list them. A day's status never removes an entry. Compact surfaces (the month cell, the tooltip, the
+// allow, the imported calendar events (by start time), and the events town research found (D66, "Found by research", in
+// the read's order, except that a multi-week or Unconfirmed one comes after the others, foundInFront); term and season periods come last, and only for the surfaces that list them. A day's status never removes an entry. Compact surfaces (the month cell, the tooltip, the
 // week cards, Home's This week and month list) show a title once across sources (compactEntries); the day panel and
 // Home's day detail list every entry with its source.
 
@@ -39,8 +40,8 @@ export function folded(words: string): string {
   return words.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-/** Where an entry comes from: the notes, the rules, the town calendar, or one of the location's calendars. */
-export type EntryGroup = 'notes' | 'rules' | 'town' | `calendar:${string}`;
+/** Where an entry comes from: the notes, the rules, the town calendar, one of the location's calendars, or research. */
+export type EntryGroup = 'notes' | 'rules' | 'town' | `calendar:${string}` | 'research';
 
 /**
  * An entry's source link: a town event's sites, an imported event's calendar (its page in Your data, by the
@@ -49,6 +50,7 @@ export type EntryGroup = 'notes' | 'rules' | 'town' | `calendar:${string}`;
  */
 export type EntrySource =
   | { kind: 'town'; sources: TownEvent['sources'] }
+  | { kind: 'research'; sources: ResearchedEvent['sources'] }
   | { kind: 'calendar'; calendarId: string; calendar: string }
   | { kind: 'file'; ref: string }
   | null;
@@ -67,7 +69,8 @@ export type DayEntry =
   | (EntryBase & { kind: 'note'; note: Note })
   | (EntryBase & { kind: 'rule'; rule: Rule })
   | (EntryBase & { kind: TownEvent['kind']; event: TownEvent })
-  | (EntryBase & { kind: 'imported'; imported: ImportedEvent });
+  | (EntryBase & { kind: 'imported'; imported: ImportedEvent })
+  | (EntryBase & { kind: 'researched'; researched: ResearchedEvent });
 
 /** What a day's entries are read from: the location's notes, rules, town calendar and own calendars, and the filters. */
 export interface DaySources {
@@ -75,10 +78,32 @@ export interface DaySources {
   rules?: readonly Rule[] | undefined;
   events: readonly TownEvent[];
   imported: readonly ImportedEvent[];
+  /** The events town research found (the calendar read's `found`, D66); none when absent or unavailable. */
+  found?: readonly ResearchedEvent[] | null | undefined;
   filters: Filters;
 }
 
+/** Whether a found event is on `date`: inside its dates, and on one of its weekdays (0 Sunday to 6) when it has them. */
+export function foundCovers(event: Pick<ResearchedEvent, 'start' | 'end' | 'weekdays'>, date: string): boolean {
+  if (date < event.start || date > event.end) return false;
+  return event.weekdays === null || event.weekdays.includes(new Date(`${date}T00:00:00.000Z`).getUTCDay());
+}
+
 const CALENDAR_FALLBACK = 'Your calendar';
+
+/** Longer than this, a found event held every day of its dates (no weekdays) is a multi-week stretch, not a day's event. */
+const FOUND_SHORT_DAYS = 7;
+
+/**
+ * Whether a found event leads the found group (UI review): one held on its own days (at most 7 days long, or on some
+ * weekdays) and not Unconfirmed. A months-long low-confidence season otherwise fills every month cell's first line and
+ * pushes a day's own events into “+N more”; it still shows, after them, and in the day panel.
+ */
+export function foundInFront(event: Pick<ResearchedEvent, 'start' | 'end' | 'weekdays' | 'confidence'>): boolean {
+  if (event.confidence === 'low') return false;
+  if (event.weekdays !== null) return true;
+  return (Date.parse(`${event.end}T00:00:00.000Z`) - Date.parse(`${event.start}T00:00:00.000Z`)) / 86_400_000 + 1 <= FOUND_SHORT_DAYS;
+}
 
 function byStart<T>(items: readonly T[], date: (item: T) => string, time: (item: T) => string | null | undefined): T[] {
   // Array.prototype.sort is stable, so items that start together keep the read's order; all-day ones first.
@@ -96,6 +121,8 @@ export function dayEntries(date: string, from: DaySources, options: { periods?: 
   const imported = from.filters.imported
     ? byStart(from.imported.filter((event) => event.startDate <= date && date <= event.endDate), () => '', (event) => event.startTime)
     : [];
+  const covering = from.filters.researched ? (from.found ?? []).filter((event) => foundCovers(event, date)) : [];
+  const found = [...covering.filter(foundInFront), ...covering.filter((event) => !foundInFront(event))];
   const townEntry = (event: TownEvent, at: number): DayEntry => ({
     key: `event:${String(at)}:${event.id}`, kind: event.kind, group: 'town', words: event.title, title: event.title,
     source: { kind: 'town', sources: event.sources }, event,
@@ -112,6 +139,10 @@ export function dayEntries(date: string, from: DaySources, options: { periods?: 
     ...imported.map((event): DayEntry => ({
       key: `imported:${event.calendarId}:${event.uid}`, kind: 'imported', group: `calendar:${event.calendarId}`, words: event.title, title: event.title,
       source: { kind: 'calendar', calendarId: event.calendarId, calendar: event.calendar ?? CALENDAR_FALLBACK }, imported: event,
+    })),
+    ...found.map((event): DayEntry => ({
+      key: `found:${event.id}`, kind: 'researched', group: 'research', words: foundWords(event), title: event.title,
+      source: { kind: 'research', sources: event.sources }, researched: event,
     })),
     ...(options.periods === true
       ? town.map((event, at) => ({ event, at })).filter(({ event }) => event.kind === 'term' || event.kind === 'season').map(({ event, at }) => townEntry(event, at))

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
@@ -16,9 +16,10 @@ import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
 import { theme } from '../../../src/theme';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, locationOf, meOf, offline, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, locationOf, meOf, offline, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { analyticsFake, calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
-import { forecastDay, forecastOf, NO_FORECAST } from '../calendar/fakes';
+import { researchedEventSchema } from '../../../src/portal/analytics/api';
+import { forecastDay, forecastOf, foundEvent, NO_FORECAST } from '../calendar/fakes';
 import { ruleOf } from '../rules/fakes';
 import { NOVEMBER } from '../estimates/fakes';
 
@@ -307,6 +308,33 @@ test('this week is a strip of seven days from 1024px, today’s column raised, l
   expect(within(strip).getByText(sentence('Sat, Nov 8, 2025: 140 guests'))).toBeTruthy();
   expect(within(strip).getAllByText('140 guests').length).toBeGreaterThan(0);
   expect(screen.getByText('Bars show last year’s days, scaled to the busiest of them.')).toBeTruthy();
+});
+
+test('D66: This week lists found events after the day’s own entries; Unconfirmed and competitors’ stay on the Calendar', async () => {
+  const found = [
+    foundEvent({ id: `t-${'b'.repeat(24)}`, title: 'Winter carnival', start: '2026-11-07', end: '2026-11-07', origin: 'town', competitor: null }),
+    foundEvent({ id: `l-${'c'.repeat(24)}`, title: 'Maybe a market', start: '2026-11-07', end: '2026-11-07', origin: 'neighborhood', competitor: null, confidence: 'low' }),
+    foundEvent({ title: 'Trivia night', start: '2026-11-07', end: '2026-11-07' }),
+  ].map((event) => researchedEventSchema.parse(event));
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, undefined, { [CALENDAR]: calendarBody({ events: EVENTS, found }) }));
+  openWeekNumbers();
+  const strip = screen.getByRole('table', { name: 'This week, day by day' });
+  const saturday = within(strip).getAllByText(/Sample game|Winter carnival/).map((element) => element.textContent);
+  expect(saturday).toEqual(['Sample game', 'Winter carnival']);
+  expect(within(strip).getByText('Found by research')).toBeTruthy();
+  expect(within(strip).queryByText('Maybe a market')).toBeNull();
+  expect(within(strip).queryByText('Trivia night')).toBeNull();
+  // The chart, which shows in place of the days, reads them too: Saturday's column names it, and so does its chosen day.
+  const column = screen.getByTestId('home-week-chart-2026-11-07');
+  expect(column.getAttribute('aria-label')).toContain('Found by research: Winter carnival');
+  expect(column.getAttribute('aria-label')).not.toContain('Maybe a market');
+  fireEvent.click(column);
+  const chosen = screen.getByRole('region', { name: 'This week’s chosen day' });
+  expect(within(chosen).getByText('Found by research: Winter carnival')).toBeTruthy();
+  expect(within(chosen).queryByText(/Maybe a market|Trivia night/)).toBeNull();
+  // Only This week reads them: no other part of Home names one.
+  const month = screen.getByRole('grid', { name: 'November 2026' });
+  expect(within(month).queryByText(/Winter carnival/)).toBeNull();
 });
 
 test('the month calendar: the arrow keys and a pointer preview the days beside the grid', async () => {
@@ -779,4 +807,58 @@ test('This month marks a forecast and an actual apart, keys both, and says how t
   const detail = screen.getByRole('region', { name: 'Selected day' });
   expect(within(detail).getByText('Forecast was about 100 (likely 90 to 120); 110 guests came: inside the range.')).toBeTruthy();
   expect(screen.getByTestId('calendar-tooltip').textContent).toContain('110 guests, actualForecast was about 100 (likely 90 to 120); 110 guests came: inside the range');
+});
+
+describe('D65: the first forecast as it builds, and why one wasn’t published', () => {
+  const MAIN = LOCATIONS[0];
+  const RIVER = LOCATIONS[1];
+  if (MAIN === undefined || RIVER === undefined) throw new Error('LOCATIONS needs two');
+  const SINCE = '2026-11-05T15:30:00.000Z';
+  const HISTORY = { dayCount: 795, firstDate: '2024-09-01', lastDate: '2026-11-04' };
+  const NEXT = 'The first forecast for Main Street Bar is next. Townwise starts building it soon.';
+  const BUILDING = 'Building the first forecast for Main Street Bar. Home shows it here once it’s published.';
+  const located = (calibration: LocationSummary['calibration']): LocationSummary[] => [{ ...MAIN, calibration }, RIVER];
+  const first = (updating: { stage: 'running' | 'waiting'; since: string } | null, lastRun: unknown = null): LocationSummary['calibration'] => (
+    { state: 'not_calibrated', ...HISTORY, updating, lastRun } as LocationSummary['calibration']
+  );
+
+  test('next, then building, then the forecast, with no reload and no skeleton', async () => {
+    jest.useFakeTimers({
+      now: new Date(2026, 10, 5, 12, 0, 0),
+      doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance'],
+    });
+    const api = portal(meOf(ACCESS.member), DAYS, located(first({ stage: 'waiting', since: SINCE })));
+    await renderAt(api, NEXT);
+    expect(screen.queryByText(NOT_PUBLISHED)).toBeNull();
+    api.org = orgOf('member', located(first({ stage: 'running', since: SINCE })));
+    await act(() => jest.advanceTimersByTimeAsync(30_000));
+    expect(await screen.findByText(BUILDING)).toBeTruthy();
+    const days = [];
+    for (let date = 5; date <= 30; date += 1) days.push(forecastDay({ date: `2026-11-${String(date).padStart(2, '0')}` }));
+    if (lastFake === null) throw new Error('no fake');
+    lastFake.answers[FORECAST] = forecastOf(days);
+    api.org = orgOf('member', located({ state: 'calibrated', ...HISTORY, dataThrough: '2026-11-04', newerDays: 0, nextRefresh: '2026-11-09', updating: null }));
+    await act(() => jest.advanceTimersByTimeAsync(30_000));
+    await waitFor(() => { expect(screen.queryByText(BUILDING)).toBeNull(); });
+    expect(screen.queryByText('In progress')).toBeNull();
+    expect(screen.queryByTestId('skeleton-home')).toBeNull();
+    expect(lastFake.paths.filter((path) => path === FORECAST)).toHaveLength(2);
+  });
+
+  test('a first run the gate held: the notice on a fresh load, with the next step and the link to its run', async () => {
+    const held = { outcome: 'kept', reason: 'held_for_review', finishedAt: '2026-11-04T09:00:00.000Z' };
+    const text = 'The first forecast for Main Street Bar wasn’t published: it differs a lot from your last forecast, so Townwise staff check it first. Townwise tries again after your next sales upload.';
+    await renderAt(portal(meOf(ACCESS.member), DAYS, located(first(null, held))), text);
+    expect(screen.getByRole('link', { name: 'See what TownwiseAI did' }).getAttribute('href')).toBe('/locations/l1/agent?panel=activity');
+    expect(screen.queryByText(NOT_PUBLISHED)).toBeNull();
+    // Nothing runs until the next upload, so the notice is plain words with no In progress tag (15.6).
+    expect(screen.queryByText('In progress')).toBeNull();
+  });
+
+  test('forecasts off: why, and no next step', async () => {
+    const off = { outcome: 'kept', reason: 'forecasts_off', finishedAt: '2026-11-04T09:00:00.000Z' };
+    await renderAt(portal(meOf(ACCESS.member), DAYS, located(first(null, off))), 'The first forecast for Main Street Bar wasn’t published: forecasts are off for your organization.');
+    expect(pageText()).not.toContain('tries again');
+    expect(screen.queryByText('In progress')).toBeNull();
+  });
 });

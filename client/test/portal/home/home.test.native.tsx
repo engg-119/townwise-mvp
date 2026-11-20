@@ -14,7 +14,7 @@ import { join } from 'node:path';
 
 import * as SecureStore from 'expo-secure-store';
 import { StyleSheet } from 'react-native';
-import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
+import { act, cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
 
 import type { Calendar } from '../../../src/portal/analytics/api';
 import type { DayRecord } from '../../../src/portal/analytics/history';
@@ -540,4 +540,103 @@ test('on native too, This month marks a forecast and an actual apart, keys both,
   expect(within(today).getByText('forecast')).toBeTruthy();
   expect(colorOf(within(past).getByText('110'))).toBe(theme.color.white);
   expect(within(past).queryByText('forecast')).toBeNull();
+});
+
+describe('D65: the first forecast as it builds, and why one wasn’t published', () => {
+  const [MAIN, RIVER] = LOCATIONS;
+  if (MAIN === undefined || RIVER === undefined) throw new Error('LOCATIONS needs two');
+  const SINCE = '2026-11-05T15:30:00.000Z';
+  const HISTORY = { dayCount: 795, firstDate: '2024-09-01', lastDate: '2026-11-04' };
+  const NEXT = 'The first forecast for Main Street Bar is next. Townwise starts building it soon.';
+  const BUILDING = 'Building the first forecast for Main Street Bar. Home shows it here once it’s published.';
+  const located = (calibration: LocationSummary['calibration']): LocationSummary[] => [{ ...MAIN, coverage: HAS_DAYS, calibration }, RIVER];
+  const first = (updating: { stage: 'running' | 'waiting'; since: string } | null, lastRun: unknown = null): LocationSummary['calibration'] => (
+    { state: 'not_calibrated', ...HISTORY, updating, lastRun } as LocationSummary['calibration']
+  );
+  const forecastReads = (api: FakePortalApi): number => api.calls.filter((call) => call.path === FORECAST).length;
+
+  test('next, then building, then the forecast, with no reload and no skeleton', async () => {
+    jest.useFakeTimers({
+      now: new Date(2026, 10, 5, 12, 0, 0),
+      doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance'],
+    });
+    const api = portal({ locations: located(first({ stage: 'waiting', since: SINCE })) });
+    await renderApp('/locations/l1', api);
+    expect(await screen.findByText(NEXT)).toBeTruthy();
+    expect(screen.queryByText(FORECAST_LINE)).toBeNull();
+    expect(screen.getByText('In progress')).toBeTruthy();
+    // The hourly pass starts the run: the next re-read finds it building.
+    api.org = orgOf('member', located(first({ stage: 'running', since: SINCE })));
+    await act(() => jest.advanceTimersByTimeAsync(30_000));
+    expect(await screen.findByText(BUILDING)).toBeTruthy();
+    expect(forecastReads(api)).toBe(1);
+    // It publishes: the next re-read finds it calibrated, and Home reads its forecast again in place.
+    const days = [];
+    for (let day = 5; day <= 30; day += 1) days.push(forecastDay({ date: `2026-11-${String(day).padStart(2, '0')}` }));
+    (api.fallback as unknown as { answers: Record<string, unknown> }).answers[FORECAST] = forecastOf(days);
+    api.org = orgOf('member', located({ state: 'calibrated', ...HISTORY, dataThrough: '2026-11-04', newerDays: 0, nextRefresh: '2026-11-09', updating: null }));
+    await act(() => jest.advanceTimersByTimeAsync(30_000));
+    expect(await screen.findByLabelText('Wed, Nov 11, 2026. This week. 212 guests, forecast, likely 180 to 240. Veterans Day.')).toBeTruthy();
+    expect(forecastReads(api)).toBe(2);
+    expect(screen.queryByText(BUILDING)).toBeNull();
+    expect(screen.queryByText('In progress')).toBeNull();
+    expect(screen.queryByTestId('skeleton-home')).toBeNull();
+    expect(screen.getByRole('heading', { name: /^Welcome back/ })).toBeTruthy();
+  });
+
+  test('a first run the gate held: the notice on a fresh load, with why, the next step and the link to its run', async () => {
+    const held = { outcome: 'kept', reason: 'not_beat_average', finishedAt: '2026-11-04T09:00:00.000Z' };
+    await renderApp('/locations/l1', portal({ locations: located(first(null, held)) }));
+    expect(await screen.findByText(
+      'The first forecast for Main Street Bar wasn’t published: it wasn’t more accurate than a simple weekday average. Townwise tries again after your next sales upload.',
+    )).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'See what TownwiseAI did' }).props.href).toBe('/locations/l1/agent?panel=activity');
+    expect(screen.queryByText(FORECAST_LINE)).toBeNull();
+    // Nothing runs until the next upload, so the notice is plain words with no In progress tag (15.6).
+    expect(screen.queryByText('In progress')).toBeNull();
+  });
+
+  test('a first run that timed out reads as a run that couldn’t run', async () => {
+    const timedOut = { outcome: 'not_run', reason: 'failed', finishedAt: '2026-11-04T09:20:00.000Z' };
+    await renderApp('/locations/l1', portal({ locations: located(first(null, timedOut)) }));
+    expect(await screen.findByText(
+      'The first forecast for Main Street Bar wasn’t published: it couldn’t run. Townwise tries again after your next sales upload.',
+    )).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'See what TownwiseAI did' })).toBeTruthy();
+    expect(screen.queryByText('In progress')).toBeNull();
+  });
+
+  test('a run that failed after the first forecast was published and withdrawn: the newest forecast, not the first', async () => {
+    const failed = { outcome: 'not_run', reason: 'failed', firstForecast: false, finishedAt: '2026-11-04T09:20:00.000Z' };
+    await renderApp('/locations/l1', portal({ locations: located(first(null, failed)) }));
+    expect(await screen.findByText(
+      'The newest forecast for Main Street Bar wasn’t published: it couldn’t run. Townwise tries again after your next sales upload.',
+    )).toBeTruthy();
+    expect(screen.queryByText(/The first forecast for/)).toBeNull();
+  });
+
+  test('next that ends with no run (the pass cleared the mark): the plain line, and no notice', async () => {
+    jest.useFakeTimers({
+      now: new Date(2026, 10, 5, 12, 0, 0),
+      doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance'],
+    });
+    const api = portal({ locations: located(first({ stage: 'waiting', since: SINCE })) });
+    await renderApp('/locations/l1', api);
+    await screen.findByText(NEXT);
+    api.org = orgOf('member', located(first(null)));
+    await act(() => jest.advanceTimersByTimeAsync(30_000));
+    expect(await screen.findByText(FORECAST_LINE)).toBeTruthy();
+    expect(screen.queryByText(NEXT)).toBeNull();
+    expect(screen.queryByRole('link', { name: 'See what TownwiseAI did' })).toBeNull();
+  });
+
+  test('a short history, or an API from before D65: the plain line, stating no number of days', async () => {
+    const short = { dayCount: 120, firstDate: '2026-07-08', lastDate: '2026-11-04' };
+    await renderApp('/locations/l1', portal({ locations: located({ state: 'not_calibrated', ...short, updating: null, lastRun: null }) }));
+    const line = await screen.findByText(FORECAST_LINE);
+    expect(line.props.children).not.toMatch(/\d/);
+    await cleanup();
+    await renderApp('/locations/l1', portal({ locations: located({ state: 'not_calibrated', ...short }) }));
+    expect(await screen.findByText(FORECAST_LINE)).toBeTruthy();
+  });
 });

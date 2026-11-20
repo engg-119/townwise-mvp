@@ -175,7 +175,7 @@ async function wantRefitForRule(
   const first = starts[0];
   if (first === undefined) return;
   const touched: TouchedDates = { startDate: first, endDate: first };
-  await wantRefitFor(ctx, caller.scope, locationId, touched);
+  await wantRefitFor(ctx, caller.scope, locationId, touched, 'person_change');
 }
 
 /**

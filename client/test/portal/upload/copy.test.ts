@@ -1,10 +1,12 @@
 import { ApiError } from '../../../src/api/client';
 import type { ColumnProfile } from '../../../src/portal/upload/columns';
 import {
-  alreadyHaveLine, badNumberLine, turnedOffLine, calibrationHeading, calibrationLine, canCheck, columnOptions, COPY, formatDollars, formatSize, matchMessages,
-  moreDaysLine, noDateLine, otherLocationLine, readingLine, repeatedDatesLine, resultLines, rowList, rowsBecameDays,
-  sendErrorOf, sendingLine, sendLabel, stepLine,
+  alreadyHaveLine, badNumberLine, turnedOffLine, calibrationHeading, calibrationLine, canCheck, columnOptions, COPY, dashboardUpdatingLine,
+  FIRST_FORECAST_REASONS, firstForecastLine, formatDollars, formatSize, matchMessages, moreDaysLine, noDateLine, notPublishedLine,
+  otherLocationLine, readingLine, repeatedDatesLine, resultLines, rowList, rowsBecameDays, sendErrorOf, sendingLine, sendLabel, stepLine,
+  updatingLine, uploadUpdatingLine,
 } from '../../../src/portal/upload/copy';
+import { OWNER_REASONS, type Calibration, type LastRun } from '../../../src/portal/schemas';
 import type { Mapping } from '../../../src/portal/upload/days';
 
 // The upload page's words (spec 11.2, P13), by role and by count.
@@ -155,5 +157,110 @@ describe('send errors (P13)', () => {
   test('429 and the network use the shared copy; Try again sends the same days', () => {
     expect(sendErrorOf(http(429, 600))).toEqual({ text: 'Too many attempts. Try again in 10 minutes.', action: 'retry' });
     expect(sendErrorOf(new ApiError('network', 'down'))).toEqual({ text: 'Can’t reach Townwise. Check your connection and try again.', action: 'retry' });
+  });
+});
+
+describe('D65: the forecast updating, in each page’s words (design decisions 3 and 4)', () => {
+  // Local times, so the words read the same in any time zone the tests run in.
+  const now = new Date(2026, 10, 19, 15, 0);
+  const since = new Date(2026, 10, 19, 14, 14).toISOString();
+  const earlier = new Date(2026, 10, 15, 23, 58).toISOString();
+  const history = { dayCount: 1035, firstDate: '2024-01-01', lastDate: '2026-11-15' };
+  const running = { stage: 'running', since } as const;
+  const waiting = { stage: 'waiting', since } as const;
+  const stale = (newerDays: number, updating: Calibration['updating']): Calibration => (
+    { state: 'stale', ...history, dataThrough: '2026-11-08', newerDays, nextRefresh: '2026-11-23', updating }
+  );
+  const calibrated: Calibration = { state: 'calibrated', ...history, dataThrough: '2026-11-15', newerDays: 0, nextRefresh: '2026-11-23', updating: running };
+  const first = (updating: Calibration['updating'], lastRun: LastRun | null = null): Calibration => ({ state: 'not_calibrated', ...history, updating, lastRun });
+
+  test('the model card: updating a published forecast, with its new days and when it started', () => {
+    expect(updatingLine(stale(6, running), now)).toBe('Updating your forecast with 6 new days, started 2:14 PM.');
+    expect(updatingLine(stale(1, running), now)).toBe('Updating your forecast with 1 new day, started 2:14 PM.');
+    expect(updatingLine(calibrated, now)).toBe('Updating your forecast, started 2:14 PM.');
+    // Started on another day than the viewer's today: the short date too.
+    expect(updatingLine(stale(6, { stage: 'running', since: earlier }), now)).toBe('Updating your forecast with 6 new days, started Sun, Nov 15, 11:58 PM.');
+  });
+
+  test('the model card: a first forecast building, and next', () => {
+    expect(updatingLine(first(running), now)).toBe('Building your first forecast, started 2:14 PM.');
+    expect(updatingLine(first(waiting), now)).toBe('Your first forecast is next. Townwise starts building it soon.');
+  });
+
+  test('nothing updating, or an API from before D65: no line anywhere', () => {
+    for (const calibration of [stale(6, null), first(null), { state: 'no_sales_data' } as const, { state: 'not_calibrated', ...history } as const]) {
+      expect(updatingLine(calibration, now)).toBeNull();
+      expect(dashboardUpdatingLine(calibration)).toBeNull();
+      expect(uploadUpdatingLine(calibration, now)).toBeNull();
+      expect(firstForecastLine(calibration, 'Main Street Bar')).toBeNull();
+    }
+  });
+
+  test('the dashboard’s second line, in plain words', () => {
+    expect(dashboardUpdatingLine(stale(6, running))).toBe('Updating now');
+    expect(dashboardUpdatingLine(calibrated)).toBe('Updating now');
+    expect(dashboardUpdatingLine(first(running))).toBe('Building the first forecast');
+    expect(dashboardUpdatingLine(first(waiting))).toBe('First forecast next');
+  });
+
+  test('the upload’s result', () => {
+    expect(uploadUpdatingLine(stale(6, running), now)).toBe('Townwise is updating the forecast with these days.');
+    expect(uploadUpdatingLine(first(running), now)).toBe('Building your first forecast, started 2:14 PM.');
+    expect(uploadUpdatingLine(first(waiting), now)).toBe('Townwise starts on the first forecast soon.');
+  });
+
+  test('Home’s first-forecast line, only with no published run', () => {
+    expect(firstForecastLine(first(running), 'Main Street Bar')).toBe('Building the first forecast for Main Street Bar. Home shows it here once it’s published.');
+    expect(firstForecastLine(first(waiting), 'Main Street Bar')).toBe('The first forecast for Main Street Bar is next. Townwise starts building it soon.');
+    expect(firstForecastLine(stale(6, running), 'Main Street Bar')).toBeNull();
+  });
+
+  test('no waiting sentence says Building, states a time or promises a publish (14.1)', () => {
+    const lines = [updatingLine(first(waiting), now), dashboardUpdatingLine(first(waiting)), uploadUpdatingLine(first(waiting), now), firstForecastLine(first(waiting), 'Main Street Bar')];
+    for (const line of lines) {
+      expect(line).not.toBeNull();
+      expect(line).not.toContain('Building');
+      expect(line).not.toMatch(/\d|AM|PM/);
+      expect(line).not.toMatch(/publish/i);
+    }
+  });
+
+  test('Home’s notice when a first forecast wasn’t published, with the next step', () => {
+    const held: LastRun = { outcome: 'kept', reason: 'not_beat_average', finishedAt: '2026-11-18T09:00:00.000Z' };
+    expect(notPublishedLine(first(null, held), 'Main Street Bar')).toEqual({
+      text: 'The first forecast for Main Street Bar wasn’t published: it wasn’t more accurate than a simple weekday average.',
+      next: 'Townwise tries again after your next sales upload.',
+    });
+    expect(notPublishedLine(first(null, { outcome: 'not_run', reason: 'failed', finishedAt: '2026-11-18T09:20:00.000Z' }), 'Main Street Bar')).toEqual({
+      text: 'The first forecast for Main Street Bar wasn’t published: it couldn’t run.',
+      next: 'Townwise tries again after your next sales upload.',
+    });
+    // Forecasts off: the reason says why, so no next step.
+    expect(notPublishedLine(first(null, { ...held, reason: 'forecasts_off' }), 'Main Street Bar')?.next).toBeNull();
+    // None while updating, with no last run, from an older API, or when the last run was published (since withdrawn).
+    expect(notPublishedLine(first(waiting, held), 'Main Street Bar')).toBeNull();
+    expect(notPublishedLine(first(null), 'Main Street Bar')).toBeNull();
+    expect(notPublishedLine({ state: 'not_calibrated', ...history }, 'Main Street Bar')).toBeNull();
+    expect(notPublishedLine(first(null, { outcome: 'published', reason: 'published', finishedAt: held.finishedAt }), 'Main Street Bar')).toBeNull();
+  });
+
+  test('Home’s notice says the newest forecast, not the first, once a first forecast was published and since withdrawn', () => {
+    const failed: LastRun = { outcome: 'not_run', reason: 'failed', firstForecast: false, finishedAt: '2026-11-18T09:20:00.000Z' };
+    expect(notPublishedLine(first(null, failed), 'Main Street')).toEqual({
+      text: 'The newest forecast for Main Street wasn’t published: it couldn’t run.',
+      next: 'Townwise tries again after your next sales upload.',
+    });
+    // Marked the first, or from an API before the flag: the first forecast.
+    expect(notPublishedLine(first(null, { ...failed, firstForecast: true }), 'Main Street')?.text)
+      .toBe('The first forecast for Main Street wasn’t published: it couldn’t run.');
+  });
+
+  test('every reason a first forecast wasn’t published has words, none stating a minimum or a kept forecast', () => {
+    for (const reason of OWNER_REASONS) {
+      if (reason === 'published' || reason === 'published_by_staff') continue;
+      const words = FIRST_FORECAST_REASONS[reason];
+      expect(words).toMatch(/\.$/);
+      expect(words).not.toMatch(/\d|current|didn’t change|tries again/);
+    }
   });
 });

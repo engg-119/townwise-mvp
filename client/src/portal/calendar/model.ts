@@ -1,11 +1,12 @@
 import { formatCount, formatDate, plural } from '../format';
-import type { TownEvent } from '../analytics/api';
+import type { ResearchedEvent, TownEvent } from '../analytics/api';
 import { mondayOf, weekDates } from '../analytics/cells';
 import { closureOf, likelyClosedWords, markedGuestsWords, noteCovers, typicalGuests } from '../analytics/days';
 import { metricText, MONTH_NAMES, shortDate, type Metric } from '../analytics/words';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason, type ForecastWindow, type ReasonEffect } from '../estimates/api';
 import type { Note, SalesDay } from '../locations/api';
 import { addDays, isCalendarDate, monthRange } from '../locations/dates';
+import { FOUND_LABEL, foundEntryLabel } from '../research/copy';
 import type { Rule } from '../rules/api';
 import { compactEntries, dayEntries, filterOf, fitLines, noteChip, notNamed, type DayEntry } from './entries';
 import type { DateRange } from './grid';
@@ -37,14 +38,17 @@ export { filterOf, noteChip };
 // panel part "Outlook" and never claims 8 in 10, since no location's outlook has had that measured; a key line under the grid says what an
 // outlook is whenever a shown day is one (outlookKey).
 
-/** The filter chips, in toolbar order. `imported` ("Your calendar") shows only when the location has a calendar. */
-export const FILTER_KEYS = ['holidays', 'events', 'terms', 'notes', 'imported'] as const;
+/**
+ * The filter chips, in toolbar order. `imported` ("Your calendar") shows only when the location has a calendar, and
+ * `researched` ("Found by research", D66, on by default) only while the calendar read holds a found event.
+ */
+export const FILTER_KEYS = ['holidays', 'events', 'terms', 'notes', 'imported', 'researched'] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 export type Filters = Readonly<Record<FilterKey, boolean>>;
 export const FILTER_LABEL: Readonly<Record<FilterKey, string>> = {
-  holidays: 'Holidays', events: 'Town events', terms: 'Term dates', notes: 'Your notes', imported: 'Your calendar',
+  holidays: 'Holidays', events: 'Town events', terms: 'Term dates', notes: 'Your notes', imported: 'Your calendar', researched: FOUND_LABEL,
 };
-export const ALL_FILTERS: Filters = { holidays: true, events: true, terms: true, notes: true, imported: true };
+export const ALL_FILTERS: Filters = { holidays: true, events: true, terms: true, notes: true, imported: true, researched: true };
 
 /**
  * An event from one of the location's own calendars, as the API keeps it (spec 17, D33; GET .../owner-calendars/events).
@@ -83,6 +87,8 @@ export interface CalendarInput {
   rules?: readonly Rule[];
   /** The range's stored events from the location's own calendars; none when their read failed. */
   imported: readonly ImportedEvent[];
+  /** The range's events town research found (D66); Home leaves them out until it reads them (task 7.4). */
+  found?: readonly ResearchedEvent[] | null | undefined;
   filters: Filters;
 }
 
@@ -280,6 +286,7 @@ function withStop(words: string): string {
 
 /** An entry as a screen reader hears it in a cell's label: its words, an imported event after “From your calendar”. */
 export function entryLabel(entry: Pick<DayEntry, 'kind' | 'words'>): string {
+  if (entry.kind === 'researched') return withStop(foundEntryLabel(entry.words));
   return withStop(entry.kind === 'imported' ? `From your calendar: ${entry.words}` : entry.words);
 }
 
@@ -310,7 +317,7 @@ export function dayCell(date: string, input: CalendarInput, metric: Metric = 'gu
     chips: entries.slice(0, MAX_CHIPS),
     more: Math.max(0, entries.length - MAX_CHIPS),
     marks: {
-      event: all.some((entry) => entry.kind === 'holiday' || entry.kind === 'event'),
+      event: all.some((entry) => entry.kind === 'holiday' || entry.kind === 'event' || entry.kind === 'researched'),
       note: all.some((entry) => entry.kind === 'note' || entry.kind === 'rule'),
       imported: all.some((entry) => entry.kind === 'imported'),
     },
@@ -450,6 +457,8 @@ export interface CalendarDayView {
   /** The business rules whose schedule covers the day (D31), whatever the filters. */
   rules: Rule[];
   imported: ImportedEvent[];
+  /** The events town research found on the day (D66), as the filters allow, last. */
+  researched: ResearchedEvent[];
 }
 
 function forecastPart(date: string, input: CalendarInput): ForecastPart {
@@ -711,6 +720,7 @@ export function dayView(date: string, input: CalendarInput): CalendarDayView {
     notes: all.flatMap((entry) => (entry.kind === 'note' ? [entry.note] : [])),
     rules: all.flatMap((entry) => (entry.kind === 'rule' ? [entry.rule] : [])),
     imported: all.flatMap((entry) => (entry.kind === 'imported' ? [entry.imported] : [])),
+    researched: all.flatMap((entry) => (entry.kind === 'researched' ? [entry.researched] : [])),
   };
 }
 

@@ -30,12 +30,16 @@ import { createAnthropicExtractModel, createAnthropicFileReaderModel, createAnth
 import { backfillNoteTitles } from './files/note-titles.ts';
 import { createFileSweeper } from './files/sweeper.ts';
 import { createFileWorker } from './files/worker.ts';
+import { pointOf } from './handlers/locations-map.ts';
 import { createEntraLabCaller, createLocalLabCaller, type LabCaller } from './lab/caller.ts';
 import { createAzureLabRunner, createLocalLabRunner, type LabRunner } from './lab/runner.ts';
 import { createAcsTransport } from './mail/acs.ts';
 import { createMailer, OFF_MAILER } from './mail/mailer.ts';
 import { createGooglePlacesClient } from './places/google.ts';
 import { createStaticMapSigner, signingSecretSchema } from './places/static-map.ts';
+import { researchRuns } from './research/plan.ts';
+import { createResearchPlaces } from './research/places.ts';
+import { createResearchRunner } from './research/runner.ts';
 
 // ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat, the file reader's AI column
 // step and reading with TownwiseAI, or the Places proxy, are off. Each goes no further than the clients built here. IDENTITY_ENDPOINT and IDENTITY_HEADER are set by Container Apps for the
@@ -94,7 +98,8 @@ const azureTokensFor = (feature: string): AzureTokenSource => {
 };
 // Email (spec D14) is on when EMAIL_ENDPOINT is set. In production it then needs the managed identity, or boot fails;
 // locally it sends through the developer's az login.
-const { email, emailReplyTo, webUrl, filesMonthlyBudgetUsd } = resolveTownwiseConfig(config);
+const resolvedConfig = resolveTownwiseConfig(config);
+const { email, emailReplyTo, webUrl, filesMonthlyBudgetUsd } = resolvedConfig;
 const mailer = email === null ? OFF_MAILER : createMailer({
   transport: createAcsTransport({
     endpoint: email.endpoint,
@@ -186,6 +191,22 @@ const aiReader = files === undefined || ANTHROPIC_API_KEY === undefined || files
   model: createAnthropicFileReaderModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd, onRead: createAiReadActions(aiContext),
   agentAuto: config.TOWNWISE_AGENT_AUTO, sorts: createCalendarSorts(aiContext),
 });
+// D66, town research (research/runner.ts): leased lanes in this process, on only while TOWNWISE_RESEARCH, the
+// ANTHROPIC_API_KEY and TownwiseAI's web search are all set (research/plan.ts researchRuns). Its model is the tuning
+// chat's; location threads spend the organization's TownwiseAI month and town threads the system month
+// (TOWNWISE_RESEARCH_TOWN_MONTHLY_USD). With Places on, it may ask Google for the restaurant's profile and competitors
+// (research/places.ts, the points from Settings' Valkey cache), which it does for a request only while
+// TOWNWISE_RESEARCH_PLACES_TO_AI (true in production.env since the owner's go of 2026-11-19); whatever that says, a
+// location merge may read the profile's name to compare locally.
+const researchPlaces = places === undefined ? {} : createResearchPlaces({
+  places, pointOf: (placeId) => pointOf(aiContext, placeId, 'research.competitors'), logger,
+});
+const researchRunner = chat === undefined
+  || !researchRuns({ research: resolvedConfig.research, chatWebSearch: resolvedConfig.chatWebSearch, anthropicKey: true })
+  ? undefined
+  : createResearchRunner({
+    connection: mongo.connection, stores: createTownwiseStores(mongo.connection), logger, now, model: chat, config: resolvedConfig, ...researchPlaces,
+  });
 const deps = { ...baseDeps, aiReader };
 const api = createTownwiseApi(deps);
 const labRouter = createTownwiseLab(deps);
@@ -197,6 +218,7 @@ aiReader?.start();
 fileSweeper?.start();
 turnSweeper.start();
 calendarRefresher?.start();
+researchRunner?.start();
 await redis.ready(3000);                             // bounded; logs and continues on false
 const ceiling = createRateLimiter({ redis: redis.client, name: 'app:api-ceiling', limit: 2000, windowSeconds: 60 });
 const server = createServer({
@@ -209,11 +231,12 @@ const server = createServer({
   // runs out of time for. Then the mail drain: a send still in flight when its 2 seconds end is lost. The readers, the
   // sweeper, the TownwiseAI turn sweep and the calendar refresh loop stop next (each waits for its work in flight, but
   // the refresh loop drops a link fetch and aborts a Google call rather than wait out their 10 seconds), while the
-  // database is still open.
+  // database is still open. The research runner stops last of them: it aborts its calls, settles their reservations and
+  // puts their threads back in the queue (design decision 6).
   onShutdown: [
     turnRunner, { name: 'mail', close: () => mailer.idle() }, ...(fileWorker === undefined ? [] : [fileWorker]),
     ...(aiReader === undefined ? [] : [aiReader]), ...(fileSweeper === undefined ? [] : [fileSweeper]), turnSweeper,
-    ...(calendarRefresher === undefined ? [] : [calendarRefresher]), redis, mongo,
+    ...(calendarRefresher === undefined ? [] : [calendarRefresher]), ...(researchRunner === undefined ? [] : [researchRunner]), redis, mongo,
   ],
 });
 await server.listen();

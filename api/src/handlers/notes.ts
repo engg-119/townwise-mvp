@@ -349,7 +349,7 @@ export async function addNote(
     details: noteDetails(location.id, note),
   });
   // D59: a note on a day the lab trains on wants a refit; a later day changes the forecast on read.
-  await wantRefitFor(ctx, scope, location.id, note);
+  await wantRefitFor(ctx, scope, location.id, note, 'person_change');
   return note;
 }
 
@@ -430,7 +430,7 @@ export async function editNote(
   await wantRefitFor(ctx, scope, location.id, {
     startDate: existing.startDate < note.startDate ? existing.startDate : note.startDate,
     endDate: existing.endDate > note.endDate ? existing.endDate : note.endDate,
-  });
+  }, 'person_change');
   return note;
 }
 
@@ -446,6 +446,6 @@ export async function deleteNote(ctx: TownwiseContext, req: Request, res: Respon
     target: { type: 'note', id: note.id },
     details: noteDetails(location.id, note),
   });
-  await wantRefitFor(ctx, scope, location.id, note);
+  await wantRefitFor(ctx, scope, location.id, note, 'person_change');
   res.status(204).end();
 }

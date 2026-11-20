@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useWindowDimensions } from 'react-native';
+import { AppState, useWindowDimensions } from 'react-native';
 
-// Small hooks every portal page uses: a read with loading, error and reload state, a single-flight write, and
-// the layout breakpoints of spec 15.2. Plain React, no data library.
+// Small hooks every portal page uses: a read with loading, error and reload state, a single-flight write, the
+// layout breakpoints of spec 15.2, and (D65) the running-and-done pattern: a quiet re-read while something runs in
+// the background and a callback once when it ends. Plain React, no data library.
 
 export type LoadState<T> =
   | { status: 'loading' }
@@ -79,4 +80,82 @@ export function breakpointOf(width: number): Breakpoint {
 export function useBreakpoint(): Breakpoint {
   const { width } = useWindowDimensions();
   return breakpointOf(width);
+}
+
+/** D65: the pages' re-read while a forecast updates (design decision 4). [CONFIRM: pages re-read every 30 seconds while a forecast is updating] */
+export const WHILE_RUNNING_MS = 30_000;
+/** After a failed re-read, the next one waits this long. */
+export const AFTER_ERROR_MS = 10_000;
+
+function inBackground(): boolean {
+  return AppState.currentState === 'background' || AppState.currentState === 'inactive';
+}
+
+/**
+ * Calls `onDone` once when `running` turns false after this mount saw it true (AiSection's `sawRunning`): a page that
+ * opens on a finished run never calls it, and a run seen again later calls it again when that one ends.
+ */
+export function useWhenDone(running: boolean, onDone: (() => void) | undefined): void {
+  const saw = useRef(false);
+  const latest = useRef(onDone);
+  useEffect(() => { latest.current = onDone; }, [onDone]);
+  useEffect(() => {
+    if (running) {
+      saw.current = true;
+      return;
+    }
+    if (!saw.current) return;
+    saw.current = false;
+    latest.current?.();
+  }, [running]);
+}
+
+/**
+ * D65, the running-and-done pattern (design decisions 4 and 10): while `running`, calls `refresh` every `everyMs`
+ * (30 seconds by default), waiting while the app is in the background or the tab hidden (as files/useImport.ts) and
+ * 10 seconds after a refresh that rejected; never while `running` is false. `onDone` runs once when `running` turns
+ * false after it was seen true in this mount. Any background work an owner waits for (D66's research runs) uses it.
+ */
+export function useWhileRunning(
+  running: boolean, refresh: () => Promise<unknown>, options: { everyMs?: number; onDone?: () => void } = {},
+): void {
+  const everyMs = options.everyMs ?? WHILE_RUNNING_MS;
+  const latest = useRef(refresh);
+  useEffect(() => { latest.current = refresh; }, [refresh]);
+  useWhenDone(running, options.onDone);
+  useEffect(() => {
+    if (!running) return undefined;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let due = false;
+    function schedule(delay: number): void {
+      timer = setTimeout(() => { void poll(); }, delay);
+    }
+    async function poll(): Promise<void> {
+      timer = null;
+      if (inBackground()) {
+        due = true;
+        return;
+      }
+      let failed = false;
+      try {
+        await latest.current();
+      } catch {
+        failed = true;
+      }
+      if (live) schedule(failed ? AFTER_ERROR_MS : everyMs);
+    }
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active' && due && live) {
+        due = false;
+        void poll();
+      }
+    });
+    schedule(everyMs);
+    return () => {
+      live = false;
+      if (timer !== null) clearTimeout(timer);
+      subscription.remove();
+    };
+  }, [running, everyMs]);
 }

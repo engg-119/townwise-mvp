@@ -1,7 +1,11 @@
-import { compactEntries, dayEntries, fitLines, folded, notNamed, noteChip, noteWords, type DaySources } from '../../../src/portal/calendar/entries';
+import { researchedEventSchema as foundEventSchema } from '../../../src/portal/analytics/api';
+import {
+  compactEntries, dayEntries, fitLines, folded, foundCovers, foundInFront, notNamed, noteChip, noteWords, type DaySources,
+} from '../../../src/portal/calendar/entries';
 import { ALL_FILTERS, type ImportedEvent } from '../../../src/portal/calendar/model';
 import { holiday, note, townEvent } from '../analytics/fakes';
 import { ruleOf } from '../rules/fakes';
+import { foundEvent } from './fakes';
 
 // The one list of what is on a day (D49, calendar-shows-everything design decision 1): its order, its words, and the
 // compact dedupe the cells, the tooltip, the week cards and Home's This week share. Every name and title is made up.
@@ -117,6 +121,61 @@ test('fitLines shows every line up to the limit, else one fewer and “+N more�
   expect(fitLines(['a', 'b', 'c', 'd'], 3)).toEqual({ lines: ['a', 'b'], more: '+2 more' });
   expect(fitLines(['a', 'b', 'c'], 2)).toEqual({ lines: ['a'], more: '+2 more' });
   expect(fitLines([], 2)).toEqual({ lines: [], more: null });
+});
+
+describe('found by research (D66)', () => {
+  const FOUND = foundEventSchema.parse(foundEvent({ start: DAY, end: DAY }));
+  const WEEKLY = foundEventSchema.parse(foundEvent({
+    id: `t-${'b'.repeat(24)}`, title: 'Thursday market', start: '2026-11-09', end: '2026-11-22', weekdays: [3, 4], origin: 'town', competitor: null,
+  }));
+
+  test('found events come after imported events and before the periods, keyed by id with their sources', () => {
+    const entries = dayEntries(DAY, sources({
+      notes: [note({ startDate: DAY, title: 'Holiday party' })],
+      events: [townEvent({ start: DAY, title: 'Fall term classes', kind: 'term' }), VETERANS],
+      imported: [imported({ title: 'Staff day' })],
+      found: [FOUND],
+    }), { periods: true });
+    expect(entries.map((entry) => entry.words)).toEqual(['Holiday party', 'Veterans Day', 'Staff day', 'Trivia night', 'Fall term classes']);
+    expect(entries[3]).toMatchObject({
+      key: `found:l-${'a'.repeat(24)}`, kind: 'researched', group: 'research', title: 'Trivia night',
+      source: { kind: 'research', sources: [{ label: 'example.com', url: 'https://example.com/trivia' }] },
+    });
+  });
+
+  test('the filter hides them, and an event with weekdays shows only on those days', () => {
+    expect(dayEntries(DAY, sources({ found: [FOUND], filters: { ...ALL_FILTERS, researched: false } }))).toEqual([]);
+    // Nov 11, 2026 is a Wednesday (3), Nov 13 a Friday (5).
+    expect(dayEntries(DAY, sources({ found: [WEEKLY] })).map((entry) => entry.words)).toEqual(['Thursday market']);
+    expect(dayEntries('2026-11-13', sources({ found: [WEEKLY] }))).toEqual([]);
+    expect(foundCovers(WEEKLY, '2026-11-12')).toBe(true);
+    expect(foundCovers(WEEKLY, '2026-11-23')).toBe(false);
+  });
+
+  test('a multi-week or Unconfirmed one comes after the day’s own found events (UI review)', () => {
+    const season = foundEventSchema.parse(foundEvent({
+      id: `t-${'c'.repeat(24)}`, title: 'Winter parking ban', kind: 'season', start: '2026-11-01', end: '2027-04-30', confidence: 'medium', startTime: null,
+    }));
+    const unconfirmed = foundEventSchema.parse(foundEvent({ id: `t-${'d'.repeat(24)}`, title: 'Maybe a fair', start: DAY, end: DAY, confidence: 'low' }));
+    const week = foundEventSchema.parse(foundEvent({ id: `t-${'e'.repeat(24)}`, title: 'Book week', start: '2026-11-09', end: '2026-11-15' }));
+    const entries = dayEntries(DAY, sources({ found: [season, unconfirmed, WEEKLY, week, FOUND] }));
+    // In the read's order within each half: the weekly market, the 7-day week and the day's own event lead.
+    expect(entries.map((entry) => entry.words)).toEqual(['Thursday market', 'Book week', 'Trivia night', 'Winter parking ban', 'Maybe a fair']);
+    expect([season, unconfirmed, WEEKLY, week, FOUND].map(foundInFront)).toEqual([false, false, true, true, true]);
+  });
+
+  test('none without found, or with found null (the read failed)', () => {
+    expect(dayEntries(DAY, sources({}))).toEqual([]);
+    expect(dayEntries(DAY, sources({ found: null }))).toEqual([]);
+  });
+
+  test('a cancelled one says so on compact surfaces, and a found title a town event already shows is shown once', () => {
+    const cancelled = { ...FOUND, status: 'cancelled' as const };
+    expect(dayEntries(DAY, sources({ found: [cancelled] })).map((entry) => entry.words)).toEqual(['Trivia night (cancelled)']);
+    const twice = dayEntries(DAY, sources({ events: [townEvent({ start: DAY, title: 'Trivia Night' })], found: [FOUND] }));
+    expect(twice).toHaveLength(2);
+    expect(compactEntries(twice).map((entry) => entry.group)).toEqual(['town']);
+  });
 });
 
 test('a note marking a day’s guest count wrong (D67) reads “Guest count marked wrong”, or its event name', () => {

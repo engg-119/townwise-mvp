@@ -3,8 +3,10 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { ApiError } from '../../../src/api/client';
 import { revealOnArrival } from '../../../src/portal/calendar/arrival';
 import { COPY } from '../../../src/portal/errors';
+import * as ask from '../../../src/portal/research/ask';
 import type { ForecastDay } from '../../../src/portal/estimates/api';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
@@ -14,7 +16,8 @@ import { holiday, townEvent } from '../analytics/fakes';
 import { noteOf } from '../locations/fakes';
 import { ruleOf } from '../rules/fakes';
 import {
-  CALENDARS_PATH, calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, PATH, RULES_PATH, savedNote, type CalendarFake,
+  CALENDARS_PATH, calendarFake, forecastDay, forecastOf, foundEvent, NOTES_PATH, ownerCalendar, ownerEvent, PATH, RESEARCH_PATH, researchBody, RULES_PATH,
+  savedNote, type CalendarFake,
 } from './fakes';
 
 // P28 Calendar on web (spec 16.3, D30): the month grid with each day's published forecast, the
@@ -88,7 +91,8 @@ function november(noted?: { guests: number; id: string }): unknown {
 }
 
 function setup(
-  me: MeResponse = meOf(ACCESS.member), init: Partial<Pick<CalendarFake, 'notes' | 'rules' | 'forecasts' | 'calendars' | 'ownerEvents'>> = {},
+  me: MeResponse = meOf(ACCESS.member),
+  init: Partial<Pick<CalendarFake, 'notes' | 'rules' | 'forecasts' | 'calendars' | 'ownerEvents' | 'found' | 'research'>> = {},
 ): { api: FakePortalApi; fake: CalendarFake } {
   const fake = calendarFake({
     events: [GAME, VETERANS],
@@ -1016,4 +1020,223 @@ test('no key line while no shown day is an outlook day', async () => {
   const { api } = setup();
   await renderAt('/locations/l1/calendar', api);
   expect(screen.queryByText(OUTLOOK_KEY)).toBeNull();
+});
+
+describe('found by research (D66)', () => {
+  const TRIVIA_PATH = `${PATH}/research/events/l-${'a'.repeat(24)}`;
+  const BRUNCH = foundEvent({
+    id: `t-${'b'.repeat(24)}`, title: 'Jazz brunch', origin: 'town', competitor: null, confidence: 'low', status: 'cancelled', where: null, who: null,
+    startTime: null, sources: [{ label: 'example.org', url: 'https://example.org/brunch' }, { label: 'script', url: 'javascript:alert(1)' }],
+  });
+
+  afterEach(() => { window.localStorage.clear(); });
+
+  test('the filter, the cell and the day panel’s row with where and who, Unconfirmed, Cancelled and its sources; the filter off hides them', async () => {
+    const { api } = setup(meOf(ACCESS.member), { found: [foundEvent(), BRUNCH] });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    expect(cell('2026-11-21').getAttribute('aria-label')).toBe(
+      'Sat, Nov 21, 2026. 212 guests, forecast, likely 180 to 240. Dartmouth home football. Found by research: Trivia night. Found by research: Jazz brunch (cancelled).',
+    );
+    const day = panel();
+    expect(within(day).getByText('Found by research')).toBeTruthy();
+    expect(within(day).getByText('Trivia night')).toBeTruthy();
+    expect(within(day).getByText('Nov 21, 2026, from 7 pm')).toBeTruthy();
+    expect(within(day).getByText('at Example Tavern · by Example Quiz Club')).toBeTruthy();
+    expect(within(day).getByText('Unconfirmed')).toBeTruthy();
+    expect(within(day).getByText('Cancelled')).toBeTruthy();
+    const links = within(day).getAllByRole('link').map((link) => link.getAttribute('href'));
+    expect(links).toEqual(expect.arrayContaining(['https://example.com/trivia', 'https://example.org/brunch']));
+    expect(links.some((href) => href?.startsWith('javascript') === true)).toBe(false);
+    expect(within(day).queryByText('Edited by your team')).toBeNull();
+
+    const filter = screen.getByRole('button', { name: 'Found by research' });
+    expect(filter.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(filter);
+    expect(cell('2026-11-21').getAttribute('aria-label')).not.toContain('Found by research');
+    expect(within(panel()).queryByText('Trivia night')).toBeNull();
+    // The chip stays while it is off, so it can be turned on again.
+    fireEvent.click(screen.getByRole('button', { name: 'Found by research' }));
+    expect(within(panel()).getByText('Trivia night')).toBeTruthy();
+  });
+
+  test('no Found by research chip while the read holds none, and a failed researched read leaves the page showing', async () => {
+    const { api } = setup(meOf(ACCESS.member), { found: null });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    expect(screen.queryByRole('button', { name: 'Found by research' })).toBeNull();
+    expect(within(panel()).getByText('Nothing else on the calendar this day.')).toBeTruthy();
+  });
+
+  test('Save after another member hid the event closes the sheet and says so, never offering an edit of a hidden event', async () => {
+    const { api, fake } = setup(meOf(ACCESS.member), { found: [foundEvent()] });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Edit Trivia night' }));
+    const sheet = screen.getByRole('dialog', { name: 'Edit event' });
+    fireEvent.change(within(sheet).getByLabelText('Title'), { target: { value: 'Quiz night' } });
+    api.answers[TRIVIA_PATH] = () => {
+      fake.found = [];
+      return new ApiError('http', 'The request was refused.', { status: 409, code: 'changed_since', detail: { event: { ...foundEvent({ head: 'r5' }), hidden: true } } });
+    };
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Someone hid this event for this location since you opened it, so nothing changed. Restore it from the Town tab to edit it.')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Edit event' })).toBeNull();
+    expect(writes(api)).toHaveLength(1);
+  });
+
+  test('Edit sends the head as basedOn; a 409 shows the event as it reads now, and Save again sends the new head', async () => {
+    const { api, fake } = setup(meOf(ACCESS.member), { found: [foundEvent()] });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Edit Trivia night' }));
+    const sheet = screen.getByRole('dialog', { name: 'Edit event' });
+    expect(within(sheet).getByLabelText<HTMLInputElement>('Title').value).toBe('Trivia night');
+    expect(within(sheet).getByLabelText<HTMLInputElement>('Where (optional)').value).toBe('Example Tavern');
+    fireEvent.change(within(sheet).getByLabelText('Title'), { target: { value: 'Quiz night' } });
+    const theirs = foundEvent({ head: 'r5', title: 'Pub quiz', edited: true });
+    api.answers[TRIVIA_PATH] = () => {
+      fake.found = [theirs];
+      return new ApiError('http', 'The request was refused.', { status: 409, code: 'changed_since', detail: { event: theirs } });
+    };
+    const scrolled = jest.fn();
+    const scrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value: scrolled });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
+    const line = await screen.findByText('Someone changed this event since you opened it. It now reads as shown. Make your change again, then save.');
+    const again = screen.getByRole('dialog', { name: 'Edit event' });
+    expect(within(again).getByLabelText<HTMLInputElement>('Title').value).toBe('Pub quiz');
+    // The line sits just above Save, after the fields, and the sheet scrolls them into view (UI review: Save was out of sight).
+    expect(within(again).getByLabelText('Where (optional)').compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(line.compareDocumentPosition(within(again).getByRole('button', { name: 'Save' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(scrolled).toHaveBeenCalledWith({ block: 'nearest' });
+    if (scrollIntoView === undefined) delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    else Object.defineProperty(Element.prototype, 'scrollIntoView', scrollIntoView);
+    expect(writes(api)[0]?.body).toEqual({
+      op: 'edit', basedOn: 'base',
+      fields: { title: 'Quiz night', start: '2026-11-21', end: '2026-11-21', weekdays: null, startTime: '19:00', where: 'Example Tavern' },
+    });
+
+    fireEvent.change(within(again).getByLabelText('Title'), { target: { value: 'Quiz night' } });
+    api.answers[TRIVIA_PATH] = () => {
+      const saved = foundEvent({ head: 'r6', title: 'Quiz night', edited: true });
+      fake.found = [saved];
+      return { event: saved };
+    };
+    fireEvent.click(within(again).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Saved. Only this location’s calendar changes.')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Edit event' })).toBeNull();
+    expect(writes(api)[1]?.body).toMatchObject({ op: 'edit', basedOn: 'r5', fields: { title: 'Quiz night' } });
+    expect(await within(panel()).findByText('Quiz night')).toBeTruthy();
+    expect(within(panel()).getByText('Edited by your team')).toBeTruthy();
+  });
+
+  test('a 409 whose answer carries no view shows the event once the calendar read again has its new head', async () => {
+    const { api, fake } = setup(meOf(ACCESS.member), { found: [foundEvent()] });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Edit Trivia night' }));
+    fireEvent.change(within(screen.getByRole('dialog', { name: 'Edit event' })).getByLabelText('Title'), { target: { value: 'Quiz night' } });
+    api.answers[TRIVIA_PATH] = () => {
+      fake.found = [foundEvent({ head: 'r7', title: 'Pub quiz', edited: true })];
+      return refusal(409, 'changed_since');
+    };
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Edit event' })).getByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(within(screen.getByRole('dialog', { name: 'Edit event' })).getByLabelText<HTMLInputElement>('Title').value).toBe('Pub quiz');
+    });
+    expect(screen.getByText('Someone changed this event since you opened it. It now reads as shown. Make your change again, then save.')).toBeTruthy();
+    api.answers[TRIVIA_PATH] = () => ({ event: foundEvent({ head: 'r8', title: 'Pub quiz', edited: true }) });
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Edit event' })).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Saved. Only this location’s calendar changes.')).toBeTruthy();
+    expect(writes(api).map((call) => (call.body as { basedOn: string }).basedOn)).toEqual(['base', 'r7']);
+  });
+
+  test('the sheet checks its fields before it sends', async () => {
+    const { api } = setup(meOf(ACCESS.member), { found: [foundEvent()] });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Edit Trivia night' }));
+    const sheet = screen.getByRole('dialog', { name: 'Edit event' });
+    fireEvent.change(within(sheet).getByLabelText('Title'), { target: { value: '  ' } });
+    fireEvent.change(within(sheet).getByLabelText('Ends'), { target: { value: '2026-11-20' } });
+    fireEvent.change(within(sheet).getByLabelText('Time (optional)'), { target: { value: '7pm' } });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
+    expect(within(sheet).getByText('Enter a title.')).toBeTruthy();
+    expect(within(sheet).getByText('The end can’t be before the start.')).toBeTruthy();
+    expect(within(sheet).getByText('Enter a time as HH:MM, or leave it empty.')).toBeTruthy();
+    expect(writes(api)).toEqual([]);
+  });
+
+  test('Hide and Reset send the head; a 409 on Hide says so in the panel and reads the calendar again', async () => {
+    const edited = foundEvent({ head: 'r3', edited: true });
+    const { api, fake } = setup(meOf(ACCESS.member), { found: [edited] });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    expect(within(panel()).getByText('Edited by your team')).toBeTruthy();
+    api.answers[TRIVIA_PATH] = () => {
+      fake.found = [foundEvent()];
+      return { event: foundEvent() };
+    };
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Reset Trivia night' }));
+    expect(await screen.findByText('Back to what research found.')).toBeTruthy();
+    await waitFor(() => { expect(within(panel()).queryByText('Edited by your team')).toBeNull(); });
+
+    api.answers[TRIVIA_PATH] = () => refusal(409, 'changed_since');
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Hide Trivia night' }));
+    expect(await screen.findByText('Someone changed this event since you opened it. Here is how it reads now.')).toBeTruthy();
+    api.answers[TRIVIA_PATH] = () => {
+      fake.found = [];
+      return { event: null };
+    };
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Hide Trivia night' }));
+    expect(await screen.findByText('Hidden for this location. Restore it from the Town tab.')).toBeTruthy();
+    await waitFor(() => { expect(within(panel()).queryByText('Trivia night')).toBeNull(); });
+    expect(writes(api).map((call) => call.body)).toEqual([
+      { op: 'restore', basedOn: 'r3' }, { op: 'hide', basedOn: 'base' }, { op: 'hide', basedOn: 'base' },
+    ]);
+  });
+
+  test('view-as: Edit, Hide and Reset are not shown, and Ask TownwiseAI is', async () => {
+    const { api } = setup(viewAsMe(ACCESS.admin), { found: [foundEvent({ head: 'r3', edited: true })] });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    const day = panel();
+    expect(within(day).getByText('Trivia night')).toBeTruthy();
+    for (const name of ['Edit Trivia night', 'Hide Trivia night', 'Reset Trivia night']) expect(within(day).queryByRole('button', { name })).toBeNull();
+    expect(within(day).getByRole('button', { name: 'Ask TownwiseAI about Trivia night' })).toBeTruthy();
+  });
+
+  test('Ask TownwiseAI leaves a draft naming the title and date and opens TownwiseAI', async () => {
+    const { api } = setup(meOf(ACCESS.member), { found: [foundEvent()] });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    window.localStorage.setItem('townwise.chatReturn.u1.l1.self', JSON.stringify({ conversationId: 'c9', leftAt: Date.now() }));
+    const spy = jest.spyOn(ask, 'handOffAsk');
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Ask TownwiseAI about Trivia night' }));
+    expect(spy).toHaveBeenCalledWith('l1', 'Is Trivia night on Sat, Nov 21 right?');
+    // The conversation kept for coming back is forgotten, so TownwiseAI opens a new one.
+    await waitFor(() => { expect(window.localStorage.getItem('townwise.chatReturn.u1.l1.self')).toBeNull(); });
+    spy.mockRestore();
+    ask.takeAsk('l1');
+  });
+
+  test('the banner shows for a run a person started, links to the Town tab, and once dismissed stays gone', async () => {
+    const { api } = setup(meOf(ACCESS.member), { research: researchBody('press', 'done', 3) });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    const words = await screen.findByText(/finished: 3 new events on the calendar\./);
+    expect(words.textContent).toMatch(/^Research for .+ finished: 3 new events on the calendar\. Open the Town tab\.$/);
+    expect(screen.getByRole('link', { name: 'Open the Town tab' }).getAttribute('href')).toBe('/locations/l1/town');
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss the research notice' }));
+    expect(screen.queryByText(/finished: 3 new events/)).toBeNull();
+    cleanup();
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    expect(screen.queryByText(/finished: 3 new events/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss the research notice' })).toBeNull();
+  });
+
+  test('a running run a person started says it is researching; a weekly run shows no banner', async () => {
+    const running = setup(meOf(ACCESS.member), { research: researchBody('early', 'running') });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', running.api);
+    const words = await screen.findByText(/^Researching .+ and nearby\. What it finds shows on the calendar when it finishes\./);
+    expect(words.textContent).toMatch(/^Researching .+ and nearby\. What it finds shows on the calendar when it finishes\. Open the Town tab\.$/);
+    cleanup();
+    window.localStorage.clear();
+    const weekly = setup(meOf(ACCESS.member), { research: researchBody('weekly', 'done', 4) });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', weekly.api);
+    await waitFor(() => { expect(weekly.fake.paths).toContain(RESEARCH_PATH); });
+    expect(screen.queryByText(/Research for/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss the research notice' })).toBeNull();
+  });
 });

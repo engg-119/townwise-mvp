@@ -7,6 +7,12 @@ import { describe, expect, it } from 'vitest';
 
 import { configSchema, filesBackendOf, googleCalendarOf, labRunnerOf, resolveTownwiseConfig } from '../src/config.ts';
 
+/** D66: research's variables at their defaults, for the literal configs below. */
+const RESEARCH = {
+  TOWNWISE_RESEARCH: true, TOWNWISE_RESEARCH_TOWN_MONTHLY_USD: 40, TOWNWISE_RESEARCH_ORG_MONTHLY_USD: 6,
+  TOWNWISE_RESEARCH_WEB_FETCH: false, TOWNWISE_RESEARCH_PLACES_TO_AI: false,
+};
+
 function parse(value: string | undefined): readonly string[] {
   return loadEnv(configSchema, { TOWNWISE_SUPERADMIN_EMAILS: value }).TOWNWISE_SUPERADMIN_EMAILS;
 }
@@ -44,7 +50,7 @@ describe('config', () => {
     const budget = {
       TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081',
       FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
-      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true, ...RESEARCH,
     };
     expect(() => resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget })).toThrow(ConfigError);
     expect(resolveTownwiseConfig({ NODE_ENV: 'development', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget }).superadminEmails.size).toBe(0);
@@ -56,7 +62,7 @@ describe('config', () => {
     const base = {
       TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081',
       FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
-      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true, ...RESEARCH,
     };
     const twoStep = (nodeEnv: 'development' | 'test' | 'production', value?: string): boolean => resolveTownwiseConfig({
       NODE_ENV: nodeEnv, ...base, TOWNWISE_STAFF_TWO_STEP: loadEnv(configSchema, { TOWNWISE_STAFF_TWO_STEP: value }).TOWNWISE_STAFF_TWO_STEP,
@@ -92,7 +98,7 @@ describe('config', () => {
     const base = {
       NODE_ENV: 'production' as const, TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
       TOWNWISE_WEB_URL: 'http://localhost:8081', FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined,
-      TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true,
+      TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true, ...RESEARCH,
     };
     expect(resolveTownwiseConfig({ ...base, TOWNWISE_CHAT_WEB_SEARCH: webSearch('true') }).chatWebSearch).toBe(true);
     expect(resolveTownwiseConfig({ ...base, TOWNWISE_CHAT_WEB_SEARCH: webSearch(undefined) }).chatWebSearch).toBe(false);
@@ -137,6 +143,49 @@ describe('config', () => {
     expect(env).toMatch(/^TOWNWISE_AGENT_AUTO=true$/m);
     const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
     expect(example).toMatch(/^TOWNWISE_AGENT_AUTO=true$/m);
+  });
+
+  describe('town research (D66)', () => {
+    const resolved = (env: Record<string, string | undefined>) => {
+      const parsed = loadEnv(configSchema, { TOWNWISE_SUPERADMIN_EMAILS: 'staff@townwise.test', ...env });
+      return resolveTownwiseConfig({ NODE_ENV: 'development', ...parsed });
+    };
+
+    it('is on by default with $40 a month for towns and a $6 automatic share an organization, fetch off and Google names kept from Anthropic', () => {
+      expect(resolved({})).toMatchObject({
+        research: true, researchTownMonthlyUsd: 40, researchOrgMonthlyUsd: 6, researchWebFetch: false, researchPlacesToAi: false,
+      });
+      expect(resolved({
+        TOWNWISE_RESEARCH: '', TOWNWISE_RESEARCH_TOWN_MONTHLY_USD: '', TOWNWISE_RESEARCH_ORG_MONTHLY_USD: '',
+        TOWNWISE_RESEARCH_WEB_FETCH: '', TOWNWISE_RESEARCH_PLACES_TO_AI: '',
+      })).toMatchObject({ research: true, researchTownMonthlyUsd: 40, researchOrgMonthlyUsd: 6, researchWebFetch: false, researchPlacesToAi: false });
+      expect(resolved({
+        TOWNWISE_RESEARCH: 'false', TOWNWISE_RESEARCH_TOWN_MONTHLY_USD: '0', TOWNWISE_RESEARCH_ORG_MONTHLY_USD: '12.5',
+        TOWNWISE_RESEARCH_WEB_FETCH: 'true', TOWNWISE_RESEARCH_PLACES_TO_AI: 'true',
+      })).toMatchObject({ research: false, researchTownMonthlyUsd: 0, researchOrgMonthlyUsd: 12.5, researchWebFetch: true, researchPlacesToAi: true });
+    });
+
+    it('refuses a switch that is not true or false, and a cap that is not a number from 0 to 1,000', () => {
+      for (const name of ['TOWNWISE_RESEARCH', 'TOWNWISE_RESEARCH_WEB_FETCH', 'TOWNWISE_RESEARCH_PLACES_TO_AI']) {
+        expect(() => resolved({ [name]: 'sometimes' })).toThrow(ConfigError);
+      }
+      for (const name of ['TOWNWISE_RESEARCH_TOWN_MONTHLY_USD', 'TOWNWISE_RESEARCH_ORG_MONTHLY_USD']) {
+        for (const bad of ['-1', 'forty', '1001']) expect(() => resolved({ [name]: bad })).toThrow(ConfigError);
+        expect(resolved({ [name]: '1000' })).toBeDefined();
+      }
+    });
+
+    it('production turns research on with web fetch off (the live eval, task 10.3) and lets Google names go to Anthropic (the owner, 2026-11-19); the example keeps the code defaults', () => {
+      const env = readFileSync(new URL('../production.env', import.meta.url), 'utf8');
+      expect(env).toMatch(/^TOWNWISE_RESEARCH=true$/m);
+      expect(env).toMatch(/^TOWNWISE_RESEARCH_WEB_FETCH=false$/m);
+      expect(env).toMatch(/^TOWNWISE_RESEARCH_PLACES_TO_AI=true$/m);
+      const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+      for (const line of [
+        /^TOWNWISE_RESEARCH=true$/m, /^TOWNWISE_RESEARCH_TOWN_MONTHLY_USD=40$/m, /^TOWNWISE_RESEARCH_ORG_MONTHLY_USD=6$/m,
+        /^TOWNWISE_RESEARCH_WEB_FETCH=false$/m, /^TOWNWISE_RESEARCH_PLACES_TO_AI=false$/m,
+      ]) expect(example).toMatch(line);
+    });
   });
 
   it('the API starts no weekly refresh (D42): main.ts never imports the schedule or the worker, which runs on its own', () => {
@@ -249,7 +298,7 @@ describe('config', () => {
     expect(() => resolveTownwiseConfig({
       NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
       TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
-      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true, TOWNWISE_AGENT_AUTO: true, ...RESEARCH,
     })).toThrow(ConfigError);
     expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
   });

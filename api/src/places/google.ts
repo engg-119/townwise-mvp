@@ -1,7 +1,9 @@
 // Google Places (New), behind the Places proxy routes (handlers/places.ts), as a port. main.ts builds the real one when
 // GOOGLE_PLACES_API_KEY is set and passes it to createTownwiseApi; tests build it over a fake fetch. Nothing here logs.
-// What Google is sent (the typed text, a place id) and what it answers leave this file only as the return value; every
-// failure is a PlacesUnavailableError carrying a code and Google's HTTP status, never a message or a body from Google.
+// What Google is sent (the typed text, a place id, a point) and what it answers leave this file only as the return value;
+// every failure is a PlacesUnavailableError carrying a code and Google's HTTP status, never a message or a body from
+// Google. D66 adds `nearby` (the competitors around a location) and `profile` (the restaurant's name and address for a
+// research prompt); neither answer is stored (openspec change town-research-agent, design decision 10).
 import { z } from 'zod';
 
 import { PLACE_ID_PATTERN } from '../place-id.ts';
@@ -27,6 +29,18 @@ export type PlaceKind = 'business' | 'address';
 export interface PlaceSuggestion { placeId: string; name: string; detail: string; kind: PlaceKind }
 export interface AddressComponent { longText: string; shortText: string; types: readonly string[] }
 export interface PlaceDetails { placeId: string; formattedAddress: string; addressComponents: AddressComponent[] }
+/** D66: a place around a point, as Nearby Search answers it. `website` only when asked for (a research run). */
+export interface NearbyPlace {
+  placeId: string;
+  name: string;
+  /** Google's primary type; null when it gave none. */
+  primaryType: string | null;
+  lat: number;
+  lng: number;
+  website: string | null;
+}
+/** D66: the restaurant's Google name and address. */
+export interface PlaceProfile { placeId: string; name: string; address: string }
 
 /** `upstream_status`: Google answered non-2xx. `bad_response`: its 2xx answer was not the expected JSON. */
 export type PlacesFailure = 'timeout' | 'network' | 'upstream_status' | 'bad_response';
@@ -57,6 +71,13 @@ export interface PlacesClient {
    * map; null when Google has no such place. Throws PlacesUnavailableError.
    */
   locate(placeId: string): Promise<{ lat: number; lng: number } | null>;
+  /**
+   * D66: food and drink places within `radiusM` of `center`, nearest first, at most NEARBY_MAX, each with its website
+   * only with `withWebsite` (a research run; the Competition card never asks for it). Throws PlacesUnavailableError.
+   */
+  nearby(center: { lat: number; lng: number }, opts: { radiusM: number; withWebsite: boolean }): Promise<NearbyPlace[]>;
+  /** D66: the place's name and address (no session); null when Google has no such place or no name for it. Throws PlacesUnavailableError. */
+  profile(placeId: string): Promise<PlaceProfile | null>;
 }
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
@@ -73,6 +94,26 @@ const autocompleteSchema = z.object({ suggestions: z.array(z.unknown()).optional
 /** D47: only the place's point. */
 const LOCATE_FIELD_MASK = 'id,location';
 const locateSchema = z.object({ location: z.object({ latitude: z.number(), longitude: z.number() }).optional() });
+
+/**
+ * D66: Nearby Search's types. `includedTypes` matches any of a place's types, not only its primary one (task 0.2's
+ * probe got a book store), so research/competitors.ts filters by `primaryType` too.
+ */
+export const NEARBY_TYPES: readonly string[] = ['restaurant', 'bar', 'cafe', 'coffee_shop', 'pub', 'bakery', 'fast_food_restaurant'];
+export const NEARBY_MAX = 20;
+const NEARBY_FIELD_MASK = 'places.id,places.displayName,places.primaryType,places.location';
+const NEARBY_WEBSITE_FIELD = 'places.websiteUri';
+const PROFILE_FIELD_MASK = 'id,displayName,formattedAddress';
+const displayNameSchema = z.object({ text: z.string() });
+const nearbySchema = z.object({ places: z.array(z.unknown()).optional() });
+const nearbyPlaceSchema = z.object({
+  id: z.string(),
+  displayName: displayNameSchema,
+  primaryType: z.string().optional(),
+  location: z.object({ latitude: z.number(), longitude: z.number() }),
+  websiteUri: z.string().optional(),
+});
+const profileSchema = z.object({ id: z.string().optional(), displayName: displayNameSchema.optional(), formattedAddress: z.string().optional() });
 
 const detailsSchema = z.object({
   id: z.string().optional(),
@@ -146,6 +187,24 @@ function suggestionsOf(raw: readonly unknown[]): PlaceSuggestion[] {
   return suggestions;
 }
 
+/** Nearby Search's places, item by item: one without an id, a name or a point is skipped. A website only when http(s). */
+function nearbyOf(raw: readonly unknown[], withWebsite: boolean): NearbyPlace[] {
+  const places: NearbyPlace[] = [];
+  for (const item of raw) {
+    const parsed = nearbyPlaceSchema.safeParse(item);
+    if (!parsed.success) continue;
+    const { id, displayName, primaryType, location, websiteUri } = parsed.data;
+    if (!PLACE_ID_PATTERN.test(id) || displayName.text === '') continue;
+    const protocol = websiteUri === undefined ? null : URL.parse(websiteUri)?.protocol;
+    places.push({
+      placeId: id, name: displayName.text, primaryType: primaryType ?? null, lat: location.latitude, lng: location.longitude,
+      website: withWebsite && (protocol === 'https:' || protocol === 'http:') ? websiteUri ?? null : null,
+    });
+    if (places.length === NEARBY_MAX) break;
+  }
+  return places;
+}
+
 /** No retries: a failure answers 503 and the client offers the manual fields. */
 export function createGooglePlacesClient(
   apiKey: string,
@@ -160,6 +219,27 @@ export function createGooglePlacesClient(
     } catch (err) {
       throw isTimeout(err) ? new PlacesUnavailableError('timeout') : new PlacesUnavailableError('network', { errType: errTypeOf(err) });
     }
+  };
+
+  /** Place Details by id with a field mask, no session: its JSON, or null when Google has no such place. */
+  const placeById = async (placeId: string, fieldMask: string): Promise<unknown> => {
+    const res = await send(`${PLACES_API}/places/${encodeURIComponent(placeId)}`, {
+      method: 'GET',
+      headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': fieldMask },
+    });
+    if (res.status === 404) {
+      await discard(res);
+      return null;
+    }
+    if (res.status === 400) {
+      if (isUnknownPlaceId(await jsonOf(res))) return null;
+      throw new PlacesUnavailableError('upstream_status', { status: res.status });
+    }
+    if (!res.ok) {
+      await discard(res);
+      throw new PlacesUnavailableError('upstream_status', { status: res.status });
+    }
+    return jsonOf(res);
   };
 
   return {
@@ -213,26 +293,44 @@ export function createGooglePlacesClient(
     },
 
     locate: async (placeId) => {
-      const res = await send(`${PLACES_API}/places/${encodeURIComponent(placeId)}`, {
-        method: 'GET',
-        headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': LOCATE_FIELD_MASK },
+      const body = await placeById(placeId, LOCATE_FIELD_MASK);
+      if (body === null) return null;
+      const parsed = locateSchema.safeParse(body);
+      if (!parsed.success) throw new PlacesUnavailableError('bad_response');
+      const at = parsed.data.location;
+      return at === undefined ? null : { lat: at.latitude, lng: at.longitude };
+    },
+
+    nearby: async (center, opts) => {
+      const res = await send(`${PLACES_API}/places:searchNearby`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask': opts.withWebsite ? `${NEARBY_FIELD_MASK},${NEARBY_WEBSITE_FIELD}` : NEARBY_FIELD_MASK,
+        },
+        body: JSON.stringify({
+          includedTypes: NEARBY_TYPES, maxResultCount: NEARBY_MAX, rankPreference: 'DISTANCE', languageCode: 'en',
+          locationRestriction: { circle: { center: { latitude: center.lat, longitude: center.lng }, radius: opts.radiusM } },
+        }),
       });
-      if (res.status === 404) {
-        await discard(res);
-        return null;
-      }
-      if (res.status === 400) {
-        if (isUnknownPlaceId(await jsonOf(res))) return null;
-        throw new PlacesUnavailableError('upstream_status', { status: res.status });
-      }
       if (!res.ok) {
         await discard(res);
         throw new PlacesUnavailableError('upstream_status', { status: res.status });
       }
-      const parsed = locateSchema.safeParse(await jsonOf(res));
+      const parsed = nearbySchema.safeParse(await jsonOf(res));
       if (!parsed.success) throw new PlacesUnavailableError('bad_response');
-      const at = parsed.data.location;
-      return at === undefined ? null : { lat: at.latitude, lng: at.longitude };
+      return nearbyOf(parsed.data.places ?? [], opts.withWebsite);
+    },
+
+    profile: async (placeId) => {
+      const body = await placeById(placeId, PROFILE_FIELD_MASK);
+      if (body === null) return null;
+      const parsed = profileSchema.safeParse(body);
+      if (!parsed.success) throw new PlacesUnavailableError('bad_response');
+      const { id, displayName, formattedAddress } = parsed.data;
+      // A place with no name has no profile to name the restaurant by.
+      if (displayName === undefined || displayName.text === '') return null;
+      return { placeId: id !== undefined && PLACE_ID_PATTERN.test(id) ? id : placeId, name: displayName.text, address: formattedAddress ?? '' };
     },
   };
 }

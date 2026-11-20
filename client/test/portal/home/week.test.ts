@@ -5,7 +5,7 @@ import {
   calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, forecastPhrase, forecastRange, homeCalendarRange, lastWeekComparison, lastWeekLine,
   lastWeekForecastCell, lastWeekForecastOnly, lastWeekLines, lastWeekPhrase, lastWeekPhrases, lastWeekRange, lastYearDayPhrase,
   lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, nextEvent,
-  nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, weekEntries, type HomeInput,
+  nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, weekEntries, homeFound, type HomeInput,
   monthEntryLines, narrowCaption, WIDE_CELL_HEIGHT, WIDE_LINES, WIDE_ROWS, wideCell, type MonthCell,
 } from '../../../src/portal/analytics/week';
 import type { ForecastDay, ForecastWindow, LiveAccuracy } from '../../../src/portal/estimates/api';
@@ -13,8 +13,8 @@ import { addDays } from '../../../src/portal/locations/dates';
 import { calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
 import { ALL_FILTERS, statusWord, type CalendarInput } from '../../../src/portal/calendar/model';
 import type { Note } from '../../../src/portal/locations/api';
-import type { TownEvent } from '../../../src/portal/analytics/api';
-import { forecastDay } from '../calendar/fakes';
+import { researchedEventSchema, type TownEvent } from '../../../src/portal/analytics/api';
+import { forecastDay, foundEvent } from '../calendar/fakes';
 import { PARITY_DAY, PARITY_ORDER, parityInput } from '../calendar/parity-fixture';
 import { ruleOf } from '../rules/fakes';
 
@@ -492,6 +492,27 @@ describe('the month card', () => {
     const few = weekEntries(PARITY_DAY, { ...fixture, imported: [], rules: [] });
     expect(few).toEqual({ lines: expect.any(Array) as unknown, more: null });
     expect(few.lines.map((entry) => entry.words)).toEqual(['Holiday party', 'Made-up Day', 'Craft fair']);
+  });
+
+  test('D66: This week reads found events last, after every other entry, and leaves Unconfirmed and competitors’ off Home', () => {
+    const at = (fields: Record<string, unknown>) => researchedEventSchema.parse(foundEvent({ start: PARITY_DAY, end: PARITY_DAY, ...fields }));
+    const town = at({ id: `t-${'b'.repeat(24)}`, title: 'Winter carnival', origin: 'town', competitor: null });
+    const nearby = at({ id: `l-${'c'.repeat(24)}`, title: 'Gallery opening', origin: 'neighborhood', competitor: null, confidence: 'high' });
+    const unconfirmed = at({ id: `l-${'d'.repeat(24)}`, title: 'Maybe a market', origin: 'neighborhood', competitor: null, confidence: 'low' });
+    const competitor = at({ id: `l-${'e'.repeat(24)}`, title: 'Trivia night', origin: 'competitor' });
+    expect(homeFound([town, unconfirmed, competitor, nearby]).map((event) => event.title)).toEqual(['Winter carnival', 'Gallery opening']);
+    expect(homeFound(null)).toEqual([]);
+    expect(homeFound(undefined)).toEqual([]);
+    // Found events never push another entry into “+N more”: the day's own come first, as the Calendar orders them.
+    const fixture = parityInput({ imported: [], rules: [], found: homeFound([town, unconfirmed, competitor, nearby]) });
+    const home = weekEntries(PARITY_DAY, fixture);
+    expect(home.lines.map((entry) => entry.words)).toEqual(['Holiday party', 'Made-up Day']);
+    expect(home.more).toBe('+3 more');
+    const all = weekEntries(PARITY_DAY, { ...fixture, notes: [], events: [] });
+    expect(all).toEqual({ lines: expect.any(Array) as unknown, more: null });
+    expect(all.lines.map((entry) => [entry.kind, entry.words])).toEqual([['researched', 'Winter carnival'], ['researched', 'Gallery opening']]);
+    // With the filter off (the Calendar's; Home passes every filter on), none show.
+    expect(weekEntries(PARITY_DAY, { ...fixture, notes: [], events: [], filters: { ...ALL_FILTERS, researched: false } }).lines).toEqual([]);
   });
 
   test('the keys move a day or a week and never leave the month', () => {
