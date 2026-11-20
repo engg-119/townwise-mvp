@@ -35,7 +35,7 @@ import type { NoteRecord, NoteStore } from '../stores/notes.ts';
 import type { SalesDayStore } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
 import {
-  adjustDay, flagsAfterData, orderedReasons, ownerBeatsAgent, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule,
+  adjustDay, flagsAfterData, mayHaveFlagged, orderedReasons, ownerBeatsAgent, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule,
 } from './adjust.ts';
 import { effectHistory, reasonEffects } from './effects.ts';
 import { eachDay, type DayStatus } from './file.ts';
@@ -110,9 +110,10 @@ export interface ForecastDayView {
   madeAfterDay: boolean;
   /**
    * A day before today whose run may have read a private event note or business rule covering it (adjust.ts
-   * flagsAfterData, the lab input's privateEvent flag) last written on or after the day, by the time the run was made
-   * (score.ts writtenForRun): what was learned after the day could have shaped the figure, so `inRange` is null and the
-   * day is not scored (D49 as amended).
+   * flagsAfterData, the lab input's privateEvent flag; for a note, D71, any private event but a buyout, a guest count
+   * written since included) last written on or after the day, by the time the run was made (score.ts writtenForRun):
+   * what was learned after the day could have shaped the figure, so `inRange` is null and the day is not scored (D49 as
+   * amended).
    */
   laterNote: boolean;
   /** The stored guests for a day before today; null otherwise. */
@@ -335,10 +336,12 @@ export function createForecastReader(deps: {
     ) !== null;
     /**
      * A past day whose run may have read a private event note or rule, covering it and last written once the day began
-     * (D49 as amended): the lab input flags one on a day after the run's data (adjust.ts flagsAfterData).
+     * (D49 as amended): the lab input flags one on a day after the run's data (adjust.ts flagsAfterData). D71: a note is
+     * asked whether or not it has a guest count now (mayHaveFlagged), since a count written later leaves the run's figure
+     * from the note without one.
      */
     const laterNoteOn = (date: string, run: ForecastRunRecord): boolean => date < today && (
-      keptOn(date).some((note) => flagsAfterData(note) && writtenForRun(run, date, note.updatedAt))
+      keptOn(date).some((note) => mayHaveFlagged(note) && writtenForRun(run, date, note.updatedAt))
       || scheduled.some((rule) => rule.schedule !== null && noteCovers(rule.schedule, date) && flagsAfterData(rule.schedule)
         && writtenForRun(run, date, rule.updatedAt)));
     const scored = (date: string, { run, row }: Chosen): ScoredDay => ({

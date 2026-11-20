@@ -145,3 +145,42 @@ describe('activity', () => {
     expect(activityLine(answered('later_1', 'other'))).toBe('You answered a question in the chat.');
   });
 });
+
+// D71: a past private event's guests. Sat, Apr 4, 2026; and Fridays and Saturdays from Apr 3 to Apr 25, 2026.
+const PARTY: Question = {
+  id: 'party_guests_0000000000000000000000a5', kind: 'party_guests', noteId: '0000000000000000000000a5', startDate: '2026-04-04',
+  endDate: '2026-04-04', weekdays: null,
+};
+const RECURRING: Question = { ...PARTY, startDate: '2026-04-03', endDate: '2026-04-25', weekdays: [5, 6] };
+
+describe('a private event’s guests (D71)', () => {
+  test('asks how many guests came that day, or each day of a note over several, with Skip and never Something else…', () => {
+    const one = questionCopy(PARTY, LOCATION, true);
+    expect(one.heading).toBe('How many guests came for the private event on Sat, Apr 4, 2026?');
+    expect(one.context).toBe('Its note has no guest count yet.');
+    expect(one.help).toBe('Townwise takes these guests off that day when it learns from your sales, so the event isn’t read as a normal busy day.');
+    expect(labels(PARTY)).toEqual(['not_sure: Skip']);
+    const many = questionCopy(RECURRING, LOCATION, true);
+    expect(many.heading).toBe('How many guests came for the private event each day from Apr 3 to Apr 25, 2026?');
+    expect(many.context).toBe('On Fridays and Saturdays only. Its note has no guest count yet.');
+    expect(many.help).toBe('Townwise takes these guests off each of those days when it learns from your sales, so the event isn’t read as a normal busy day.');
+    expect(questionCopy({ ...RECURRING, weekdays: null }, LOCATION, false).context).toBe('Its note has no guest count yet.');
+  });
+
+  test('once answered: the count saved on the note, or that it won’t ask again', () => {
+    const saved = (expectedGuests: number) => noteOf({ kind: 'private_event', effect: 'more_guests', startDate: '2026-04-04', endDate: '2026-04-04', expectedGuests });
+    expect(answeredLine(PARTY, { answer: 'guests', note: saved(43) })).toBe('Saved: 43 guests on the private event note.');
+    expect(answeredLine(PARTY, { answer: 'guests', note: saved(1) })).toBe('Saved: 1 guest on the private event note.');
+    expect(answeredLine(PARTY, { answer: 'guests', note: saved(1200) })).toBe('Saved: 1,200 guests on the private event note.');
+    expect(answeredLine(RECURRING, { answer: 'guests', note: saved(30) })).toBe('Saved: 30 guests each day on the private event note.');
+    expect(answeredLine(PARTY, { answer: 'guests', note: null })).toBe('Saved the guest count on the private event note.');
+    expect(answeredLine(PARTY, { answer: 'not_sure', note: null })).toBe('Got it. TownwiseAI won’t ask about this event again.');
+  });
+
+  test('the activity says a count was saved, with the event’s dates and no count, and a skip as skipped', () => {
+    expect(activityLine({ at: '2026-06-01T06:30:00.000Z', kind: 'guest_count_saved', noteId: 'n1', startDate: '2026-04-11', endDate: '2026-04-11' }))
+      .toBe('Saved your guest count for the private event, Apr 11, 2026.');
+    expect(activityLine({ at: '2026-06-01T06:30:00.000Z', kind: 'question_answered', questionId: PARTY.id, answer: 'not_sure' }))
+      .toBe('You skipped the question about a private event’s guests.');
+  });
+});

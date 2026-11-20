@@ -1,12 +1,14 @@
 // TownwiseAI's rule-based questions (src/agent/questions.ts, spec 10.12): weekday closures at 60%, gaps grouped into
 // runs, likely-closed days (D32), each with the numbers behind it, asked only about usually busy days, days a note or
-// an earlier answer explains left out, at most 5 in a fixed order, over the last 365 days of coverage. Synthetic days only.
+// an earlier answer explains left out, at most 5 in a fixed order, over the last 365 days of coverage. D71: a past private
+// event's guests, merged into the panel's 5. Synthetic days only.
 import { describe, expect, it } from 'vitest';
 
 import {
-  answerOfNote, BUSY_OPEN_WEEKS, BUSY_TYPICAL_GUESTS, closureNoteOf, isClosure, MAX_QUESTIONS, noteCovers, noteFor,
-  OPEN_DAY_DETAIL, parseQuestionId, QUESTION_ANSWERS, questionId, questionsFor, questionWindow, salesSuggestionsFor, weekdayEvidence,
-  type AskedQuestion, type QuestionAnswer, type QuestionInput,
+  answerOfNote, asksAbout, BUSY_OPEN_WEEKS, BUSY_TYPICAL_GUESTS, closureNoteOf, DAY_ANSWERS, guestCountQuestionsFor, isClosure, MAX_QUESTIONS,
+  noteCovers, noteFor, OPEN_DAY_DETAIL, panelQuestionsFor, parseQuestionId, QUESTION_ANSWERS, questionId, questionsFor, questionWindow,
+  salesSuggestionsFor, weekdayEvidence, type AskedQuestion, type PartyQuestion, type PartyQuestionInput, type Question, type QuestionAnswer,
+  type QuestionInput,
 } from '../src/agent/questions.ts';
 import { summaryOf } from '../src/audit.ts';
 import { closureOf, typicalGuests } from '../src/closed-days.ts';
@@ -61,8 +63,9 @@ function gap(from: string, to: string, low = 100, high = low) {
 }
 
 describe('the answers', () => {
-  it('are closed, open, not sure and something else', () => {
-    expect(QUESTION_ANSWERS).toEqual(['closed', 'open', 'not_sure', 'other']);
+  it('are closed, open, not sure and something else, and (D71) a private event’s guests', () => {
+    expect(QUESTION_ANSWERS).toEqual(['closed', 'open', 'not_sure', 'other', 'guests']);
+    expect(DAY_ANSWERS).toEqual(['closed', 'open', 'not_sure', 'other']);
   });
 });
 
@@ -545,10 +548,15 @@ describe('question ids and the notes an answer saves', () => {
   };
 
   it('an id round-trips to what it asks, and anything else names no question', () => {
-    for (const asked of [weekdayQ, gapQ, likelyQ] satisfies AskedQuestion[]) {
+    const partyQ = { kind: 'party_guests', noteId: '0123456789abcdef01234567' } as const;
+    for (const asked of [weekdayQ, gapQ, likelyQ, partyQ] satisfies AskedQuestion[]) {
       expect(parseQuestionId(questionId(asked))).toEqual(asked);
     }
     expect(questionId(likelyQ)).toBe('likely_closed_2026-03-14');
+    expect(questionId(partyQ)).toBe('party_guests_0123456789abcdef01234567');
+    for (const id of ['party_guests_', 'party_guests_0123456789ABCDEF01234567', 'party_guests_0123456789abcdef0123456', 'party_guests_0123456789abcdef012345678']) {
+      expect({ id, asked: parseQuestionId(id) }).toEqual({ id, asked: null });
+    }
     for (const id of [
       'gap_2026-12-26_2026-12-24', 'gap_2026-02-30_2026-03-01', 'weekday_7_2026-01-05_2026-03-15', 'gap_2026-12-24',
       'weekday_1_2025-01-01_2026-01-01', 'other_2026-12-24_2026-12-26', 'likely_closed_2026-02-30',
@@ -577,6 +585,8 @@ describe('question ids and the notes an answer saves', () => {
         if (asked.kind !== 'likely_closed' || answer !== 'open') expect({ asked, answer, note: noteFor(asked, answer) }).toEqual({ asked, answer, note: null });
       }
     }
+    // D71: a private event's question saves no note of its own, whatever the answer.
+    for (const answer of QUESTION_ANSWERS) expect(noteFor({ kind: 'party_guests', noteId: '0123456789abcdef01234567' }, answer)).toBeNull();
   });
 
   it('agrees with D32: the open-day note makes the day open and the closure note makes it closed', () => {
@@ -649,6 +659,12 @@ describe('the audit summary of an answer', () => {
       'Answered TownwiseAI’s question about a day with almost no guests: not sure',
       'Answered TownwiseAI’s question about a day with almost no guests: answered in the chat',
     ]);
+    // D71: never the count, which the audit event does not hold.
+    const partyId = 'party_guests_0123456789abcdef01234567';
+    expect([summary(partyId, 'guests'), summary(partyId, 'not_sure')]).toEqual([
+      'Answered TownwiseAI’s question about a private event’s guests: saved the guest count',
+      'Answered TownwiseAI’s question about a private event’s guests: skipped',
+    ]);
   });
 });
 
@@ -678,5 +694,80 @@ describe('days a calendar says closed (D59 slice 5)', () => {
     const closedMondays = input(FROM, TO, (day) => weekday(day) === 1);
     expect(weekdayEvidence({ ...closedMondays, calendarClosed: mondays }).map((each) => each.weekday)).toEqual([1]);
     expect(questionsFor({ ...input(FROM, TO, () => false), calendarClosed: hole })).toEqual([]);
+  });
+});
+
+describe('a past private event’s guests (D71)', () => {
+  const TODAY = '2026-06-01';
+  const ID = (n: number) => `${'0'.repeat(22)}${String(n).padStart(2, '0')}`;
+  /** A private event with more guests and no count, on 2026-05-16 unless `over` says otherwise. */
+  const party = (n: number, over: Partial<NoteContent> = {}) => ({
+    ...note({ kind: 'private_event', effect: 'more_guests', startDate: '2026-05-16', endDate: '2026-05-16' }), id: ID(n), ...over,
+  });
+  const base = (notes: PartyQuestionInput['notes'], extra: Partial<PartyQuestionInput> = {}): PartyQuestionInput => ({
+    coverage: { firstDate: '2025-01-01' }, notes, answered: [], today: TODAY, ...extra,
+  });
+  const asked = (n: number, startDate = '2026-05-16', endDate = startDate, weekdays: readonly number[] | null = null): PartyQuestion => ({
+    id: `party_guests_${ID(n)}`, kind: 'party_guests', noteId: ID(n), startDate, endDate, weekdays,
+  });
+
+  it('asks about a past private event with more guests and no count, by its note’s id and dates only', () => {
+    expect(guestCountQuestionsFor(base([party(1, { title: 'Sentinel-title', detail: 'Sentinel-detail' })]))).toEqual([asked(1)]);
+    // A multi-day or recurring note is one question, with its weekdays: the client asks for each day's guests.
+    expect(guestCountQuestionsFor(base([party(2, { startDate: '2026-05-01', endDate: '2026-05-31', weekdays: [5, 6] })])))
+      .toEqual([asked(2, '2026-05-01', '2026-05-31', [5, 6])]);
+  });
+
+  it('never asks about a buyout, fewer guests, unknown, another kind, or a note that has a count', () => {
+    const notes = [
+      party(1, { effect: 'closed' }), party(2, { effect: 'closed', expectedGuests: 60 }), party(3, { effect: 'fewer_guests' }),
+      party(4, { effect: 'unknown' }), party(5, { kind: 'other', detail: 'x' }), party(6, { kind: 'opening' }), party(7, { expectedGuests: 40 }),
+      party(8, { effect: 'wrong_guest_count', kind: 'other' }),
+    ];
+    expect(guestCountQuestionsFor(base(notes))).toEqual([]);
+  });
+
+  it('asks only once every day is before the town’s today: not today, a coming day, or a note still covering one', () => {
+    expect(guestCountQuestionsFor(base([party(1, { startDate: '2026-05-31', endDate: '2026-05-31' })]))).toEqual([asked(1, '2026-05-31')]);
+    for (const over of [{ startDate: TODAY, endDate: TODAY }, { startDate: '2026-06-05', endDate: '2026-06-05' }, { startDate: '2026-05-20', endDate: TODAY }]) {
+      expect(guestCountQuestionsFor(base([party(1, over)]))).toEqual([]);
+    }
+  });
+
+  it('asks about the last 365 days only, from the first day with sales, and nothing before any sales', () => {
+    const yearAgo = '2025-06-01';
+    expect(guestCountQuestionsFor(base([party(1, { startDate: yearAgo, endDate: yearAgo })]))).toEqual([asked(1, yearAgo)]);
+    expect(guestCountQuestionsFor(base([party(1, { startDate: '2025-05-31', endDate: '2025-05-31' })]))).toEqual([]);
+    // A note that ends in the window is asked, however early it starts.
+    expect(guestCountQuestionsFor(base([party(1, { startDate: '2025-05-01', endDate: yearAgo })]))).toEqual([asked(1, '2025-05-01', yearAgo)]);
+    // Before the first day with sales there is nothing to train on, so nothing to ask.
+    expect(guestCountQuestionsFor(base([party(1)], { coverage: { firstDate: '2026-05-17' } }))).toEqual([]);
+    expect(guestCountQuestionsFor(base([party(1)], { coverage: { firstDate: '2026-05-16' } }))).toEqual([asked(1)]);
+    expect(guestCountQuestionsFor(base([party(1)], { coverage: { firstDate: null } }))).toEqual([]);
+  });
+
+  it('an answered question (a skip included) is never asked again; newest first by last day', () => {
+    const notes = [party(1, { startDate: '2026-04-04', endDate: '2026-04-04' }), party(2), party(3, { startDate: '2026-05-01', endDate: '2026-05-20' })];
+    expect(guestCountQuestionsFor(base(notes)).map((q) => q.noteId)).toEqual([ID(3), ID(2), ID(1)]);
+    expect(guestCountQuestionsFor(base(notes, { answered: [`party_guests_${ID(2)}`] })).map((q) => q.noteId)).toEqual([ID(3), ID(1)]);
+  });
+
+  it('a skip never hides a day’s question: asksAbout is false for every day', () => {
+    const skipped = { kind: 'party_guests', noteId: ID(1) } as const;
+    expect(['2026-05-16', '2026-01-01'].map((day) => asksAbout(skipped, day))).toEqual([false, false]);
+    const withGap = input(FROM, TO, (day) => day === '2026-03-03');
+    expect(questionsFor({ ...withGap, answered: [`party_guests_${ID(1)}`] })).toEqual([gap('2026-03-03', '2026-03-03')]);
+  });
+
+  it('the panel merges the days’ questions and the private events’, newest first by last day, at most 5 in all', () => {
+    const likely: Question = { id: 'likely_closed_2026-05-23', kind: 'likely_closed', date: '2026-05-23', guests: 1, typicalGuests: 100 };
+    const gapQ: Question = { id: 'gap_2026-05-12_2026-05-13', kind: 'gap', from: '2026-05-12', to: '2026-05-13', dayCount: 2, typicalGuestsLow: 100, typicalGuestsHigh: 100 };
+    const parties = [asked(1, '2026-05-30'), asked(2, '2026-05-16'), asked(3, '2026-05-13'), asked(4, '2026-05-01'), asked(5, '2026-04-01')];
+    expect(panelQuestionsFor([likely, gapQ], parties).map((q) => q.id)).toEqual([
+      parties[0]?.id, likely.id, parties[1]?.id, gapQ.id, parties[2]?.id,
+    ]);
+    expect(MAX_QUESTIONS).toBe(5);
+    expect(panelQuestionsFor([likely, gapQ], [])).toEqual([likely, gapQ]);
+    expect(panelQuestionsFor([], [asked(1)])).toEqual([asked(1)]);
   });
 });

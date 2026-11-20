@@ -33,6 +33,10 @@
 // - D59 slice 5: a day an event on one of the location's calendars plainly says was closed is explained, as a covering
 //   closure note makes it, so a gap shrinks to the days left and a likely-closed day is not asked. Weekday evidence is
 //   read from sales alone.
+// - D71: a private event's guests. guestCountQuestionsFor asks how many guests came to a past private event whose note
+//   has more guests and no count, so the next refit takes the party's guests off that day (lab/input.ts). It reads notes
+//   only (never a rule's schedule), and is apart from questionsFor, so a calendar's answers (calendar/answers.ts) never
+//   read a party question as an asked day; panelQuestionsFor merges the two lists for the side panel under one cap.
 import { closureOf, isClosure, trustedGuestDays, TYPICAL_WEEKS, typicalGuests } from '../closed-days.ts';
 import { daysBetween, isCalendarDate } from '../dates.ts';
 import type { SalesEvidence } from '../stores/agent-suggestions.ts';
@@ -44,12 +48,15 @@ import type { SalesDay } from '../stores/sales-days.ts';
 /**
  * The answers a question takes. `closed` saves a closure note over the question's days, and `open` on a likely-closed
  * question saves the open-day note; the others save nothing. `other` is Something else: the client sends the person's
- * words to the chat, and the answer itself holds none.
+ * words to the chat, and the answer itself holds none. `guests` (D71) answers a private event's question only, with its
+ * count, which it writes into that note; Skip on that question is `not_sure`.
  */
-export const QUESTION_ANSWERS = ['closed', 'open', 'not_sure', 'other'] as const;
+export const QUESTION_ANSWERS = ['closed', 'open', 'not_sure', 'other', 'guests'] as const;
+/** The answers a question about days takes: all but `guests`. */
+export const DAY_ANSWERS = ['closed', 'open', 'not_sure', 'other'] as const satisfies readonly QuestionAnswer[];
 export type QuestionAnswer = (typeof QUESTION_ANSWERS)[number];
 
-/** At most this many questions at once. */
+/** At most this many questions at once, the private events' (D71) among them. [CONFIRM: private events' questions share the cap of 5] */
 export const MAX_QUESTIONS = 5;
 /** The window: the last 365 days of coverage. */
 const WINDOW_DAYS = 365;
@@ -73,11 +80,14 @@ export const BUSY_TYPICAL_GUESTS = 10;
  */
 export const OPEN_DAY_DETAIL = 'Open, with very few guests (your answer to TownwiseAI).';
 
-/** What a question asks about; its id encodes exactly this, so an answer can be completed from the id alone. */
-export type AskedQuestion =
+/** What a question about days asks; its id encodes exactly this, so an answer can be completed from the id alone. */
+export type DayAsked =
   | { readonly kind: 'weekday'; readonly weekday: number; readonly from: string; readonly to: string }
   | { readonly kind: 'gap'; readonly from: string; readonly to: string }
   | { readonly kind: 'likely_closed'; readonly date: string };
+
+/** What any question asks: D71 adds a private event's guests, named by its note's id. */
+export type AskedQuestion = DayAsked | { readonly kind: 'party_guests'; readonly noteId: string };
 
 /** A question as the side panel shows it: ids, dates and counts only; the client words it. */
 export type Question =
@@ -96,6 +106,18 @@ export type Question =
     /** The day's stored guests, and its typical guests (D32) rounded to a whole guest. */
     readonly guests: number; readonly typicalGuests: number;
   };
+
+/**
+ * D71: how many guests came to a past private event. Its note's id and dates only, never its title or detail: the panel
+ * is read under view-as too. `weekdays` is the note's, so a note over several days asks for each day's guests.
+ */
+export interface PartyQuestion {
+  readonly id: string; readonly kind: 'party_guests'; readonly noteId: string; readonly startDate: string; readonly endDate: string;
+  readonly weekdays: readonly number[] | null;
+}
+
+/** A question as the side panel lists it. */
+export type PanelQuestion = Question | PartyQuestion;
 
 export interface QuestionInput {
   readonly coverage: { readonly firstDate: string | null; readonly lastDate: string | null };
@@ -163,11 +185,14 @@ export function questionId(asked: AskedQuestion): string {
     case 'weekday': return `weekday_${asked.weekday}_${asked.from}_${asked.to}`;
     case 'gap': return `gap_${asked.from}_${asked.to}`;
     case 'likely_closed': return `likely_closed_${asked.date}`;
+    case 'party_guests': return `party_guests_${asked.noteId}`;
   }
 }
 
 /** The question an id stands for, or null when it names none (malformed dates, or an end before the start). */
 export function parseQuestionId(id: string): AskedQuestion | null {
+  const party = /^party_guests_([0-9a-f]{24})$/.exec(id);
+  if (party !== null) return { kind: 'party_guests', noteId: party[1] ?? '' };
   const likely = /^likely_closed_(\d{4}-\d{2}-\d{2})$/.exec(id);
   if (likely !== null) {
     const date = likely[1] ?? '';
@@ -183,8 +208,9 @@ export function parseQuestionId(id: string): AskedQuestion | null {
   return asked;
 }
 
-/** Whether `asked` is about `day`. */
-function asksAbout(asked: AskedQuestion, day: string): boolean {
+/** Whether `asked` is about `day`. A private event's question (D71) is about none, so skipping it hides no day's question. */
+export function asksAbout(asked: AskedQuestion, day: string): boolean {
+  if (asked.kind === 'party_guests') return false;
   if (asked.kind === 'likely_closed') return day === asked.date;
   return day >= asked.from && day <= asked.to && (asked.kind === 'gap' || weekdayOf(day) === asked.weekday);
 }
@@ -216,7 +242,7 @@ export function noteCovers(
 export { isClosure };
 
 /** The closure note a `closed` answer saves: every day of a gap, the weekday over the window, or the likely-closed day. */
-export function closureNoteOf(asked: AskedQuestion): NoteContent {
+export function closureNoteOf(asked: DayAsked): NoteContent {
   const [startDate, endDate] = asked.kind === 'likely_closed' ? [asked.date, asked.date] : [asked.from, asked.to];
   return {
     kind: 'closure', startDate, endDate, weekdays: asked.kind === 'weekday' ? [asked.weekday] : null,
@@ -226,9 +252,11 @@ export function closureNoteOf(asked: AskedQuestion): NoteContent {
 
 /**
  * The note an answer saves, or null when it saves none: `closed` saves the closure note, and `open` on a likely-closed
- * question saves the open-day note, an Other note with fewer guests that D32 reads as open.
+ * question saves the open-day note, an Other note with fewer guests that D32 reads as open. A private event's question
+ * (D71) saves no note of its own: its count edits the event's note (handlers/agent.ts).
  */
 export function noteFor(asked: AskedQuestion, answer: QuestionAnswer): NoteContent | null {
+  if (asked.kind === 'party_guests') return null;
   if (answer === 'closed') return closureNoteOf(asked);
   if (answer !== 'open' || asked.kind !== 'likely_closed') return null;
   return {
@@ -241,7 +269,7 @@ export function noteFor(asked: AskedQuestion, answer: QuestionAnswer): NoteConte
  * The answer a written note stands for. A likely-closed question's `closed` and `open` both write with the answer's one
  * note id, so the note written first decides; on the other kinds only `closed` writes one.
  */
-export function answerOfNote(asked: AskedQuestion, note: Pick<NoteContent, 'kind' | 'effect'>): QuestionAnswer {
+export function answerOfNote(asked: DayAsked, note: Pick<NoteContent, 'kind' | 'effect'>): QuestionAnswer {
   return asked.kind === 'likely_closed' && !isClosure(note) ? 'open' : 'closed';
 }
 
@@ -432,4 +460,76 @@ export function questionsFor(input: QuestionInput): Question[] {
 
   const asked = new Set(input.answered);
   return dayQuestions.filter((question) => !asked.has(question.id)).slice(0, MAX_QUESTIONS);
+}
+
+/** D71: how far back a private event is asked about. [CONFIRM: private events that ended in the last 365 days] */
+const PARTY_WINDOW_DAYS = 365;
+
+/** D71: what guestCountQuestionsFor reads. */
+export interface PartyQuestionInput {
+  readonly coverage: { readonly firstDate: string | null };
+  readonly notes: readonly (Pick<NoteContent, 'kind' | 'effect' | 'expectedGuests' | 'startDate' | 'endDate' | 'weekdays'> & { readonly id: string })[];
+  /** Ids of questions already answered (a skip included). */
+  readonly answered: readonly string[];
+  /** The town's today. */
+  readonly today: string;
+}
+
+/** D71: a private event with more guests, the one kind of note a guest count is asked for. */
+function isGuestsEvent(note: Pick<NoteContent, 'kind' | 'effect'>): boolean {
+  return note.kind === 'private_event' && note.effect === 'more_guests';
+}
+
+/** D71: a note a guest count is asked for: a private event with more guests and no count. */
+export function wantsGuestCount(note: Pick<NoteContent, 'kind' | 'effect' | 'expectedGuests'>): boolean {
+  return isGuestsEvent(note) && note.expectedGuests === null;
+}
+
+/** D71: a private event with more guests whose count is in: what a `guests` answer leaves. */
+export function hasGuestCount(note: Pick<NoteContent, 'kind' | 'effect' | 'expectedGuests'>): boolean {
+  return isGuestsEvent(note) && note.expectedGuests !== null;
+}
+
+/**
+ * D71: a question for each private event note with more guests and no guest count whose every day is before the town's
+ * today (a recurring note still covering a coming day is not asked), that ended on or after the first day with sales and
+ * in the last 365 days, and whose question was never answered. Newest first by its last day.
+ */
+export function guestCountQuestionsFor(input: PartyQuestionInput): PartyQuestion[] {
+  const { firstDate } = input.coverage;
+  if (firstDate === null) return [];
+  const earliest = plusDays(input.today, -PARTY_WINDOW_DAYS);
+  const answered = new Set(input.answered);
+  return input.notes
+    .filter((note) => wantsGuestCount(note) && note.endDate < input.today && note.endDate >= firstDate && note.endDate >= earliest)
+    .map((note): PartyQuestion => ({
+      id: questionId({ kind: 'party_guests', noteId: note.id }), kind: 'party_guests', noteId: note.id, startDate: note.startDate,
+      endDate: note.endDate, weekdays: note.weekdays,
+    }))
+    .filter((question) => !answered.has(question.id))
+    .sort((a, b) => (a.endDate !== b.endDate ? (a.endDate < b.endDate ? 1 : -1) : a.id < b.id ? -1 : 1));
+}
+
+/** A question's last day. */
+function lastDayOf(question: PanelQuestion): string {
+  switch (question.kind) {
+    case 'party_guests': return question.endDate;
+    case 'likely_closed': return question.date;
+    default: return question.to;
+  }
+}
+
+/**
+ * D71: the side panel's questions: the days' questions and the private events', newest first by their last day (on the
+ * same day, the days' first), at most MAX_QUESTIONS in all.
+ */
+export function panelQuestionsFor(days: readonly Question[], parties: readonly PartyQuestion[]): PanelQuestion[] {
+  return [...days, ...parties]
+    .map((question, index) => ({ question, index }))
+    .sort((a, b) => {
+      const [x, y] = [lastDayOf(a.question), lastDayOf(b.question)];
+      return x !== y ? (x < y ? 1 : -1) : a.index - b.index;
+    })
+    .slice(0, MAX_QUESTIONS)
+    .map(({ question }) => question);
 }
