@@ -195,7 +195,8 @@ const aiReader = files === undefined || ANTHROPIC_API_KEY === undefined || files
 // ANTHROPIC_API_KEY and TownwiseAI's web search are all set (research/plan.ts researchRuns). Its model is the tuning
 // chat's; location threads spend the organization's TownwiseAI month and town threads the system month
 // (TOWNWISE_RESEARCH_TOWN_MONTHLY_USD). With Places on, it may ask Google for the restaurant's profile and competitors
-// (research/places.ts, the points from Settings' Valkey cache), which it does only while TOWNWISE_RESEARCH_PLACES_TO_AI.
+// (research/places.ts, the points from Settings' Valkey cache), which it does for a request only while
+// TOWNWISE_RESEARCH_PLACES_TO_AI; whatever that says, a location merge may read the profile's name to compare locally.
 const researchPlaces = places === undefined ? {} : createResearchPlaces({
   places, pointOf: (placeId) => pointOf(aiContext, placeId, 'research.competitors'), logger,
 });

@@ -60,7 +60,7 @@ import { nameKey } from './dedupe.ts';
 import { planMerge, type MergeInput, type MergePlan, type StoredEvent, type ThreadFound } from './merge.ts';
 import { isTownId, MERGE_LEASE_MS, planTick, townOf, townStamp, type ClaimedMerge, type PlanContext, type PlanCounts } from './plan.ts';
 import {
-  gatherPrompt, knownRows, promptTown, restaurantFor, seedsFrom, type GatherInput, type RestaurantProfile, type StoredBaseRow,
+  gatherPrompt, knownRows, namedAfterTown, promptTown, restaurantFor, seedsFrom, type GatherInput, type RestaurantProfile, type StoredBaseRow,
 } from './prompt.ts';
 import { researchWindow, threadDef, type ThreadDef } from './threads.ts';
 
@@ -295,14 +295,14 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
 
   /** Whether the location still has the run's place and town, under an active organization with research on. */
   async function locationState(scope: OrgScope, locationId: string, run: { placeId: string | null; town: string }): Promise<
-    { readonly kind: 'ok'; readonly location: LocationRecord } | { readonly kind: 'gone'; readonly code: string }
+    { readonly kind: 'ok'; readonly location: LocationRecord; readonly orgName: string } | { readonly kind: 'gone'; readonly code: string }
   > {
     const [org, location] = await Promise.all([stores.orgs.findById(scope.orgId), stores.locations.find(scope, locationId)]);
     if (location === null || org === null) return { kind: 'gone', code: 'location_gone' };
     if (org.status !== 'active') return { kind: 'gone', code: 'org_inactive' };
     if (!org.research.on) return { kind: 'gone', code: 'research_off' };
     if (location.placeId !== run.placeId || townStamp(location.town) !== run.town) return { kind: 'gone', code: 'place_changed' };
-    return { kind: 'ok', location };
+    return { kind: 'ok', location, orgName: org.name };
   }
 
   async function prepare(job: Job, run: RunRecordBase): Promise<Prepared> {
@@ -312,6 +312,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     let stored: StoredBaseRow[];
     let latestRunId: string | null;
     let location: LocationRecord | null = null;
+    let orgName = '';
     if (job.townKey !== null) {
       town = townOf(job.townKey);
       const [events, entities, latest] = await Promise.all([
@@ -326,6 +327,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       const state = await locationState(scope, locationId, run as LocationRunRecord);
       if (state.kind === 'gone') return { kind: 'end', status: 'failed', code: state.code };
       location = state.location;
+      orgName = state.orgName;
       if (def.namesRestaurant && location.placeId === null) return { kind: 'end', status: 'empty', code: 'no_place' };
       town = location.town;
       const stamp = { placeId: location.placeId, town: townStamp(location.town) };
@@ -345,11 +347,11 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       const placeId = location.placeId;
       if (!config.researchPlacesToAi) {
         // Nothing Google answered: the location's own typed name (decision 3), and Google is not asked.
-        restaurant = restaurantFor(location, null, false);
+        restaurant = restaurantFor(location, null, false, orgName);
       } else if (placeId !== null) {
         const profile = deps.profile === undefined ? null : await deps.profile(placeId);
         if (profile === null) return { kind: 'end', status: 'empty', code: 'places_off' };
-        restaurant = restaurantFor(location, profile, true);
+        restaurant = restaurantFor(location, profile, true, orgName);
         if (def.id === 'competitors') {
           competitors = (deps.competitors === undefined ? null : await deps.competitors(placeId)) ?? [];
           // No list: the web-search focus, which names no listed competitor.
@@ -647,10 +649,12 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     const mine = events.filter((event) => event.placeId === stamp.placeId && event.town === stamp.town);
     const window = researchWindow(at, timeZoneOf(location.town).timeZone);
     const competitorsThread = threads.find((thread) => thread.thread === 'competitors' && thread.status === 'recorded');
-    // The restaurant's own names, so its own events are never a competitor's: its typed name, and Google's (live, never
-    // stored) only while research may ask Google, and only when the competitors thread found something.
-    const ownNames = [nameKey(location.name)];
-    if (config.researchPlacesToAi && location.placeId !== null && deps.profile !== undefined && (competitorsThread?.found?.events.length ?? 0) > 0) {
+    // The restaurant's own names, so its own events are never a competitor's: the organization's name, the location's
+    // typed name unless it is only a town's ("Hanover" would claim the Hanover Inn), and Google's, read live and only
+    // compared here (never stored or sent, so whatever TOWNWISE_RESEARCH_PLACES_TO_AI says), only when the competitors
+    // thread found something.
+    const ownNames = [nameKey(before.orgName), ...(namedAfterTown(location) ? [] : [nameKey(location.name)])];
+    if (location.placeId !== null && deps.profile !== undefined && (competitorsThread?.found?.events.length ?? 0) > 0) {
       const profile = await deps.profile(location.placeId);
       if (profile !== null) ownNames.push(nameKey(profile.name));
     }

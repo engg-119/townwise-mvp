@@ -1,6 +1,7 @@
 // What a research thread sends Anthropic (D66 design decisions 4 and 16, task 1.2). Every input is built from a fully
 // loaded location record (its organization's name, a note and sales beside it) whose fixture Google profile name differs
-// from its typed name: no organization name, note or sales string is ever sent; with Google's names allowed the typed
+// from its typed name: no note or sales string is ever sent, and the organization's name only for a location typed with
+// a town's name alone; with Google's names allowed the typed
 // name never appears and Google's name and address do; without them the typed name appears only as restaurant.name of
 // the location threads, and no Google name or address does. `known` is capped, id-free and free of a row the latest run
 // did not find again. Synthetic data only.
@@ -8,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildLedger } from '../src/research/ledger.ts';
 import {
-  MAX_KNOWN, PAGE_TEXT_IS_DATA, citedText, extractPrompt, gatherPrompt, knownRows, promptTown, restaurantFor, seedsFrom,
+  MAX_KNOWN, PAGE_TEXT_IS_DATA, citedText, extractPrompt, gatherPrompt, knownRows, namedAfterTown, promptTown, restaurantFor, seedsFrom,
   type CompetitorInput, type GatherInput, type RestaurantProfile, type StoredBaseRow,
 } from '../src/research/prompt.ts';
 import { researchWindow, threadsFor, type ThreadDef } from '../src/research/threads.ts';
@@ -54,7 +55,7 @@ function everyRequest(placesToAi: boolean): { thread: ThreadDef; body: string; u
   const town = promptTown(location.town);
   const known = knownRows({ curated, stored: [stored(1)], latestRunId: 'run-latest' });
   const seeds = seedsFrom(curated);
-  const restaurant = restaurantFor(location, GOOGLE, placesToAi);
+  const restaurant = restaurantFor(location, GOOGLE, placesToAi, ORG);
   const threads = [
     ...threadsFor({ kind: 'town', townId: 'hanover-nh' }, { placesToAi }),
     ...threadsFor({ kind: 'location', townId: null }, { placesToAi }),
@@ -95,8 +96,19 @@ describe('research prompts send public facts only', () => {
     expect(competitorsExtract?.user.competitors).toEqual([{ n: 1, name: 'Sentinel-Google Pub' }, { n: 2, name: 'Sentinel-Google Cafe' }]);
   });
 
+  it('a location typed with only a town\'s name is sent as "{organization}, {location}", never the town alone', () => {
+    for (const name of ['Hanover', 'hanover, NH', 'Stowe']) {
+      const named: LocationRecord = { ...location, name };
+      expect(namedAfterTown(named)).toBe(true);
+      expect(restaurantFor(named, GOOGLE, false, ORG)).toEqual({ typed: true, name: `${ORG}, ${name}` });
+      expect(restaurantFor(named, GOOGLE, true, ORG)).toEqual({ typed: false, name: GOOGLE.name, address: GOOGLE.address });
+    }
+    for (const name of [TYPED, 'Hanover Inn', 'Main Room']) expect(namedAfterTown({ ...location, name })).toBe(false);
+    expect(restaurantFor(location, GOOGLE, false, ORG)).toEqual({ typed: true, name: TYPED });
+  });
+
   it('with Google names allowed but no profile, names no restaurant (never falls back to the typed name)', () => {
-    expect(restaurantFor(location, null, true)).toBeNull();
+    expect(restaurantFor(location, null, true, ORG)).toBeNull();
   });
 
   it('without Google names, sends the typed name only as restaurant.name of the location threads, and nothing Google answered', () => {

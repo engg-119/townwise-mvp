@@ -1,13 +1,17 @@
 // What a research thread sends Anthropic (D66 design decisions 4 and 16): the gather call's system prompt and user
 // message, and the extract call's input. Pure: the runner reads the stores and passes their rows' base values in, so
 // this file reads no store (it imports only the location record's type), and never a revision (test/isolation.test.ts):
-// a member's typed edit never reaches a prompt. No input here takes an organization's name, a note, a rule, a sales figure, an owner calendar title, an email
-// or a person's name, so none can be sent.
+// a member's typed edit never reaches a prompt. No input here takes a note, a rule, a sales figure, an owner calendar
+// title, an email or a person's name, so none can be sent; the organization's name goes only as described below.
 //
 // The restaurant: while Google's names may go to Anthropic (TOWNWISE_RESEARCH_PLACES_TO_AI), its Google profile name
 // and address, and never the owner's typed name; while they may not (the shipped config), the location's own typed name
 // alone, with the town already in `town`, and the system prompt says it may differ from the public listing.
 // [CONFIRM: the location's own name sent to Anthropic for restaurant research]
+// As fixed in UI review: a location typed with only a town's name ("Hanover") names no restaurant, so its research
+// searched the town and filed the restaurant's own events as a competitor's; such a location is sent as
+// "{organization's name}, {location's name}" instead (`namedAfterTown`).
+// [CONFIRM: the organization's name sent to Anthropic when a location's name is only its town's]
 //
 // The thread's focus goes in the user message, so a town's six threads send the same system prompt (with
 // cache_control) and share its cache.
@@ -16,7 +20,8 @@ import type { BetaMessage, BetaTextBlockParam } from '@anthropic-ai/sdk/resource
 import type { LocationRecord } from '../stores/locations.ts';
 import { timeZoneOf } from '../time-zones.ts';
 import type { TownEvent } from '../town-calendar.ts';
-import type { Town } from '../towns.ts';
+import { TOWNS, type Town } from '../towns.ts';
+import { nameKey } from './dedupe.ts';
 import type { Ledger } from './ledger.ts';
 import type { ResearchWindow, ThreadDef } from './threads.ts';
 import { EVENT_CATEGORIES } from './verify.ts';
@@ -84,12 +89,22 @@ export type PromptRestaurant =
   | { readonly typed: false; readonly name: string; readonly address: string };
 
 /**
- * The restaurant for a location thread: Google's profile while its names may go to Anthropic (null when there is no
- * profile: the typed name is never sent then), else the location's own typed name. Reads nothing else of the location.
+ * Whether a location's typed name is only a town's name ("Hanover", "Hanover, NH"): its own town's or one of the
+ * twelve's, so it names no restaurant.
  */
-export function restaurantFor(location: LocationRecord, profile: RestaurantProfile | null, placesToAi: boolean): PromptRestaurant | null {
+export function namedAfterTown(location: LocationRecord): boolean {
+  const key = nameKey(location.name);
+  return [location.town, ...TOWNS].some((town) => key === nameKey(town.name) || key === nameKey(`${town.name} ${town.state}`));
+}
+
+/**
+ * The restaurant for a location thread: Google's profile while its names may go to Anthropic (null when there is no
+ * profile: the typed name is never sent then), else the location's own typed name, or "{organization}, {location}"
+ * when that name is only a town's (`namedAfterTown`). Reads nothing else of the location or the organization.
+ */
+export function restaurantFor(location: LocationRecord, profile: RestaurantProfile | null, placesToAi: boolean, orgName: string): PromptRestaurant | null {
   if (placesToAi) return profile === null ? null : { typed: false, name: profile.name, address: profile.address };
-  return { typed: true, name: location.name };
+  return { typed: true, name: namedAfterTown(location) ? `${orgName}, ${location.name}` : location.name };
 }
 
 /** A competitor as the competitors thread names it, only while Google's names may go to Anthropic. */

@@ -573,17 +573,18 @@ describe('the runner: competitors (design decision 10)', () => {
     return JSON.stringify(docs);
   }
 
-  it('with Google names not allowed, Google is never asked, and a competitor event is stored with its business entity', async () => {
+  it('with Google names not allowed, Google is asked only its name at merge, and a competitor event is stored with its business entity', async () => {
     const t = await tenant({ locations: ['Zyxwvut Kitchen'] });
     const [locationId = ''] = t.locationIds;
     const created = await locationRun(t, locationId, ['competitors']);
-    let asked = 0;
+    const asked = { profile: 0, competitors: 0 };
     const { model, calls } = answering({ extract: () => ({ kind: 'message', message: competitorAnswer(null) }) });
     await run(runner(model, {
-      profile: () => { asked += 1; return Promise.resolve(PROFILE); },
-      competitors: () => { asked += 1; return Promise.resolve(RIVALS); },
+      profile: () => { asked.profile += 1; return Promise.resolve(PROFILE); },
+      competitors: () => { asked.competitors += 1; return Promise.resolve(RIVALS); },
     }));
-    expect(asked).toBe(0);
+    // Google's name is read once, at merge, only to tell the restaurant's own events from a competitor's; never sent.
+    expect(asked).toEqual({ profile: 1, competitors: 0 });
     expect(calls).toHaveLength(2);
     for (const body of calls.map((call) => JSON.stringify(call))) for (const secret of GOOGLE_CONTENT) expect(body).not.toContain(secret);
     const [user] = usersOf(calls);
@@ -604,6 +605,39 @@ describe('the runner: competitors (design decision 10)', () => {
     await run(runner(answering({ extract: () => ({ kind: 'message', message: competitorAnswer(null) }) }).model));
     const [event] = await stores.researchLocations.events(t.scope, locationId);
     expect(event).toMatchObject({ title: 'Sentinel Trivia Night', origin: 'neighborhood', competitorEntityId: null, competitorPlaceId: null });
+  });
+
+  it('a location named after its town is researched as "{organization}, {town}", and the organization’s own event is not a competitor’s', async () => {
+    const t = await tenant({ name: 'Sentinel Tavern', locations: ['Hanover'] });
+    const [locationId = ''] = t.locationIds;
+    await locationRun(t, locationId, ['competitors']);
+    const { model, calls } = answering({ extract: () => ({ kind: 'message', message: competitorAnswer(null) }) });
+    await run(runner(model));
+    expect(usersOf(calls)[0]?.restaurant).toEqual({ name: 'Sentinel Tavern, Hanover' });
+    const [event] = await stores.researchLocations.events(t.scope, locationId);
+    expect(event).toMatchObject({ title: 'Sentinel Trivia Night', origin: 'neighborhood', competitorEntityId: null });
+  });
+
+  it('Google’s name of the place marks the restaurant’s own event with Google names not allowed, and the town’s name never does', async () => {
+    const t = await tenant({ name: 'Qwertyp', locations: ['Hanover'] });
+    const [locationId = ''] = t.locationIds;
+    await locationRun(t, locationId, ['competitors']);
+    const extract = (): Step => ({ kind: 'message', message: competitorAnswer(null) });
+    await run(runner(answering({ extract }).model, { profile: () => Promise.resolve({ name: 'Sentinel Tavern', address: '1 Fixture Lane' }) }));
+    const [own] = await stores.researchLocations.events(t.scope, locationId);
+    expect(own).toMatchObject({ origin: 'neighborhood', competitorEntityId: null });
+
+    // The location's name "Hanover" is a town's, so it never claims a business named after the town as the restaurant.
+    const other = await tenant({ name: 'Qwertyp Two', locations: ['Hanover'] });
+    const [otherId = ''] = other.locationIds;
+    await locationRun(other, otherId, ['competitors']);
+    const hanoverInn = (): BetaMessage => {
+      const answer = competitorAnswer(null);
+      return JSON.parse(JSON.stringify(answer).replaceAll('Sentinel Tavern', 'Hanover Inn')) as BetaMessage;
+    };
+    await run(runner(answering({ extract: () => ({ kind: 'message', message: hanoverInn() }) }).model));
+    const [rival] = await stores.researchLocations.events(other.scope, otherId);
+    expect(rival).toMatchObject({ origin: 'competitor' });
   });
 
   it('with Google names allowed, the list goes in the request, and an event naming a competitor keeps its place id and nothing else of Google’s', async () => {
