@@ -259,7 +259,7 @@ export const GATE_WORDS: Readonly<Record<GateReason, string>> = {
   jump_held:
     'Its next 28 days differ from the current forecast by more than 25%, so it stays a draft for Townwise staff to review.',
   engine_switched:
-    'Townwise switched to its other engine: it was at least half a point better on the same held-out weeks, so Townwise published it.',
+    'Townwise switched to its other engine: it was at least half a point better on the same held-out weeks, and better week after week rather than by luck, so Townwise published it.',
 };
 
 /** What a first forecast, with no published model to beat, beat: the weekday average on its own backtest weeks. */

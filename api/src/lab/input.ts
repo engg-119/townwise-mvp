@@ -74,7 +74,7 @@ const calendarEntrySchema = z.strictObject({
 
 const championSchema = z.strictObject({
   runId: z.string().min(1),
-  /** The engine that made the current run (D42): the lab keeps it unless the other is 0.5 points better. */
+  /** The engine that made the current run (D42): the lab keeps it unless the other is 0.5 points better, significantly (D69). */
   engine: z.enum(['model', 'baseline']),
   /**
    * The current run's recorded backtest weekdayBiasMeanAbs (its calibration's scorecard), null for an imported run or

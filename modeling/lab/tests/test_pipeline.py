@@ -1183,9 +1183,10 @@ def without_level_jump(lab_input: dict) -> dict:
     return inp
 
 
-def test_the_model_wins_a_first_forecast(lab_input):
+def test_a_first_forecast_needs_a_significant_win(lab_input):
     # This fixture's model bands hold 8 of 25 weeks, which the gate refuses (the next test), so its checks are taken
-    # as passed here to pin the WAPE rule alone
+    # as passed here to pin the engine rule alone. Without its level jump the model is more than 0.5 points better on
+    # the same weeks, but not week after week (D69: one-sided p about 0.12): with no current run the baseline stays
     inp = without_level_jump(lab_input)
     inp["champion"] = None
     with pytest.MonkeyPatch.context() as patch:
@@ -1193,8 +1194,19 @@ def test_the_model_wins_a_first_forecast(lab_input):
         out = pipeline.calibrate(inp, CODE)
     engines = out["scorecard"]["engines"]
     assert engines["model"]["weeklyWape"] <= engines["baseline"]["weeklyWape"] - pipeline.ENGINE_MARGIN
-    assert out["scorecard"]["engine"] == "model" and out["run"]["model"]["family"] == "hybrid_linear_xgboost"
+    assert out["scorecard"]["engine"] == "baseline" and out["run"]["model"]["family"] == "seasonal_baseline"
     assert engines["model"]["weeks"] == engines["baseline"]["weeks"]  # scored on the same weeks
+
+
+def test_the_model_wins_a_first_forecast_when_its_win_is_significant(lab_input):
+    inp = without_level_jump(lab_input)
+    inp["champion"] = None
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pipeline, "passes", lambda bt, engine, recorded_bias=None: True)
+        patch.setattr(pipeline, "switch_p_value", lambda incumbent, challenger, lags=pipeline.SWITCH_LAGS:
+                      0.0 if challenger.mean() < incumbent.mean() else 1.0)
+        out = pipeline.calibrate(inp, CODE)
+    assert out["scorecard"]["engine"] == "model" and out["run"]["model"]["family"] == "hybrid_linear_xgboost"
 
 
 def test_the_baseline_is_chosen_when_it_clearly_wins(result, lab_input):
@@ -1524,47 +1536,96 @@ def test_golden_result_is_current(lab_input):
                  abs_=GOLDEN_ABS, edge_slack=1)
 
 
-# Which engine a calibration returns (design decision 8): the current one sticks unless the other is 0.5 points better
+# Which engine a calibration returns (design decision 8, D69): the current one sticks unless the other is 0.5 points
+# better and that win is significant week by week; with no current run, the baseline unless the model wins that way
+
+SIG = {"model_significant": True, "baseline_significant": True}
+
 
 def test_with_no_current_run_the_model_needs_half_a_point_over_the_baseline():
-    assert pipeline.choose_engine(None, 0.090, 0.102) == "model"
-    assert pipeline.choose_engine(None, 0.097, 0.102) == "model"  # exactly 0.5 points
-    assert pipeline.choose_engine(None, 0.098, 0.102) == "baseline"
+    assert pipeline.choose_engine(None, 0.090, 0.102, **SIG) == "model"
+    assert pipeline.choose_engine(None, 0.097, 0.102, **SIG) == "model"  # exactly 0.5 points
+    assert pipeline.choose_engine(None, 0.098, 0.102, **SIG) == "baseline"
     assert pipeline.choose_engine(None, None, 0.102) == "baseline"  # the model did not run
+
+
+def test_with_no_current_run_an_insignificant_model_win_returns_the_baseline():
+    assert pipeline.choose_engine(None, 0.090, 0.102) == "baseline"
+    assert pipeline.choose_engine(None, 0.090, 0.102, baseline_significant=True) == "baseline"
 
 
 def test_close_engines_do_not_flip_flop():
     # The current run is a baseline run; over four weekly calibrations the model is 0.3 lower, 0.2 higher, 0.4 lower
     # and 0.1 lower than the baseline: every one keeps the baseline, and the same margins keep a current model
     for model_wape in (0.097, 0.102, 0.096, 0.099):
-        assert pipeline.choose_engine("baseline", model_wape, 0.100) == "baseline"
-        assert pipeline.choose_engine("model", 0.100, model_wape) == "model"
+        assert pipeline.choose_engine("baseline", model_wape, 0.100, **SIG) == "baseline"
+        assert pipeline.choose_engine("model", 0.100, model_wape, **SIG) == "model"
 
 
-def test_a_six_tenths_win_switches_engines():
-    assert pipeline.choose_engine("baseline", 0.094, 0.100) == "model"
-    assert pipeline.choose_engine("model", 0.100, 0.094) == "baseline"
+def test_a_six_tenths_win_switches_engines_when_it_is_significant():
+    assert pipeline.choose_engine("baseline", 0.094, 0.100, **SIG) == "model"
+    assert pipeline.choose_engine("model", 0.100, 0.094, **SIG) == "baseline"
+
+
+def test_an_insignificant_win_keeps_the_current_engine():
+    # D69: a large gap that is not significant week by week does not switch, however large
+    assert pipeline.choose_engine("baseline", 0.050, 0.100) == "baseline"
+    assert pipeline.choose_engine("model", 0.100, 0.050) == "model"
 
 
 def test_a_current_model_that_could_not_run_returns_the_baseline():
     assert pipeline.choose_engine("model", None, 0.100) == "baseline"  # the gate holds it (model_not_run)
 
 
+# D69's test: a one-sided Diebold-Mariano p-value on the weeks both engines scored
+
+def _weeks(values):
+    return pd.Series(values, index=pd.date_range("2026-02-02", periods=len(values), freq="7D"), dtype=float)
+
+
+def test_a_consistent_win_is_significant():
+    rng = np.random.default_rng(0)
+    incumbent = _weeks(100 + rng.normal(0, 5, 40))
+    challenger = incumbent - 8 + rng.normal(0, 3, 40)  # better nearly every week
+    assert pipeline.switch_p_value(incumbent, challenger) < 0.01
+    assert pipeline.switch_p_value(challenger, incumbent) > 0.99  # one-sided: the other way is not a win
+
+
+def test_a_noisy_win_is_not_significant():
+    rng = np.random.default_rng(1)
+    incumbent = _weeks(100 + rng.normal(0, 5, 40))
+    noise = rng.normal(0, 30, 40)
+    challenger = incumbent - 1 - (noise - noise.mean())  # exactly 1 better on average, wildly either way week to week
+    assert pipeline.switch_p_value(incumbent, challenger) > pipeline.SWITCH_ALPHA
+
+
+def test_too_few_or_unvarying_weeks_are_never_significant():
+    assert pipeline.switch_p_value(_weeks([100.0] * 11), _weeks([50.0] * 11)) == 1.0  # under 12 shared weeks
+    assert pipeline.switch_p_value(_weeks([100.0] * 20), _weeks([90.0] * 20)) == 1.0  # differences that never vary
+    assert pipeline.switch_p_value(_weeks([100.0] * 20), _weeks([100.0] * 20)) == 1.0
+
+
+def test_only_shared_weeks_are_compared():
+    incumbent = _weeks(np.linspace(100, 140, 30))
+    challenger = incumbent.iloc[:11] - 10  # 11 shared weeks
+    assert pipeline.switch_p_value(incumbent, challenger) == 1.0
+
+
 # An engine the gate would refuse on its own checks (coverage, and the baseline's bias) is not returned when the other
 # passes them: a WAPE winner whose ranges miss would leave a location with no current run without a forecast.
 
 def test_with_no_current_run_a_winner_that_fails_its_checks_falls_back_to_the_other():
-    assert pipeline.choose_engine(None, 0.090, 0.100, model_ok=False) == "baseline"
-    assert pipeline.choose_engine(None, 0.100, 0.090, baseline_ok=False) == "model"
+    assert pipeline.choose_engine(None, 0.090, 0.100, model_ok=False, **SIG) == "baseline"
+    assert pipeline.choose_engine(None, 0.100, 0.090, baseline_ok=False, **SIG) == "model"
     # With neither passing, the WAPE rule stands and the gate says why
-    assert pipeline.choose_engine(None, 0.090, 0.100, model_ok=False, baseline_ok=False) == "model"
+    assert pipeline.choose_engine(None, 0.090, 0.100, model_ok=False, baseline_ok=False, **SIG) == "model"
 
 
 def test_an_engine_switch_needs_the_other_to_pass_its_checks():
-    assert pipeline.choose_engine("baseline", 0.090, 0.100, model_ok=False) == "baseline"
-    assert pipeline.choose_engine("model", 0.100, 0.090, baseline_ok=False) == "model"
+    assert pipeline.choose_engine("baseline", 0.090, 0.100, model_ok=False, **SIG) == "baseline"
+    assert pipeline.choose_engine("model", 0.100, 0.090, baseline_ok=False, **SIG) == "model"
     # A current engine that fails does not switch to a worse one: the current run stays until it lapses
-    assert pipeline.choose_engine("model", 0.090, 0.100, model_ok=False) == "model"
+    assert pipeline.choose_engine("model", 0.090, 0.100, model_ok=False, **SIG) == "model"
 
 
 def bt_of(inside, weeks, bias=0.0, wape=0.10, median=0.15, weekday_bias=0.03):
@@ -1602,8 +1663,8 @@ def test_a_wape_winner_that_fails_only_its_weekday_median_gives_way():
     model, base = bt_of(16, 20, wape=0.140, median=0.150), bt_of(16, 20, wape=0.132, median=0.130)
     ok = {"model_ok": pipeline.passes(model, "model"), "baseline_ok": pipeline.passes(base, "baseline")}
     assert ok == {"model_ok": True, "baseline_ok": False}
-    assert pipeline.choose_engine(None, 0.140, 0.132, **ok) == "model"
-    assert pipeline.choose_engine("model", 0.140, 0.132, **ok) == "model"  # no switch to a draft the gate holds
+    assert pipeline.choose_engine(None, 0.140, 0.132, **ok, **SIG) == "model"
+    assert pipeline.choose_engine("model", 0.140, 0.132, **ok, **SIG) == "model"  # no switch to a draft the gate holds
 
 
 def test_a_model_needs_weekday_bias_within_two_points_of_the_current_runs_recorded_backtest():
@@ -1626,7 +1687,7 @@ def test_no_switch_to_a_model_the_gate_would_hold_for_weekday_bias():
     ok = {"model_ok": pipeline.passes(model, "model", recorded_bias=0.03),
           "baseline_ok": pipeline.passes(base, "baseline", recorded_bias=0.03)}
     assert ok == {"model_ok": False, "baseline_ok": True}
-    assert pipeline.choose_engine("baseline", 0.10, 0.12, **ok) == "baseline"
+    assert pipeline.choose_engine("baseline", 0.10, 0.12, **ok, **SIG) == "baseline"
 
 
 def test_calibrate_judges_the_model_by_the_current_runs_recorded_weekday_bias(lab_input):
