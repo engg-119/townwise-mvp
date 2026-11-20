@@ -1,6 +1,8 @@
 // Notes, the tuning step (spec 10.5, 12, P14): structured notes per location for what sales can't show. The forecast
-// reader and the tuning chat read them. Authors edit and delete their own; org admins edit and delete any. `detail`,
-// `title`, hours and guests are never logged and never copied into an audit event.
+// reader and the tuning chat read them. Authors edit and delete their own; org admins edit and delete any. The one
+// exception (D71, owner's call): answering TownwiseAI's question about a past private event's guests lets any member set
+// that note's guest count (handlers/agent.ts, through editNote). `detail`, `title`, hours and guests are never logged and
+// never copied into an audit event.
 // Make a note links the note to the owner-calendar event it came from (openspec change calendar-event-suggestions,
 // design decision 2): only a keyed event of this location's calendar, read from its current events, with the stored
 // row's dates and hours; an event that is gone, unkeyed or not this location's leaves the note unlinked, still saved.
@@ -44,7 +46,8 @@ export interface NoteView extends NoteContent {
 export const MAX_NOTES = 1000;
 /** An end date at most 366 days after the start. */
 const MAX_SPAN_DAYS = 366;
-const MAX_EXPECTED_GUESTS = 20_000;
+/** A note's guest count, at most (D71's answer takes the same). */
+export const MAX_EXPECTED_GUESTS = 20_000;
 /** Local wall-clock time, 24-hour 'HH:MM'. */
 const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
@@ -392,12 +395,30 @@ export async function createNote(ctx: TownwiseContext, req: Request, res: Respon
 export async function updateNote(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const { scope } = caller;
-  const now = ctx.now();
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const existing = await editableNote(ctx, caller, location.id, req.params.noteId);
-  const content = noteContent(req.body, utcDay(now), { keepTitle: existing.title, townToday: townTodayOf(location, now) });
-  const note = await ctx.stores.notes.replace(scope, location.id, existing.id, content, now, { unlink: content.effect === 'wrong_guest_count' });
+  const note = await editNote(ctx, caller, location, existing, req.body);
   if (note === null) throw notFound();
+  const [email, refs] = await Promise.all([authorEmail(ctx, note.createdBy, note.byStaff), sourceRefs(ctx, scope, [note])]);
+  res.status(200).json({ note: noteView(note, email, caller, refs) });
+}
+
+/**
+ * An edit of `existing` (already read under the caller's scope) to the content in `raw`, by the notes rules (400 when
+ * one fails; a body with no `title` key keeps the stored title), then `note.updated` and the refit mark. It checks no
+ * permission: updateNote allows only the author or an org admin (editableNote), and D71's answer any member, for that
+ * note's guest count only. With `ifUpdatedAt`, a compare-and-set: null when the note changed since, as when it is gone.
+ */
+export async function editNote(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, existing: NoteRecord, raw: unknown, opts: { ifUpdatedAt?: Date } = {},
+): Promise<NoteRecord | null> {
+  const { scope } = caller;
+  const now = ctx.now();
+  const content = noteContent(raw, utcDay(now), { keepTitle: existing.title, townToday: townTodayOf(location, now) });
+  const note = await ctx.stores.notes.replace(scope, location.id, existing.id, content, now, {
+    unlink: content.effect === 'wrong_guest_count', ...(opts.ifUpdatedAt === undefined ? {} : { ifUpdatedAt: opts.ifUpdatedAt }),
+  });
+  if (note === null) return null;
   await recordAfter(ctx, {
     ...actorOf(caller), at: now, orgId: scope.orgId, action: 'note.updated',
     target: { type: 'note', id: note.id },
@@ -408,8 +429,7 @@ export async function updateNote(ctx: TownwiseContext, req: Request, res: Respon
     startDate: existing.startDate < note.startDate ? existing.startDate : note.startDate,
     endDate: existing.endDate > note.endDate ? existing.endDate : note.endDate,
   });
-  const [email, refs] = await Promise.all([authorEmail(ctx, note.createdBy, note.byStaff), sourceRefs(ctx, scope, [note])]);
-  res.status(200).json({ note: noteView(note, email, caller, refs) });
+  return note;
 }
 
 /** DELETE /api/org/locations/:locationId/notes/:noteId, by the author or an org admin. */

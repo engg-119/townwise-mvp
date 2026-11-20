@@ -188,8 +188,13 @@ export interface NoteStore {
    * run or another replica writes nothing. Resolves whether this call wrote it.
    */
   setTitleOnce(scope: OrgScope, noteId: string, title: string | null): Promise<boolean>;
-  /** A full replace of the content, keeping any link unless `unlink`; null when the note is gone. */
-  replace(scope: OrgScope, locationId: string, noteId: string, content: NoteContent, now: Date, opts?: { unlink?: boolean }): Promise<NoteRecord | null>;
+  /**
+   * A full replace of the content, keeping any link unless `unlink`; null when the note is gone, or (D71's
+   * compare-and-set) when `ifUpdatedAt` is given and the note's `updatedAt` is no longer it.
+   */
+  replace(
+    scope: OrgScope, locationId: string, noteId: string, content: NoteContent, now: Date, opts?: { unlink?: boolean; ifUpdatedAt?: Date },
+  ): Promise<NoteRecord | null>;
   remove(scope: OrgScope, locationId: string, noteId: string): Promise<boolean>;
   /** This location's notes linked to the calendar, sorted by start date. */
   linkedTo(scope: OrgScope, locationId: string, calendarId: string): Promise<NoteRecord[]>;
@@ -301,7 +306,7 @@ export function createNoteStore(connection: Connection): NoteStore {
     },
     async replace(scope, locationId, noteId, content, now, opts = {}) {
       const doc = await Note.findOneAndUpdate(
-        { _id: noteId, orgId: scope.orgId, locationId },
+        { _id: noteId, orgId: scope.orgId, locationId, ...(opts.ifUpdatedAt === undefined ? {} : { updatedAt: opts.ifUpdatedAt }) },
         { $set: { ...fieldsOf(content), updatedAt: now }, ...(opts.unlink === true ? { $unset: { fromEvent: 1 } } : {}) },
         { returnDocument: 'after' },
       ).lean();

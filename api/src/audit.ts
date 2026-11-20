@@ -169,6 +169,9 @@ const LIKELY_CLOSED_ANSWER_WORDS: Readonly<Record<string, string>> = {
   closed: 'closed that day', open: 'open, with few guests', not_sure: 'not sure', other: 'answered in the chat',
 };
 
+/** D71: what an answer to TownwiseAI's question about a private event's guests did. [CONFIRM: the audit's words] */
+const PARTY_ANSWER_WORDS: Readonly<Record<string, string>> = { guests: 'saved the guest count', not_sure: 'skipped' };
+
 /** What TownwiseAI found a file it read to be (spec 11A.9). */
 /** D46: where a suggested closure rule came from; a weekly suggestion's event carries no source. */
 const SUGGESTION_SOURCE_WORDS: Readonly<Record<string, string>> = { file: ' from a file', sales: ' from the sales history' };
@@ -266,6 +269,9 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
     case 'chat.conversation_deleted': return 'Deleted a tuning chat conversation';
     case 'agent.question_answered':
+      if (text(d.questionId).startsWith('party_guests_')) {
+        return `Answered TownwiseAI’s question about a private event’s guests: ${PARTY_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
+      }
       if (text(d.questionId).startsWith('likely_closed_')) {
         return `Answered TownwiseAI’s question about a day with almost no guests: ${LIKELY_CLOSED_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
       }

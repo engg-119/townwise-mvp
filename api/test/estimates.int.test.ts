@@ -373,6 +373,33 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect(both.accuracy).toEqual({ days: 6, inRange: 5, typicalErrorPct: 4.8, from: '2026-05-01', to: '2026-05-07' });
   });
 
+  it('D71: a private event counted since a run made after its day read it uncounted keeps that day out of the run’s accuracy', async () => {
+    const id = await addLocation(server, { orgId, name: 'Counted Party Room' });
+    for (const date of ['2026-05-01', '2026-05-02', '2026-05-03']) {
+      await addSalesDay(server, { orgId, locationId: id, date, guests: 100, netSalesCents: 100_000 });
+    }
+    // Made May 10 on data through April 30, as in the test above.
+    const late = { ...structuredClone(RUN), madeAt: '2026-05-10' };
+    const runId = await staffImport(late, id);
+    await staffChange(runId, 'publish');
+    const at = (iso: string): Date => new Date(iso);
+    const party = (date: string, updatedAt: string) => ({
+      _id: new Types.ObjectId(), orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(id), kind: 'private_event',
+      startDate: date, endDate: date, weekdays: null, effect: 'more_guests', expectedGuests: 30, detail: null, startTime: null, endTime: null,
+      createdBy: 'fixture', createdAt: at('2026-04-20T15:00:00.000Z'), updatedAt: at(updatedAt),
+    });
+    await server.connection.collection('tw_notes').insertMany([
+      // Its count was written May 9, before the run was made May 10: the run may have read the note before the count.
+      party('2026-05-02', '2026-05-09T15:00:00.000Z'),
+      // Written May 12, once the run was made: it can't have read it.
+      party('2026-05-03', '2026-05-12T15:00:00.000Z'),
+    ]);
+    const body = await (await call(server, `/api/org/locations/${id}/forecast?from=2026-05-01&to=2026-05-14`, { session: member })).json() as ForecastWindow;
+    expect(body.days.find((day) => day.date === '2026-05-02')).toMatchObject({ laterNote: true, scored: false, inRange: null });
+    expect(body.days.find((day) => day.date === '2026-05-03')).toMatchObject({ laterNote: false, scored: true });
+    expect(body.days.find((day) => day.date === '2026-05-01')).toMatchObject({ laterNote: false, scored: true });
+  });
+
   it('a range the forecast doesn’t reach says which days it doesn’t cover', async () => {
     const body = await forecast('?from=2026-05-12&to=2026-05-20');
     expect(body).toMatchObject({ available: true, notCovered: [{ from: '2026-05-15', to: '2026-05-20' }] });

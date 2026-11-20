@@ -2,7 +2,8 @@
   "panel": {
     "questions": [
       { "id": "likely_closed_2026-05-23", "kind": "likely_closed", "date": "2026-05-23", "guests": 1, "typicalGuests": 100 },
-      { "id": "gap_2026-05-12_2026-05-13", "kind": "gap", "from": "2026-05-12", "to": "2026-05-13", "dayCount": 2, "typicalGuestsLow": 100, "typicalGuestsHigh": 100 }
+      { "id": "gap_2026-05-12_2026-05-13", "kind": "gap", "from": "2026-05-12", "to": "2026-05-13", "dayCount": 2, "typicalGuestsLow": 100, "typicalGuestsHigh": 100 },
+      { "id": "party_guests_0000000000000000000000a5", "kind": "party_guests", "noteId": "0000000000000000000000a5", "startDate": "2026-04-04", "endDate": "2026-04-04", "weekdays": null }
     ],
     "activity": [
       { "at": "2026-06-01T11:00:00.000Z", "kind": "note_saved", "via": "question", "noteId": "0000000000000000000000a1", "noteKind": "closure", "startDate": "2026-02-10", "endDate": "2026-02-11" },
@@ -10,7 +11,8 @@
       { "at": "2026-06-01T09:00:00.000Z", "kind": "upload_applied", "firstDate": "2026-03-01", "lastDate": "2026-05-31", "dayCount": 78 },
       { "at": "2026-06-01T08:30:00.000Z", "kind": "file_processed", "fileId": "0000000000000000000000f1", "firstDate": "2026-01-05", "lastDate": "2026-01-11", "dayCount": 7 },
       { "at": "2026-06-01T08:00:00.000Z", "kind": "agent_change", "changeId": "0000000000000000000000e1", "action": "note.add", "sourceKind": "file", "status": "applied", "startDate": "2026-07-04", "endDate": "2026-07-04", "noteKind": "private_event", "weekdays": null, "count": null, "undoable": true, "sourcePasted": false },
-      { "at": "2026-06-01T07:00:00.000Z", "kind": "question_answered", "questionId": "gap_2026-01-20_2026-01-21", "answer": "other" }
+      { "at": "2026-06-01T07:00:00.000Z", "kind": "question_answered", "questionId": "gap_2026-01-20_2026-01-21", "answer": "other" },
+      { "at": "2026-06-01T06:30:00.000Z", "kind": "guest_count_saved", "noteId": "0000000000000000000000a6", "startDate": "2026-04-11", "endDate": "2026-04-11" }
     ],
     "suggestions": [
       {
