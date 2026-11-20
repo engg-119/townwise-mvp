@@ -14,7 +14,7 @@ import { act, cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-li
 import { addDays, localToday } from '../../../src/portal/locations/dates';
 import { resetProfiles } from '../../../src/portal/profile/useProfile';
 import { researchSeenKey } from '../../../src/portal/research/seen';
-import { pressOpensLine, RESEARCH_NOW, RESEARCH_NOW_RUNNING, RESTORE_NOTICES, switchWords, WEEK_OFF } from '../../../src/portal/town/research-copy';
+import { pressOpensLine, RESEARCH_NOW, RESEARCH_NOW_RUNNING, RESTORE_NOTICES, switchWords, WEEK_EMPTY, WEEK_NOT_YET, WEEK_OFF } from '../../../src/portal/town/research-copy';
 import {
   ACCESS, fakePortalApi, meOf, openAsAdminMe, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
@@ -106,8 +106,8 @@ afterEach(async () => {
 test('an org admin sees both runs in topics, the next run, this week, who and where, hidden, Research now and the switch', async () => {
   const { api } = setup();
   await renderApp('/locations/l1/town', api);
-  expect(await screen.findByText(/^Hanover: last researched .*, 9 events, 3 new$/)).toBeTruthy();
-  expect(screen.getByText(/^Your restaurant and nearby: last researched .*, 9 events, 3 new$/)).toBeTruthy();
+  expect(await screen.findByText(/^Hanover: last researched .*, 9 events found, 3 new$/)).toBeTruthy();
+  expect(screen.getByText(/^Your restaurant and nearby: last researched .*, 9 events found, 3 new$/)).toBeTruthy();
   expect(screen.getByText('Schools and college: Done')).toBeTruthy();
   expect(screen.getByText('Competitors and their events: Done')).toBeTruthy();
   expect(screen.getByText('Next weekly research: Mon, Nov 23')).toBeTruthy();
@@ -147,6 +147,35 @@ test('with research off, a live run reads paused, Research now says nothing is r
   expect(screen.queryByText(/^Researching your restaurant/)).toBeNull();
   await act(() => jest.advanceTimersByTimeAsync(90_000));
   expect(gets(api, `${BASE}/research`)).toBe(1);
+});
+
+// QA, 2026-11-20: Research now reruns only the location's topics, and the API refuses it only for the location's own
+// live run, so the town's run alone leaves the button usable (the page still polls).
+test('while only the town’s run is live, Research now stays usable', async () => {
+  const { api } = setup({ research: research({ town: townRun('running', 3) }) });
+  await renderApp('/locations/l1/town', api);
+  expect(await screen.findByText('Researching Hanover: 3 of 6 topics done')).toBeTruthy();
+  expect(screen.queryByText(RESEARCH_NOW_RUNNING)).toBeNull();
+  expect(screen.getByRole('button', { name: RESEARCH_NOW }).props.accessibilityState).toMatchObject({ disabled: false });
+});
+
+test('while the location’s own run is live, Research now is disabled and says research is running', async () => {
+  const { api } = setup({ research: research({ location: locationRun('running') }) });
+  await renderApp('/locations/l1/town', api);
+  expect(await screen.findByText(RESEARCH_NOW_RUNNING)).toBeTruthy();
+  expect(screen.getByRole('button', { name: RESEARCH_NOW }).props.accessibilityState).toMatchObject({ disabled: true });
+});
+
+// QA, 2026-11-20: before any run had finished, the week said research found nothing.
+test('coming up this week says nothing yet until a run has finished, and found nothing after one', async () => {
+  const { api } = setup({ research: research({ town: null, location: null }), found: [] });
+  await renderApp('/locations/l1/town', api);
+  expect(await screen.findByText(WEEK_NOT_YET)).toBeTruthy();
+  expect(screen.queryByText(WEEK_EMPTY)).toBeNull();
+  await cleanup();
+  const done = setup({ found: [] });
+  await renderApp('/locations/l1/town', done.api);
+  expect(await screen.findByText(WEEK_EMPTY)).toBeTruthy();
 });
 
 test('coming up this week lists a day’s events by start time', async () => {

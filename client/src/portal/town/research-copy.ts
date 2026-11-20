@@ -76,7 +76,7 @@ function subjectInSentence(subject: Subject): string {
 
 /**
  * A run's status line: “Researching Hanover: 3 of 6 topics done”, “Your restaurant and nearby: last researched Nov 17,
- * 9 events, 3 new”, “Hanover: Queued” (as its topics read), or why the last run ended as it did; a partial run whose
+ * 9 events found, 3 new”, “Hanover: Queued” (as its topics read), or why the last run ended as it did; a partial run whose
  * unfinished topics were all skipped for budget says so rather than that they didn't finish. Null run: not researched yet.
  * `paused` (research off for the organization or not running here, as the gap line says): a live run reads “Hanover:
  * paused, 2 of 6 topics done”, since nothing goes on while it is off. `waitingFor`: the town whose live run holds this
@@ -101,7 +101,7 @@ export function runLine(subject: Subject, run: TownRun | null, paused = false, w
     case 'done':
     case 'partial': {
       const last = run.finishedAt === null ? 'last researched' : `last researched ${shortDay(run.finishedAt)}`;
-      const line = `${name}: ${last}, ${plural(run.counts.found, 'event', 'events')}, ${formatCount(run.counts.added)} new`;
+      const line = `${name}: ${last}, ${plural(run.counts.found, 'event', 'events')} found, ${formatCount(run.counts.added)} new`;
       if (run.status !== 'partial') return line;
       const unfinished = run.threads.filter((thread) => thread.status !== 'recorded' && thread.status !== 'empty');
       const budgetOnly = unfinished.length > 0 && unfinished.every((thread) => thread.status === 'budget');
@@ -188,7 +188,7 @@ export function finishedNotice(run: Pick<TownRun, 'status' | 'counts'> | null): 
 
 /** What research does and sends (design decision 16), beside the switch, before the Privacy link. */
 export function switchWords(town: string): string {
-  return `Each week Townwise searches public websites for events in ${town} and near this restaurant that could change how busy you are, and puts what it finds on your calendar. It sends Anthropic your town and this restaurant’s name, never your sales, notes, calendars, or anyone’s name or email.`;
+  return `Each week Townwise searches public websites for events in ${town} and near this restaurant that could change how busy you are, and puts what it finds on your calendar. It sends Anthropic your town, this restaurant’s name and address, and the names, kinds and websites of up to 8 nearby restaurants, bars and cafes, never your sales, notes, calendars, or anyone’s name or email.`;
 }
 
 export function switchState(on: boolean, available: boolean): string {
@@ -209,6 +209,8 @@ export const SWITCH_FAILED = 'Couldn’t change this. Try again.';
 export const WEEK_HEADING = 'Coming up this week';
 export const WEEK_MAX = 8;
 export const WEEK_EMPTY = 'Research found nothing for the next 7 days.';
+/** In place of WEEK_EMPTY until a run has finished (QA, 2026-11-20: nothing had run, yet it said research found nothing). */
+export const WEEK_NOT_YET = 'Nothing yet. What research finds for the next 7 days shows here after its first run.';
 /** In place of the week's list while the organization's research switch is off (nothing researched is read then). */
 export const WEEK_OFF = 'Town research is off, so nothing found by research is listed.';
 export const WEEK_FAILED = 'Couldn’t load what research found for this week.';

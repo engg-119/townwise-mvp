@@ -23,7 +23,7 @@ describe('status in topics', () => {
   });
 
   test('a finished location run says when, how many events and how many new', () => {
-    expect(runLine({ kind: 'location' }, run('done'))).toBe(`Your restaurant and nearby: last researched ${copy.shortDay(FINISHED)}, 9 events, 3 new`);
+    expect(runLine({ kind: 'location' }, run('done'))).toBe(`Your restaurant and nearby: last researched ${copy.shortDay(FINISHED)}, 9 events found, 3 new`);
     expect(runLine({ kind: 'location' }, run('partial'))).toMatch(/3 new\. Some topics didn’t finish\.$/);
     // Topics skipped for budget were not tried: said so, not that they didn't finish (UI review).
     const skipped = [
@@ -138,7 +138,7 @@ describe('Research now and the switch', () => {
   test('the switch says what research sends and never sends', () => {
     const words = switchWords('Hanover');
     expect(words).toMatch(/events in Hanover/);
-    expect(words).toMatch(/It sends Anthropic your town and this restaurant’s name, never your sales, notes, calendars, or anyone’s name or email\./);
+    expect(words).toMatch(/It sends Anthropic your town, this restaurant’s name and address, and the names, kinds and websites of up to 8 nearby restaurants, bars and cafes, never your sales, notes, calendars, or anyone’s name or email\./);
     expect(switchState(true, true)).toBe('Town research is on.');
     expect(switchState(true, false)).toBe('Town research is on, but it isn’t running here right now.');
     expect(switchState(false, true)).toBe('Town research is off.');
