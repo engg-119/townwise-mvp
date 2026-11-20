@@ -114,7 +114,7 @@ A signed-in person whose kit user no longer exists gets 401 `unauthenticated`. T
 1. An org admin adds addresses (`POST /api/org/members`). Each becomes an invitation in that organization. Townwise sends no email for invitations; its only emails are the two in Email below (spec D14).
 2. When that person continues with Google, `GET /api/me` answers `invited`, listing each invitation with the organization, the role and who added it.
 3. `POST /api/me/join { inviteId }` claims the invitation by compare-and-set. It matches the invitation, the caller’s current email and an active organization, then withdraws any pending request of the caller. A second organization answers 409 `already_in_org`. `POST /api/me/decline { inviteId }` deletes the invitation instead.
-4. The server never joins on a GET, and the client’s Joining page never joins on load: every invitation waits for a press on Join, with one invitation and no pending request too (owner decision, 2026-11-19, spec D3 and F1).
+4. The server never joins on a GET. The build spec has the client’s Joining page call join as soon as it loads, when there is one invitation and no pending request.
 
 ### Requesting access and approval
 
