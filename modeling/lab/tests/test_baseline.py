@@ -31,7 +31,7 @@ def make_input(first: str, through: str, guests: Callable[[pd.Timestamp], float 
     for day in pd.date_range(first, end):
         count = guests(day) if day <= ts(through) else None
         days.append({"date": iso(day), "guests": count, "term": "interim", "weekOfTerm": -1, "events": events(day),
-                     "closed": False, "privateEvent": False, "booked": False})
+                     "closed": False, "privateEvent": False, "booked": False, "party": False})
     inp = {"schema": schema.INPUT_SCHEMA, "calibrationId": "0" * 24, "metric": "guests", "today": through,
            "dataThrough": through, "horizonDays": forecast.HORIZON_DAYS, "termsThrough": None, "regimeStart": None,
            "days": days,

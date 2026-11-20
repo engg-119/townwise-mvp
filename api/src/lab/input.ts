@@ -1,10 +1,11 @@
-// The forecast lab's input (schema townwise.lab-input/3, D42 and D52): what the job fetches from the callback, built here from one
+// The forecast lab's input (schema townwise.lab-input/4, D42, D52 and D70): what the job fetches from the callback, built here from one
 // location's stored days, its notes and scheduled business rules, the town calendar and the current published run. Outputs
-// only the facts the lab reads: guests per day, the term and week of term, town event groups, three flags from the notes
+// only the facts the lab reads: guests per day, the term and week of term, town event groups, four flags from the notes
 // and rules, the town calendar's entries (id, group, kind, dates and confidence, which the baseline engine reads its
 // holidays and events from) and the current run's engine and recorded weekday bias. Never a note's detail, a rule's text, a calendar entry's title,
 // URL or source, or any name. labInputOf is pure; buildLabInput reads the stores under the calibration's scope. The lab
-// accepts version 3 only (D52: 400 future days and termsThrough), so the two move together. Nothing here logs. D58
+// accepts version 4 only (D70: each day's party; version 3 was D52's 400 future days and termsThrough), so the two
+// move together. Nothing here logs. D58
 // (learn-from-calendar-bookings): the flags
 // also read the confirmed booking labels of the location's file calendars, on history days only, as dates and label
 // (never a title or uid), with no change to the schema, the lab or LAB_MODEL_VERSION.
@@ -29,12 +30,12 @@ import { localDay, timeZoneOf } from '../time-zones.ts';
 import { townCalendarCovers, townEvents } from '../town-calendar.ts';
 import { scorecardSchema, type Metrics } from './scorecard.ts';
 
-export const LAB_INPUT_SCHEMA = 'townwise.lab-input/3';
+export const LAB_INPUT_SCHEMA = 'townwise.lab-input/4';
 /**
  * The lab's model version (modeling/lab/townwise_lab/version.py's MODEL_VERSION; lab-contract.test.ts holds the two
  * equal). The weekly refresh's fingerprint includes it (D42), so a bump refits every location once.
  */
-export const LAB_MODEL_VERSION = 'v12';
+export const LAB_MODEL_VERSION = 'v13';
 /**
  * Days the input carries after the last day with guests (D52): the furthest a run reaches, its outlook capped at 400
  * days after the last day of sales (the lab's forecast.HORIZON_DAYS).
@@ -60,6 +61,8 @@ const labDaySchema = z.strictObject({
   closed: z.boolean(),
   privateEvent: z.boolean(),
   booked: z.boolean(),
+  /** D70: a history day a counted party covers (its guests already taken off), false after dataThrough. */
+  party: z.boolean(),
 });
 
 /** A town calendar entry as the lab reads it: never its title, URL or source label. */
@@ -254,7 +257,9 @@ function isParty(note: Flagged): boolean {
  * with more guests and a guest count) is the exception: the forecast read adds its guests on every day it covers, so on
  * a history day it sets no privateEvent and the day's guests go out less its guest count (never below 0). Training then
  * sees the day's base demand and the read adds the party back, so a recurring party ("40 more guests every Friday") is
- * never counted twice through a privateEvent flag collinear with its weekday. After dataThrough the forecast read applies
+ * never counted twice through a privateEvent flag collinear with its weekday. It sets party instead (D70), so the lab knows the
+day held a party: on a weekday the lab holds closed, a party or private-event day opened only for the event and leaves
+training, and on any weekday it counts as neither served nor unserved when the lab judges closed weekdays. After dataThrough the forecast read applies
  * closures, buyouts and counted parties itself (forecasts/adjust.ts, spec 14.5), so closed and booked are false and
  * those private events don't set privateEvent: a run never bakes in a status or a lift that editing or deleting the
  * note could not undo, and never counts a party twice. Closures the model learns (weekdays, holidays) still come from
@@ -337,6 +342,7 @@ export function labInputOf(args: {
       closed: likelyClosed || (history && covering.some((entry) => entry.kind !== 'private_event' && isClosure(entry))),
       privateEvent: lifted.length > 0 || labels.some((label) => label.booking === 'party'),
       booked: history && (privates.some((entry) => entry.effect === 'closed') || labels.some((label) => label.booking === 'buyout')),
+      party: history && privates.some(isParty),
     };
   });
   return {

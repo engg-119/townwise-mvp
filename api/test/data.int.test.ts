@@ -1056,7 +1056,8 @@ describe('an item’s edit fields', () => {
         [`f_${added}`]: false, [`f_${full}`]: false, [`f_${notCalendar}`]: true, [`f_${plain}`]: true,
       });
     }
-    // Renaming it stays open; saving an edit in its place does not, so no second calendar comes of it.
+    // Its page offers neither Rename nor Edit, but the API still accepts a rename, which imports nothing; saving an edit
+    // in its place is refused, so no second calendar comes of it.
     expect(await renamed(team.member, l1, `f_${added}`, 'Bookings')).toMatchObject({ name: 'Bookings.csv', canEdit: false });
     const b = await seedFile(l1, { name: 'events.csv' });
     expect((await replace(team.member, l1, `f_${added}`, b)).status).toBe(400);

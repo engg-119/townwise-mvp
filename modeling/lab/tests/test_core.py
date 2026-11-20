@@ -127,6 +127,9 @@ def test_training_rows_drop_zero_missing_closed_and_booked():
                       "closed": [False, False, False, True, False, False, False],
                       "booked": [False, False, False, False, True, False, False]})
     assert features.training_rows(f, ts("2025-01-06")).index.tolist() == [0, 5]
+    # D70: a private day on a closed weekday (frame_of's column) leaves too; a frame without the column keeps it
+    flagged = f.assign(**{features.PRIVATE_ON_CLOSED: [False] * 5 + [True, False]})
+    assert features.training_rows(flagged, ts("2025-01-06")).index.tolist() == [0]
 
     fixture = synthetic_frame(0)
     rows = features.training_rows(fixture, DATA_THROUGH)

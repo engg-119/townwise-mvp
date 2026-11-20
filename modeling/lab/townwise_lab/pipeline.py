@@ -48,7 +48,8 @@ CODE_VERSION = re.compile(r"[0-9a-f]{40}")
 
 def frame_of(inp: dict) -> pd.DataFrame:
     """The day frame (see features) for a valid LabInput: one ev_<group> column per event group it names, "one_off"
-    included, and the holiday flags from the dates."""
+    included, the holiday flags from the dates, and features.PRIVATE_ON_CLOSED (forecast.private_on_closed_weekday),
+    which training_rows reads, so every engine and backtest leaves out the same private days (D70)."""
     days = inp["days"]
     dates = pd.Series(pd.to_datetime([d["date"] for d in days]), name="date")
     columns = {"date": dates, "weekday": dates.dt.day_name(),
@@ -57,9 +58,11 @@ def frame_of(inp: dict) -> pd.DataFrame:
     for group in sorted({g for d in days for g in d["events"]}):
         columns[features.EVENT_PREFIX + group] = [int(group in d["events"]) for d in days]
     columns |= {"private_event": [int(d["privateEvent"]) for d in days], "closed": [d["closed"] for d in days],
-                "booked": [d["booked"] for d in days]}
+                "booked": [d["booked"] for d in days], "party": [d["party"] for d in days]}
     frame = pd.DataFrame(columns)
-    return pd.concat([frame, features.holiday_flags(frame.date)], axis=1)
+    frame = pd.concat([frame, features.holiday_flags(frame.date)], axis=1)
+    frame[features.PRIVATE_ON_CLOSED] = forecast.private_on_closed_weekday(frame)
+    return frame
 
 
 def _failure(calibration_id: str | None, code: str) -> dict:

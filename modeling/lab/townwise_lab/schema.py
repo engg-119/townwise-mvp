@@ -1,7 +1,8 @@
-"""The lab's two documents: the LabInput the API builds (townwise.lab-input/3) and the LabResult the lab returns
+"""The lab's two documents: the LabInput the API builds (townwise.lab-input/4) and the LabResult the lab returns
 (townwise.lab-result/1). validate_input checks an input against the contract before anything is fitted; its errors
-name a path, never a value. Inputs of versions 1 and 2 are refused: the API and the lab move to version 3 together
-(D52: 400 future days and termsThrough, the town's last researched term day)."""
+name a path, never a value. Inputs of versions 1 to 3 are refused: the API and the lab move to version 4 together
+(D70: each day's party, a history day a counted party covers; version 3 was D52's 400 future days and termsThrough,
+the town's last researched term day)."""
 
 import math
 import re
@@ -9,7 +10,7 @@ from datetime import date, timedelta
 
 from townwise_lab.forecast import HORIZON_DAYS
 
-INPUT_SCHEMA = "townwise.lab-input/3"
+INPUT_SCHEMA = "townwise.lab-input/4"
 RESULT_SCHEMA = "townwise.lab-result/1"
 
 ONE_OFF = "one_off"  # an event with no calendar group
@@ -20,7 +21,7 @@ CALENDAR_KINDS = ("event", "holiday", "term", "season")
 CONFIDENCES = ("high", "medium", "low")
 INPUT_KEYS = {"schema", "calibrationId", "metric", "today", "dataThrough", "horizonDays", "termsThrough", "regimeStart",
               "days", "calendar", "champion"}
-DAY_KEYS = {"date", "guests", "term", "weekOfTerm", "events", "closed", "privateEvent", "booked"}
+DAY_KEYS = {"date", "guests", "term", "weekOfTerm", "events", "closed", "privateEvent", "booked", "party"}
 CALENDAR_KEYS = {"id", "group", "kind", "start", "end", "confidence"}  # never a title, URL or source label
 CHAMPION_KEYS = {"runId", "engine", "recordedWeekdayBiasMeanAbs", "dataThrough", "days", "weeks"}
 CHAMPION_DAY_KEYS = {"date", "status", "low", "mid", "high"}
@@ -136,7 +137,7 @@ def validate_input(inp: dict) -> None:
         _require(isinstance(day["events"], list) and all(
             isinstance(e, str) and (e == ONE_OFF or GROUP.fullmatch(e) is not None) for e in day["events"]),
                  f"{at}.events")
-        _require(all(isinstance(day[k], bool) for k in ("closed", "privateEvent", "booked")), at)
+        _require(all(isinstance(day[k], bool) for k in ("closed", "privateEvent", "booked", "party")), at)
     _require(_date(days[0]["date"]) <= through and previous == through + timedelta(days=HORIZON_DAYS), "days")
     _calendar(inp["calendar"])
 

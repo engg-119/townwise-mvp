@@ -214,7 +214,7 @@ function turnable(item: DataItemRecord): boolean {
 
 /**
  * Whether the file's calendar import found a calendar: added, or refused for any reason but not_calendar. Such a file
- * has no Edit (item 144): a saved edit is a new stored file, which imports as a second calendar while the first stays.
+ * has neither Rename nor Edit on its page (item 144): a saved edit is a new stored file, which imports as a second calendar while the first stays.
  */
 function foundCalendar(file: FileRecord): boolean {
   const record = file.calendarImport;
