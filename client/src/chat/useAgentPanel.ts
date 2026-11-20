@@ -8,7 +8,7 @@ import { useRuleDecisions, type RuleDecisions } from '../portal/rules/useRuleDec
 import {
   answerQuestion, decideSuggestion, loadAgentPanel, setCalendarTitles, setWeeklySuggestions, type AgentPanel, type EventChoice, type QuestionAnswer,
 } from './api';
-import { suggestionDaysText } from './format';
+import { formatCount, suggestionDaysText } from './format';
 
 // The side panel's data (spec P25): the questions TownwiseAI has for the person and what it has been
 // doing, both read at once from GET .../agent. An answered question stays on the panel with what the answer did
@@ -46,6 +46,19 @@ export interface Answered {
    * note its count was saved into; or null.
    */
   note: Note | null;
+  /**
+   * D71: the count this browser's Save sent. The first of two counts wins, so a count saved first elsewhere (or a Skip)
+   * answers with the stored answer, and the card says the count sent here wasn't used.
+   */
+  sent?: number;
+  /** D71: the answer this browser sent, so a Skip that lost to a count saved first elsewhere is told apart. */
+  asked?: QuestionAnswer;
+}
+
+/** Why a card the person answered went instead, and which copy of the cards says it. */
+export interface QuestionsNotice {
+  text: string;
+  place: QuestionPlace;
 }
 
 /** What an org admin's decision on a suggestion did. */
@@ -92,6 +105,8 @@ export interface AgentPanelState {
   errors: Readonly<Record<string, string>>;
   /** `guests`: a private event's count (D71), with the answer `guests`. */
   answer: (questionId: string, answer: QuestionAnswer, place: QuestionPlace, guests?: number) => void;
+  /** Why a private event's card went when its count was saved (D71, a 404), until the panel is read again or another answer. */
+  questionsNotice: QuestionsNotice | null;
   /** Where the person last used each question's card: only that copy announces what happened. */
   actedIn: Readonly<Record<string, QuestionPlace>>;
   /** Something else…, by question id. */
@@ -199,6 +214,7 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
   const [others, setOthers] = useState<Record<string, SomethingElse>>({});
   const [telling, setTelling] = useState<string | null>(null);
   const [actedIn, setActedIn] = useState<Record<string, QuestionPlace>>({});
+  const [questionsNotice, setQuestionsNotice] = useState<QuestionsNotice | null>(null);
   const inflight = useRef(false);
   const [decided, setDecided] = useState<Record<string, Decided>>({});
   const [deciding, setDeciding] = useState<string | null>(null);
@@ -223,6 +239,7 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
   const readAgain = useCallback(() => {
     setAnswered({});
     setErrors({});
+    setQuestionsNotice(null);
     setDecided({});
     setSuggestionErrors({});
     setSuggestionsNotice(null);
@@ -313,10 +330,12 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
     inflight.current = true;
     usedIn(questionId, place);
     setAnswering(questionId);
+    setQuestionsNotice(null);
     setErrors((current) => without(current, questionId));
     answerQuestion(api, locationId, questionId, choice, guests).then(
       (result) => {
-        setAnswered((current) => ({ ...current, [questionId]: { answer: result.question.answer, note: result.note } }));
+        const done: Answered = { answer: result.question.answer, note: result.note, asked: choice, ...(guests === undefined ? {} : { sent: guests }) };
+        setAnswered((current) => ({ ...current, [questionId]: done }));
         // Whatever was typed for Something else… goes with the question.
         setOthers((current) => without(current, questionId));
         if (result.note !== null) onNoteAdded?.();
@@ -325,6 +344,9 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
         // The question changed or went (new sales, a note): read the panel again.
         if (error instanceof ApiError && error.kind === 'http' && error.status === 404) {
           reload();
+          // D71: a typed count is never dropped without a word (the note got a count elsewhere, or went).
+          // [CONFIRM 301: the notice when a private event's count wasn't saved]
+          if (guests !== undefined) setQuestionsNotice({ text: `That private event’s note changed, so your count of ${formatCount(guests)} wasn’t saved. Check its guest count on the Notes page.`, place });
           return;
         }
         setErrors((current) => ({ ...current, [questionId]: answerErrorText(error) }));
@@ -362,7 +384,7 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
   }
 
   return {
-    state, reload, answered, answering, errors, answer, actedIn, others, telling, tell,
+    state, reload, answered, answering, errors, answer, questionsNotice, actedIn, others, telling, tell,
     decided, deciding, suggestionErrors, decide, eventDrafts, setEventDraft, suggestionsNotice, weeklyOn, switching, switchError, setWeekly,
     titlesOn, switchingTitles, titlesError, setTitles, rules,
     openOther: (questionId) => { patchOther(questionId, { open: true }); },

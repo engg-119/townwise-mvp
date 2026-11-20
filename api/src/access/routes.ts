@@ -758,7 +758,7 @@ export const ROUTE_LIMITS = {
   // connect-google-calendar, design decision 8: every call is a Google call, so a store outage denies, as for Places.
   google_calendars: { name: 'townwise:google-calendars', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' },
   // D66, Research now: each press spends the organization's TownwiseAI month and sends to Anthropic, so a store outage
-  // denies. [CONFIRM: Research now for org admins, the location's threads only, 3 a day per person, not within 6 hours of the last run]
+  // denies.
   research: { name: 'townwise:research', limit: 3, windowSeconds: 86400, whenStoreDown: 'deny' },
 } as const;
 

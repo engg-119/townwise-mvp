@@ -131,9 +131,7 @@ export const SUGGESTIONS_MAX_OWNER_EVENTS = 150;
 /** A pass keeps at most this many spotted events, read apart from its notes and rules. */
 export const MAX_EVENT_SUGGESTIONS = 5;
 /**
- * D66: at most this many researched events a weekly call sends, soonest first. [CONFIRM: weekly suggestions read at most
- * 60 researched events of medium or high confidence, and a suggestion resting on a researched event always waits for a
- * person]
+ * D66: at most this many researched events a weekly call sends, soonest first.
  */
 export const SUGGESTIONS_MAX_RESEARCHED = 60;
 /** D59 slice 3: at most this many rules TownwiseAI adds on its own a week (7 days) per location. */

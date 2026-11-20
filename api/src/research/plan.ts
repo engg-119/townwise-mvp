@@ -42,7 +42,6 @@ import { nameKey } from './dedupe.ts';
 import { threadsFor, type ThreadId } from './threads.ts';
 
 const DAY_MS = 86_400_000;
-/** [CONFIRM: each location researched weekly, on its creation, and when its place is picked or changed; a run in the last 6 days counts as the week's] */
 export const RESEARCH_REPEAT_MS = 6 * DAY_MS;
 /** A weekly thread is due within this many minutes of its Monday's start. */
 export const STAGGER_MINUTES = 12 * 60;

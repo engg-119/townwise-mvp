@@ -27,7 +27,7 @@ import {
   entityLine, eventWhen, finishedNotice, gapLine, hiddenHeading, isLive, moreLine, nextLine, pressOpensLine, pressRefusal,
   RESEARCH_HEADING, RESEARCH_KICKER, RESEARCH_NOW, RESEARCH_NOW_HELP, RESEARCH_NOW_RUNNING, RESEARCH_STARTED, RESTORE,
   RESTORE_NOTICES, restoreLabel, runLine, SWITCH_FAILED, SWITCH_OPEN_AS_ADMIN, switchLabel, switchState, switchWords,
-  topicLabel, topicState, townHolds, WEEK_EMPTY, WEEK_FAILED, WEEK_HEADING, WEEK_MAX, WEEK_OFF, WHO_HEADING,
+  topicLabel, topicState, townHolds, WEEK_EMPTY, WEEK_FAILED, WEEK_NOT_YET, WEEK_HEADING, WEEK_MAX, WEEK_OFF, WHO_HEADING,
 } from './research-copy';
 
 // P15's Research section (D66, OpenSpec change town-research-agent, design decision 15), under TownProfile: the town's
@@ -160,13 +160,13 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
           ))}
           {notice === null ? null : <Notice text={notice.text} result={notice} stays={notice.stays} />}
           {admin && !viewAs && !openAsAdmin ? (
-            <ResearchNow locationId={location.id} research={data} running={running} onStarted={refresh} setNotice={setNotice} />
+            <ResearchNow locationId={location.id} research={data} running={active && isLive(data.location)} onStarted={refresh} setNotice={setNotice} />
           ) : null}
         </View>
       </Section>
 
       <Section title={WEEK_HEADING}>
-        <WeekList locationId={location.id} week={week} on={data.on} />
+        <WeekList locationId={location.id} week={week} on={data.on} researched={(data.town?.finishedAt ?? data.location?.finishedAt ?? null) !== null} />
       </Section>
 
       {data.entities.length === 0 ? null : (
@@ -272,7 +272,7 @@ function ResearchNow(props: {
   );
 }
 
-function WeekList(props: { locationId: string; week: Load<ResearchedEvent[] | null>; on: boolean }): React.JSX.Element {
+function WeekList(props: { locationId: string; week: Load<ResearchedEvent[] | null>; on: boolean; researched: boolean }): React.JSX.Element {
   const { week } = props;
   // Nothing researched is read while the switch is off: say so, not that research found nothing.
   if (!props.on) return <Text style={styles.body}>{WEEK_OFF}</Text>;
@@ -290,7 +290,7 @@ function WeekList(props: { locationId: string; week: Load<ResearchedEvent[] | nu
       return day === null ? [] : [{ event, day }];
     })
     .sort(order);
-  if (events.length === 0) return <Text style={styles.body}>{WEEK_EMPTY}</Text>;
+  if (events.length === 0) return <Text style={styles.body}>{props.researched ? WEEK_EMPTY : WEEK_NOT_YET}</Text>;
   const shown = events.slice(0, WEEK_MAX);
   const more = moreLine(events.length - shown.length);
   return (

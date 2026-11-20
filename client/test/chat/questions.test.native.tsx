@@ -175,9 +175,10 @@ test('a private event’s question saves a count typed in its Guests field, and 
   expect(await within(landing).findByRole('heading', { name: 'How many guests came for the private event on Sat, Apr 4, 2026?' })).toBeTruthy();
   const save = () => within(landing).getByRole('button', { name: 'Save' });
   expect(save().props.accessibilityState).toMatchObject({ disabled: true });
-  await fireEvent.changeText(within(landing).getByLabelText('Guests who came'), '20001');
+  // The field's name carries the card's date, so two cards' fields are told apart.
+  await fireEvent.changeText(within(landing).getByLabelText('Guests who came, Sat, Apr 4, 2026'), '20001');
   expect(save().props.accessibilityState).toMatchObject({ disabled: true });
-  await fireEvent.changeText(within(landing).getByLabelText('Guests who came'), '43');
+  await fireEvent.changeText(within(landing).getByLabelText('Guests who came, Sat, Apr 4, 2026'), '43');
   expect(save().props.accessibilityState).toMatchObject({ disabled: false });
   await fireEvent.press(save());
   expect(await within(landing).findByText('Saved: 43 guests on the private event note.')).toBeTruthy();

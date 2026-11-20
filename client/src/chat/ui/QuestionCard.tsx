@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 
 import type { Note } from '../../portal/locations/api';
 import { guestsOf } from '../../portal/locations/noteRules';
@@ -13,7 +13,7 @@ import { dayText, formatCount, KIND_LABEL, rangeText, shortDayText, weekdayName,
 import type { AgentPanelState, Answered, QuestionPlace, SendToChat } from '../useAgentPanel';
 import { TELL_BUDGET, type TuningChatState } from '../useTuningChat';
 import { MAX_MESSAGE } from './Composer';
-import { ChatButton, type ChatButtonHandle } from './controls';
+import { ChatButton, focusLost, type ChatButtonHandle } from './controls';
 
 // A question TownwiseAI has for the person (spec P25, 10.12): asked by rules over the location's own sales and
 // notes, never by an estimate (D46: a weekday with no sales is a suggested rule now, RuleSuggestionCard). A heading question, one line of the evidence it saw (counts and guests, never sales),
@@ -28,7 +28,11 @@ import { ChatButton, type ChatButtonHandle } from './controls';
 //
 // D71: a past private event with no guest count asks how many guests came (each day, for a note over several days): a
 // Guests field, Save (only for a whole count from 1 to 20,000) and Skip. Save writes the count into the event's note, so
-// Townwise takes those guests off the day when it learns; Skip asks no more. The field's text is the card's own.
+// Townwise takes those guests off the day when it learns; Skip asks no more. The field's text is the card's own, and
+// its name carries the card's dates, so two cards' fields are told apart. Once saved, the context drops "no guest count
+// yet". The first of two counts wins: a card whose count lost to one saved elsewhere (or a Skip) says so. A Save the API
+// turns away with 404 (the note got a count elsewhere, or went) reads the panel again and the notice says the count
+// wasn't saved. After an answer, focus moves to what the answer did (web), in the copy the person used.
 
 const SOMETHING_ELSE = 'Something else…';
 /** D71. [CONFIRM: the private event question's help line] */
@@ -87,6 +91,18 @@ function eachDay(question: Extract<Question, { kind: 'party_guests' }>): boolean
   return question.startDate !== question.endDate;
 }
 
+/** D71: "On Fridays only." for a note over several days that names weekdays. */
+function partyWeekdays(question: Extract<Question, { kind: 'party_guests' }>): string | false {
+  const weekdays = weekdaysText(question.weekdays);
+  return eachDay(question) && weekdays !== null && `On ${weekdays.replace(/ only$/, '')} only.`;
+}
+
+/** D71: the context once a count is saved, without "Its note has no guest count yet." (empty for none). */
+function savedPartyContext(question: Question, answered: Answered | undefined): string | null {
+  if (question.kind !== 'party_guests' || answered?.answer !== 'guests') return null;
+  return sentences([partyWeekdays(question)]);
+}
+
 /**
  * The words of a card. `chat`: TownwiseAI's chat is on, so Something else… is offered (never on a private event's
  * question, D71, whose answers are Save and Skip: `answers` holds Skip only).
@@ -96,12 +112,11 @@ export function questionCopy(question: Question, locationName: string, chat: boo
   if (question.kind === 'party_guests') {
     // [CONFIRM: the private event question's heading and context]
     const many = eachDay(question);
-    const weekdays = weekdaysText(question.weekdays);
     return {
       heading: many
         ? `How many guests came for the private event each day from ${rangeText(question.startDate, question.endDate)}?`
         : `How many guests came for the private event on ${dayText(question.startDate)}?`,
-      context: sentences([many && weekdays !== null && `On ${weekdays.replace(/ only$/, '')} only.`, 'Its note has no guest count yet.']),
+      context: sentences([partyWeekdays(question), 'Its note has no guest count yet.']),
       answers: [{ value: 'not_sure', label: 'Skip' }],
       help: many ? PARTY_HELP_MANY : PARTY_HELP_ONE,
     };
@@ -152,10 +167,21 @@ export function questionCopy(question: Question, locationName: string, chat: boo
 export function answeredLine(question: Question, answered: Answered): string {
   if (question.kind === 'party_guests') {
     // [CONFIRM: "Saved: {n} guests on the private event note." and the skip's line]
-    if (answered.answer !== 'guests') return 'Got it. TownwiseAI won’t ask about this event again.';
+    // [CONFIRM 300: the lines when this Save or Skip lost to an answer saved first elsewhere]
+    const sent = answered.sent;
+    if (answered.answer !== 'guests') {
+      return sent === undefined
+        ? 'Got it. TownwiseAI won’t ask about this event again.'
+        : `This question was already skipped, so your count of ${formatCount(sent)} wasn’t saved. You can add it to the event’s note on the Notes page.`;
+    }
     const count = answered.note?.expectedGuests ?? null;
     if (count === null) return 'Saved the guest count on the private event note.';
-    return `Saved: ${count === 1 ? '1 guest' : `${formatCount(count)} guests`}${eachDay(question) ? ' each day' : ''} on the private event note.`;
+    const saved = `${count === 1 ? '1 guest' : `${formatCount(count)} guests`}${eachDay(question) ? ' each day' : ''}`;
+    if (sent !== undefined && sent !== count) {
+      return `A count was already saved: ${saved} on the private event note, so your ${formatCount(sent)} wasn’t used. You can change it on the Notes page.`;
+    }
+    if (answered.asked === 'not_sure') return `A count was already saved: ${saved} on the private event note. TownwiseAI won’t ask about this event again.`;
+    return `Saved: ${saved} on the private event note.`;
   }
   const these = question.kind === 'likely_closed' ? 'this day' : 'these days';
   if (answered.answer === 'closed') return answered.note === null ? 'Saved. TownwiseAI treats those days as closed.' : savedNoteLine(answered.note);
@@ -222,6 +248,8 @@ function CardError(props: { message: string; live: boolean; onRetry?: () => void
  */
 function PartyAnswers(props: {
   id: string; helpId: string; help: string; many: boolean; off: boolean; readOnlyId: string | null;
+  /** The field's accessible name, with the card's dates. */
+  name: string;
   save: (guests: number) => void; skip: () => void;
 }): React.JSX.Element {
   const [text, setText] = useState('');
@@ -233,6 +261,7 @@ function PartyAnswers(props: {
       <View style={styles.guests}>
         <FormField
           label={props.many ? 'Guests who came each day' : 'Guests who came'}
+          accessibilityLabel={props.name}
           value={text}
           onChangeText={setText}
           keyboardType="number-pad"
@@ -295,9 +324,25 @@ export function QuestionCard(props: {
   // closes, from either copy, it forgets.
   const [opened, setOpened] = useState(false);
   if (opened && !open) setOpened(false);
+  // Save, Skip or an answer button went with the answer: focus moves to what it did (web), in the copy the person used.
+  const done = useRef<Host>(null);
+  const isAnswered = answered !== undefined;
+  const wasAnswered = useRef(isAnswered);
+  useEffect(() => {
+    // Only when the pressed button went with the answer: never from wherever the person has since moved focus.
+    if (isAnswered && !wasAnswered.current && live && focusLost()) done.current?.focus();
+    wasAnswered.current = isAnswered;
+  }, [isAnswered, live]);
+  const context = savedPartyContext(question, answered) ?? copy.context;
 
   let body: React.ReactNode;
-  if (answered !== undefined) body = <Text {...status} style={styles.done}>{answeredLine(question, answered)}</Text>;
+  if (answered !== undefined) {
+    body = (
+      <View ref={done} {...(Platform.OS === 'web' ? { tabIndex: -1 as const } : {})}>
+        <Text {...status} style={styles.done}>{answeredLine(question, answered)}</Text>
+      </View>
+    );
+  }
   else if (question.kind === 'party_guests') {
     body = (
       <PartyAnswers
@@ -305,6 +350,9 @@ export function QuestionCard(props: {
         helpId={helpId}
         help={answering ? 'Saving your answer…' : copy.help}
         many={eachDay(question)}
+        name={eachDay(question)
+          ? `Guests who came each day, ${rangeText(question.startDate, question.endDate)}`
+          : `Guests who came, ${dayText(question.startDate)}`}
         off={off}
         readOnlyId={props.readOnlyId}
         save={(guests) => { panel.answer(id, 'guests', place, guests); }}
@@ -387,7 +435,7 @@ export function QuestionCard(props: {
   return (
     <View style={styles.card}>
       <Heading level={3}>{copy.heading}</Heading>
-      <Text style={styles.context}>{copy.context}</Text>
+      {context === '' ? null : <Text style={styles.context}>{context}</Text>}
       {body}
       {error === undefined || answered !== undefined ? null : (
         // A message already in the chat needs only its answer saved again, never sent again.
@@ -396,6 +444,30 @@ export function QuestionCard(props: {
     </View>
   );
 }
+
+/**
+ * D71: why a private event's card went when its count was saved (a 404). Drawn with the cards in both places; the copy the
+ * person used takes focus (web) and is announced.
+ */
+export function QuestionsNoticeLine(props: { panel: AgentPanelState; place: QuestionPlace }): React.JSX.Element | null {
+  const notice = props.panel.questionsNotice;
+  const live = notice !== null && notice.place === props.place;
+  const text = notice?.text ?? null;
+  const ref = useRef<Host>(null);
+  useEffect(() => {
+    if (!live || text === null) return;
+    if (focusLost()) ref.current?.focus();
+    if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text);
+  }, [live, text]);
+  if (text === null) return null;
+  return (
+    <View ref={ref} {...(live && Platform.OS === 'web' ? { tabIndex: -1 as const } : {})} {...(live ? { role: 'status' as const } : {})}>
+      <Text style={styles.done}>{text}</Text>
+    </View>
+  );
+}
+
+type Host = React.ComponentRef<typeof View>;
 
 const c = theme.color;
 

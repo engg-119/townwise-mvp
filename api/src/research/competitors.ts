@@ -6,8 +6,7 @@
 // Nearby's `includedTypes` matches any of a place's types, not only its primary one (task 0.2's probe got a book store
 // and a community center), so a place is a competitor only when its `primaryType` is a food or drink type. Specific
 // primary types are common (`american_restaurant`, `wine_bar`, `coffee_shop`), so they are grouped in three families,
-// and places of the location's own family come first. [CONFIRM: competitors are the 8 nearest restaurants, bars and
-// cafes within 1,500 m, the location's own type first]
+// and places of the location's own family come first.
 //
 // The name match: with Google's names kept from Anthropic (TOWNWISE_RESEARCH_PLACES_TO_AI off, the code default; also
 // with it on when the run had no competitor list), the competitors thread finds businesses

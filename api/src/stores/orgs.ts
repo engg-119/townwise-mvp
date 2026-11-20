@@ -159,7 +159,7 @@ function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
       ? { on: true, at: null } : { on: doc.calendarTitlesToAi.on, at: doc.calendarTitlesToAi.at },
     // D59: TownwiseAI works on its own by default (owner rule 2026-11-16; approved 2026-11-19) until an org admin turns it off.
     agentAuto: doc.agentAuto == null ? { on: true, at: null } : { on: doc.agentAuto.on, at: doc.agentAuto.at },
-    // D66: research is on by default (owner rule 2026-11-16) until an org admin turns it off. [CONFIRM]
+    // D66: research is on by default (owner rule 2026-11-16; approved 2026-11-20) until an org admin turns it off.
     research: doc.research == null ? { on: true, at: null } : { on: doc.research.on, at: doc.research.at },
   };
 }

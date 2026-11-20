@@ -9,6 +9,7 @@ import type {
 } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { describe, expect, it } from 'vitest';
 
+import { GATE } from '../src/lab/gate.ts';
 import { costMicroUsd, messageCostMicroUsd } from '../src/chat/pricing.ts';
 import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
 import { TOOLS, type ToolContext } from '../src/chat/tools/registry.ts';
@@ -258,6 +259,39 @@ describe('the system prompt, calibrations', () => {
     // Until the chat redesign draws the lab's components, nothing tells the model the owner sees a chart.
     expect(SYSTEM_PROMPT).not.toContain('charts');
     expect(SYSTEM_PROMPT).not.toMatch(/\d/);
+  });
+});
+
+describe('the system prompt, how the forecast works (owner, 2026-11-20)', () => {
+  it('explains the two engines, the backtest and the publish checks, and says TownwiseAI never trains the model', () => {
+    for (const part of [
+      '- When the owner asks how Townwise\'s forecast works, explain it from the lines below',
+      'Townwise has two forecast engines.',
+      'boosted trees (XGBoost)',
+      'a backtest',
+      'You don\'t train, tune or choose the model yourself',
+    ]) expect(SYSTEM_PROMPT).toContain(part);
+    expect(SYSTEM_PROMPT).not.toMatch(/\d/);
+  });
+
+  it('words the publish checks as gate.ts sets them, so a changed threshold fails here until the prompt says it', () => {
+    // The prompt holds no digits (the frozen-prefix test above), so each threshold is pinned to its words here.
+    const pinned: [number, number, string][] = [
+      [GATE.heldOutWeeksMin, 12, 'at least twelve backtest weeks'],
+      [GATE.coverageMin, 0.65, 'from sixty-five to ninety-five in a hundred'],
+      [GATE.coverageMax, 0.95, 'from sixty-five to ninety-five in a hundred'],
+      [GATE.wapeMargin, 0.005, 'by at least half a point'],
+      [GATE.weekdayBiasAllowance, 0.02, 'more than two points worse'],
+      [GATE.refreshMargin, 0.005, 'more than half a point worse than its best recent run'],
+      [GATE.jumpDays, 28, 'next twenty-eight days'],
+      [GATE.jumpMax, 0.25, 'by more than a quarter'],
+      [GATE.minHistoryDays, 595, 'about twenty months of sales history'],
+      [GATE.baselineMinHistoryDays, 230, 'about seven and a half months'],
+    ];
+    for (const [value, worded, words] of pinned) {
+      expect(value).toBe(worded);
+      expect(SYSTEM_PROMPT).toContain(words);
+    }
   });
 });
 

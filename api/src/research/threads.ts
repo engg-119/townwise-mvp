@@ -16,13 +16,11 @@ export type ThreadId = TownThreadId | LocationThreadId;
 /** Where a location thread's findings come from, as the location's events store it (`origin`). */
 export type LocationOrigin = 'neighborhood' | 'competitor' | 'town_overview';
 
-/** [CONFIRM: 8 searches a town thread, 5 a location thread; page fetch off until the live eval shows it pays] */
 export const TOWN_MAX_SEARCHES = 8;
 export const LOCATION_MAX_SEARCHES = 5;
 /** Page fetches a thread may make while TOWNWISE_RESEARCH_WEB_FETCH is on; none while it is off. */
 export const MAX_FETCHES = 2;
 
-/** [CONFIRM: research looks 180 days ahead] */
 export const RESEARCH_WINDOW_DAYS = 180;
 
 export interface ThreadDef {
@@ -42,7 +40,6 @@ export type ResearchSubject =
   | { readonly kind: 'town'; readonly townId: TownId }
   | { readonly kind: 'location'; readonly townId: TownId | null };
 
-/** [CONFIRM: the six town threads and the two location threads] */
 const TOWN_FOCUS: Readonly<Record<TownThreadId, string>> = {
   schools: 'Schools and colleges: commencement, move-in and move-out, reunions, family and homecoming weekends, admitted-student days, breaks, and K-12 vacations. Term days already in the known list are known; report only what is not.',
   sports: 'Sports: home games and meets of the college and high school teams, tournaments, races and other sporting events in or near town that bring visitors.',
@@ -80,8 +77,7 @@ function locationThread(id: LocationThreadId, placesToAi: boolean): ThreadDef {
 /**
  * A run's threads. A location gets `neighborhood` and `competitors` whatever `placesToAi` says (with it off, the
  * restaurant is named by its own typed name and competitors are found on the web), and `town_overview` when its town is
- * outside the twelve. [CONFIRM: a town outside the twelve researched only by its locations' own combined thread, paid by
- * the organization]
+ * outside the twelve.
  */
 export function threadsFor(subject: ResearchSubject, options: { readonly placesToAi: boolean }): ThreadDef[] {
   if (subject.kind === 'town') return TOWN_THREADS.map(townThread);

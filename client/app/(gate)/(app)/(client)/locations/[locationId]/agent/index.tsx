@@ -114,6 +114,17 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   const askFound = params.ask === 'found';
   const chatReady = chat.state.status === 'ready';
   const { newConversation } = chat;
+  // The panel sits beside the new chat page only, so an arrival with ?panel= lands there once the chat has loaded, over
+  // a conversation kept from the last 5 minutes (QA, 2026-11-20). The address drops the parameter first, so the ref
+  // holds the arrival until the chat is ready.
+  const toLanding = useRef(false);
+  const shownId = chat.state.conversationId;
+  useEffect(() => {
+    if (askedPanel) toLanding.current = true;
+    if (!toLanding.current || !chatReady) return;
+    toLanding.current = false;
+    if (shownId !== null) newConversation();
+  }, [askedPanel, chatReady, newConversation, shownId]);
   // Once per arrival with `?ask=found`: a later Ask, with the page still mounted, is a new arrival.
   const askTaken = useRef(false);
   useEffect(() => {

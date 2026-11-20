@@ -82,7 +82,7 @@ export function useBreakpoint(): Breakpoint {
   return breakpointOf(width);
 }
 
-/** D65: the pages' re-read while a forecast updates (design decision 4). [CONFIRM: pages re-read every 30 seconds while a forecast is updating] */
+/** D65: the pages' re-read while a forecast updates (design decision 4). */
 export const WHILE_RUNNING_MS = 30_000;
 /** After a failed re-read, the next one waits this long. */
 export const AFTER_ERROR_MS = 10_000;

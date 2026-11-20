@@ -32,7 +32,7 @@ import { focusLost } from './controls';
 import { NextChips } from './NextChips';
 import { PanelRow, PanelRowSkeleton } from './PanelRow';
 import { PreviousChats } from './PreviousChats';
-import { QuestionCard, questionChatOf } from './QuestionCard';
+import { QuestionCard, questionChatOf, QuestionsNoticeLine } from './QuestionCard';
 import { ReplyView } from './ReplyView';
 import { Suggestions, SuggestionsSkeleton } from './Suggestions';
 import { FadeIn } from './ToolGroup';
@@ -664,7 +664,8 @@ export function AgentChat(props: {
     );
   }
 
-  // The panel's questions, under the chips: none while they load, when they can't be read, or when there are none.
+  // The panel's questions, under the chips: none while they load, when they can't be read, or when there are none (unless
+  // a private event's notice says why its card went).
   const asked = props.panel.state.status === 'ready' ? props.panel.state.data.questions : [];
   const open = openQuestions(props.panel);
   const questionChat = questionChatOf(state);
@@ -672,9 +673,11 @@ export function AgentChat(props: {
   // Home's link at 640px and below: the questions first in the opened row (an independent browser review, 2026-11-18,
   // found them under the whole panel, off screen at 390px). Otherwise they sit under the row.
   const questionsInRow = phone && props.panelOpen && props.questionsFirst === true;
-  const questions = asked.length === 0 ? null : (
+  // A private event's notice (D71) stays with the heading when its card was the last.
+  const questions = asked.length === 0 && props.panel.questionsNotice === null ? null : (
     <View testID="chat-landing-questions" style={questionsInRow ? styles.questionsInRow : styles.questions}>
       <Heading>{`Questions for you${open !== null && open > 0 ? ` (${formatCount(open)})` : ''}`}</Heading>
+      <QuestionsNoticeLine panel={props.panel} place="landing" />
       {asked.map((question) => (
         <QuestionCard
           key={question.id}

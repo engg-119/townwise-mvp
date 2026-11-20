@@ -169,6 +169,15 @@ run "rbac_scopes" {
 
   assert {
     condition = (
+      [for key, role in local.team_roles : "${role.group} ${role.role} ${role.scope}" if can(regex("Microsoft.Search", role.scope))] == [
+        "developers Search Index Data Contributor /subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.Search/searchServices/srch-townwise-2d2c15bf",
+      ]
+    )
+    error_message = "Developers read and write the event search service's documents, on that service alone, and hold no control-plane role on it."
+  }
+
+  assert {
+    condition = (
       [for key, role in local.team_roles : "${role.group} ${role.scope}" if role.role == "Storage Blob Data Reader"] == [
         "admins /subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.Storage/storageAccounts/sttwbackup2d2c15bf/blobServices/default/containers/mongodump",
       ]

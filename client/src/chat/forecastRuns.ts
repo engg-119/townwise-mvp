@@ -12,8 +12,7 @@ import { rangeText } from './format';
 // with no forecast now (`currentForecast` false: every run since withdrawn) reads the same way. No sentence states a
 // minimum history (14.1) or promises a retry (a cleared refit mark is not retried until new data arrives); Home's notice
 // states the next step. `sales` covers staff setup's upload too, so it never says "your upload". Dates and day counts
-// are the only figures. Pure: nothing here reads or writes. [CONFIRM: the owner reasons, their later-run and
-// first-forecast words, and the cause words]
+// are the only figures. Pure: nothing here reads or writes.
 
 /** A run after the location's first forecast. */
 const LATER_WORDS: Readonly<Record<OwnerReason, string>> = {

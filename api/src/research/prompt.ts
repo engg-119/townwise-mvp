@@ -8,7 +8,6 @@
 // since the owner allowed it on 2026-11-19), its Google profile name and address, and never the owner's typed name;
 // while they may not (the code default), the location's own typed name alone, with the town already in `town`, and the
 // system prompt says it may differ from the public listing.
-// [CONFIRM: the location's own name sent to Anthropic for restaurant research]
 // As fixed in UI review: a location typed with only a town's name ("Hanover") names no restaurant, so its research
 // searched the town and filed the restaurant's own events as a competitor's; such a location is sent as
 // "{organization's name}, {location's name}" instead (`namedAfterTown`).

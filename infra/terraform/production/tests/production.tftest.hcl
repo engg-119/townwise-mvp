@@ -1608,3 +1608,31 @@ run "forecasts_worker_with_chat" {
     error_message = "With the chat on, the worker's identity reads exactly two secrets, mongodb-uri and anthropic-api-key, each by its own secret-scoped assignment."
   }
 }
+
+run "event_search_disabled" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_search_service.events) == 0 && output.event_search_endpoint == null
+    error_message = "No event search service until enable_event_search is set."
+  }
+}
+
+run "event_search_enabled" {
+  command = plan
+
+  variables {
+    enable_event_search = true
+  }
+
+  assert {
+    condition = (
+      azurerm_search_service.events[0].name == "srch-townwise-2d2c15bf" &&
+      azurerm_search_service.events[0].sku == "free" &&
+      azurerm_search_service.events[0].resource_group_name == "rg-townwise-prod" &&
+      !azurerm_search_service.events[0].local_authentication_enabled &&
+      output.event_search_endpoint == "https://srch-townwise-2d2c15bf.search.windows.net"
+    )
+    error_message = "The event search service is Free tier in the production group, with API keys off."
+  }
+}

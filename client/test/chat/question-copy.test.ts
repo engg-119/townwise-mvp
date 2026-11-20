@@ -186,6 +186,21 @@ describe('a private event’s guests (D71)', () => {
     expect(answeredLine(PARTY, { answer: 'not_sure', note: null })).toBe('Got it. TownwiseAI won’t ask about this event again.');
   });
 
+  test('a count that lost to one saved first elsewhere, or to a Skip, says it wasn’t used', () => {
+    const saved = (expectedGuests: number) => noteOf({ kind: 'private_event', effect: 'more_guests', startDate: '2026-04-03', endDate: '2026-04-25', expectedGuests });
+    expect(answeredLine(PARTY, { answer: 'guests', note: saved(30), sent: 50 }))
+      .toBe('A count was already saved: 30 guests on the private event note, so your 50 wasn’t used. You can change it on the Notes page.');
+    expect(answeredLine(RECURRING, { answer: 'guests', note: saved(30), sent: 1200 }))
+      .toBe('A count was already saved: 30 guests each day on the private event note, so your 1,200 wasn’t used. You can change it on the Notes page.');
+    // The same count, saved here or first elsewhere, is simply saved.
+    expect(answeredLine(RECURRING, { answer: 'guests', note: saved(30), sent: 30 })).toBe('Saved: 30 guests each day on the private event note.');
+    expect(answeredLine(PARTY, { answer: 'guests', note: saved(30), asked: 'not_sure' }))
+      .toBe('A count was already saved: 30 guests on the private event note. TownwiseAI won’t ask about this event again.');
+    expect(answeredLine(PARTY, { answer: 'not_sure', note: null, asked: 'not_sure' })).toBe('Got it. TownwiseAI won’t ask about this event again.');
+    expect(answeredLine(PARTY, { answer: 'not_sure', note: null, sent: 50 }))
+      .toBe('This question was already skipped, so your count of 50 wasn’t saved. You can add it to the event’s note on the Notes page.');
+  });
+
   test('the activity says a count was saved, with the event’s dates and no count, and a skip as skipped', () => {
     expect(activityLine({ at: '2026-06-01T06:30:00.000Z', kind: 'guest_count_saved', noteId: 'n1', startDate: '2026-04-11', endDate: '2026-04-11' }))
       .toBe('Saved your guest count for the private event, Apr 11, 2026.');

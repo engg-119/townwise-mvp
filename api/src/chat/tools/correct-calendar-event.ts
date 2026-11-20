@@ -11,10 +11,7 @@
 // the card's Apply sends the person's own edit. It is not gated on TownwiseAI working on its own (a person asked, and
 // it has Undo), and reading the calendar (turn.readNotTyped) does not block it. A turn that read researched events
 // (turn.readResearchedDays, whose titles came from web pages) applies at most one correction itself and proposes the
-// rest for a tap, so a planted title asking to hide other events changes one at most, with Undo. [CONFIRM: TownwiseAI
-// corrects a researched event when a person asks, whether or not it works on its own; in a turn that read the web or a
-// file it proposes the change for one tap instead; at most 5 a turn, at most 1 applied itself after reading researched
-// events]
+// rest for a tap, so a planted title asking to hide other events changes one at most, with Undo.
 //
 // The view keeps the call as the existing `tool` part (no new part type, no stream event): its result view is
 // `{ applied, code, eventId, changeId, proposed, fields }`, from which the client draws the card; `fields` the edit's
