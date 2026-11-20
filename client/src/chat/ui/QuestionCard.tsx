@@ -216,7 +216,10 @@ function CardError(props: { message: string; live: boolean; onRetry?: () => void
   );
 }
 
-/** D71: the Guests field, Save and Skip of a private event's question. */
+/**
+ * D71: the Guests field, Save and Skip of a private event's question. [CONFIRM: "Guests who came" ("…each day"), Save, Skip
+ * and "Enter a whole number of guests from 1 to 20,000."]
+ */
 function PartyAnswers(props: {
   id: string; helpId: string; help: string; many: boolean; off: boolean; readOnlyId: string | null;
   save: (guests: number) => void; skip: () => void;
