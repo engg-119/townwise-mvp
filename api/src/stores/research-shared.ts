@@ -448,12 +448,13 @@ export const threadMoves = {
   },
   /**
    * Puts `owner`'s running thread back in the queue as it was before the claim, the attempt not counted: a lane that
-   * claimed it while its replica was shutting down, before any call or reservation.
+   * claimed it while its replica was shutting down, before any call or reservation, or (with `notBefore`) a town thread
+   * whose reservation waits for another's in flight.
    */
-  async release(model: Model<ThreadDoc>, base: Filter, id: string, owner: string): Promise<boolean> {
+  async release(model: Model<ThreadDoc>, base: Filter, id: string, owner: string, notBefore?: Date): Promise<boolean> {
     const result = await model.updateOne(
       { ...base, _id: new Types.ObjectId(id), status: 'running', owner },
-      { $set: { status: 'queued', owner: null, leaseUntil: null }, $inc: { attempts: -1 } },
+      { $set: { status: 'queued', owner: null, leaseUntil: null, ...(notBefore === undefined ? {} : { notBefore }) }, $inc: { attempts: -1 } },
     );
     return result.modifiedCount === 1;
   },

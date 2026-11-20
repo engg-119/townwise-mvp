@@ -72,6 +72,12 @@ export const PER_ORG_LIVE = 1;
 export const RESEARCH_MAX_ATTEMPTS = 2;
 /** The wait after a failed attempt that may be retried; with at most 2 attempts only the first attempt is ever retried. */
 export const RESEARCH_RETRY_WAITS_MS: readonly number[] = [10 * MINUTE];
+/**
+ * How long a town thread whose reservation the month or its slice refused waits while another town thread's reservation
+ * is in flight (second UI review): that one settles to far less within minutes, so this one is tried again rather than
+ * ended `budget`.
+ */
+export const BUDGET_WAIT_MS = MINUTE;
 export const RESEARCH_LEASE_MS = 90_000;
 export const RESEARCH_HEARTBEAT_MS = 30_000;
 /** What an automatic location thread leaves of the TownwiseAI month: $5. */
@@ -153,8 +159,10 @@ interface Job {
   heartbeat(input: ThreadTallyWrite & { now: Date; leaseMs: number }): Promise<boolean>;
   finish(end: ThreadEnd): Promise<boolean>;
   requeue(input: ThreadTallyWrite & { notBefore: Date; code: string | null }): Promise<boolean>;
-  /** Back in the queue with the attempt not counted. */
-  release(): Promise<boolean>;
+  /** Back in the queue with the attempt not counted, due at `notBefore` when given. */
+  release(notBefore?: Date): Promise<boolean>;
+  /** Whether another thread's reservation is in flight against the same money (town threads only; a location's never stack). */
+  othersReserving(): Promise<boolean>;
 }
 
 /** A merge whose lease another took over, or whose run ended meanwhile: it stops writing. */
@@ -204,7 +212,8 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       heartbeat: (input) => store.heartbeat(thread.id, owner, input),
       finish: (end) => store.finishThread(thread.id, owner, end),
       requeue: (input) => store.requeueThread(thread.id, owner, input),
-      release: () => store.releaseThread(thread.id, owner),
+      release: (notBefore) => store.releaseThread(thread.id, owner, notBefore),
+      othersReserving: () => store.othersReserving(thread.id),
     };
   }
 
@@ -221,6 +230,8 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       finish: (end) => store.finishThread(scope, thread.id, owner, end),
       requeue: (input) => store.requeueThread(scope, thread.id, owner, input),
       release: () => store.releaseThread(scope, thread.id, owner),
+      // One live location thread an organization (PER_ORG_LIVE), so its reservations never stack.
+      othersReserving: () => Promise.resolve(false),
     };
   }
 
@@ -406,7 +417,16 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     const prompt = gatherPrompt(prepared.input);
     const reserved = reserveMicroUsd(threadLimits(prepared.input.thread, fetchSwitch.on, prompt));
     const inMonth = month(now());
-    if (!await reserve(job, run, reserved, inMonth)) return endWithout(job, 'budget', 'budget', started);
+    if (!await reserve(job, run, reserved, inMonth)) {
+      // Refused while another town thread's reservation is in flight: it settles to far less (a town thread costs a
+      // tenth or less of its reservation), so this one waits a minute, the attempt not counted, rather than ending
+      // `budget` for money that was never spent (second UI review). With none in flight the month or slice is spent.
+      if (await job.othersReserving() && await job.release(new Date(now().getTime() + BUDGET_WAIT_MS))) {
+        logThread(job, { outcome: 'waiting', code: 'budget', kept: 0, dropped: 0, costMicroUsd: 0, searches: 0, fetches: 0, started });
+        return false;
+      }
+      return endWithout(job, 'budget', 'budget', started);
+    }
     if (!await job.reserveThread({ reservedMicroUsd: reserved, month: inMonth })) {
       // Ended by someone else meanwhile (a place change, a deletion): give the reservation back.
       await settle(job, inMonth, -reserved);

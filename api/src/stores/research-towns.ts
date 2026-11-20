@@ -143,8 +143,13 @@ export interface TownResearchStore {
   heartbeat(id: string, owner: string, input: ThreadTallyWrite & { now: Date; leaseMs: number }): Promise<boolean>;
   finishThread(id: string, owner: string, end: ThreadEnd): Promise<boolean>;
   requeueThread(id: string, owner: string, input: ThreadTallyWrite & { notBefore: Date; code: string | null }): Promise<boolean>;
-  /** Puts a claimed thread back with its attempt not counted (a shutdown before any call, threadMoves.release). */
-  releaseThread(id: string, owner: string): Promise<boolean>;
+  /**
+   * Puts a claimed thread back with its attempt not counted (a shutdown before any call, threadMoves.release), due at
+   * `notBefore` when given (a reservation waiting for another's in flight).
+   */
+  releaseThread(id: string, owner: string, notBefore?: Date): Promise<boolean>;
+  /** Whether a running town thread other than `id` holds a reservation now (any town: they share the month's cap). */
+  othersReserving(id: string): Promise<boolean>;
   /** Running threads whose lease passed by `now` (a dead replica's), ids only. */
   staleThreads(now: Date): Promise<string[]>;
   reclaimThread(id: string, input: { now: Date; next: { status: 'queued'; notBefore: Date } | { status: 'failed'; code: string } }): Promise<TownThreadRecord | null>;
@@ -255,7 +260,11 @@ export function createTownResearchStore(connection: Connection): TownResearchSto
     heartbeat: (threadId, owner, input) => threadMoves.heartbeat(threads, {}, threadId, owner, input),
     finishThread: (threadId, owner, end) => threadMoves.finish(threads, {}, threadId, owner, end),
     requeueThread: (threadId, owner, input) => threadMoves.requeue(threads, {}, threadId, owner, input),
-    releaseThread: (threadId, owner) => threadMoves.release(threads, {}, threadId, owner),
+    releaseThread: (threadId, owner, notBefore) => threadMoves.release(threads, {}, threadId, owner, notBefore),
+    async othersReserving(threadId) {
+      const other = { _id: trusted({ $ne: id(threadId) }), status: 'running' as const, reservedMicroUsd: trusted({ $gt: 0 }) };
+      return await Thread.exists(other) !== null;
+    },
     async staleThreads(now) {
       const docs = await Thread.find({ status: 'running', leaseUntil: trusted({ $lte: now }) }, { _id: 1 }).lean();
       return docs.map((doc) => doc._id.toHexString());

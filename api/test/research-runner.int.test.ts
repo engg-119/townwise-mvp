@@ -23,7 +23,7 @@ import { messageCostMicroUsd } from '../src/chat/pricing.ts';
 import type { Competitor } from '../src/research/competitors.ts';
 import { researchRuns } from '../src/research/plan.ts';
 import { researchedEventsFor } from '../src/research/read.ts';
-import { createResearchRunner, staleGraceMicroUsd, type ResearchRunner, type ResearchRunnerDeps } from '../src/research/runner.ts';
+import { BUDGET_WAIT_MS, createResearchRunner, staleGraceMicroUsd, type ResearchRunner, type ResearchRunnerDeps } from '../src/research/runner.ts';
 import type { ThreadId } from '../src/research/threads.ts';
 import type { TownwiseStores } from '../src/stores/index.ts';
 import { citedQuotes, message, scriptedModel, text, webResults, webSearch, type Step } from './helpers/chat-model.ts';
@@ -33,6 +33,7 @@ import { startTownwiseServer, type TownwiseTestServer } from './helpers/server.t
 const STAFF = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
 const NOW = new Date('2026-11-19T15:00:00Z');
 const MONTH = '2026-11';
+const DAY = 86_400_000;
 const PAGE_A = 'https://calendar.sentinel-college.example.org/winter';
 const PAGE_B = 'https://www.sentinel-town.example.gov/events';
 const TITLE = 'Sentinel Lantern Walk';
@@ -231,6 +232,35 @@ describe('the runner: threads', () => {
     expect(calls).toHaveLength(0);
     expect(await threadDoc()).toMatchObject({ status: 'budget', code: 'budget' });
     expect((await stores.researchTowns.findRun(created.id))?.status).toBe('budget');
+  });
+
+  it('a reservation refused only by another town thread’s in flight waits for it, and runs once that one settles', async () => {
+    // Another town's thread holds $15 of a $20 month: about $5.50 more does not fit until it settles.
+    const other = await stores.researchTowns.insertRun({ townKey: 'amherst-ma', key: `w:${randomUUID()}`, threads: ['schools'], now: clock });
+    if (other === null) throw new Error('no run');
+    await stores.researchTowns.insertThreads(other, [{ thread: 'schools', notBefore: new Date(NOW.getTime() + DAY) }], clock);
+    const busy = { townKey: 'amherst-ma' };
+    await server.connection.collection('tw_town_research_threads').updateOne(busy, {
+      $set: { status: 'running', owner: 'elsewhere', leaseUntil: new Date(NOW.getTime() + DAY), reservedMicroUsd: 15_000_000, month: MONTH },
+    });
+    await stores.researchSpend.add({ month: MONTH, townKey: 'amherst-ma', costMicroUsd: 15_000_000 });
+    const created = await townRun();
+    const config = { ...CONFIG, researchTownMonthlyUsd: 20 };
+    const { model, calls } = answering();
+    await run(runner(model, { config }));
+    expect(calls).toHaveLength(0);
+    expect(await threadDoc({ townKey: 'hanover-nh' })).toMatchObject({ status: 'queued', attempts: 0, notBefore: new Date(NOW.getTime() + BUDGET_WAIT_MS) });
+    expect((await stores.researchTowns.findRun(created.id))?.status).toBe('running');
+    expect(lines('townwise.research_thread').map((line) => line.outcome)).toEqual(['waiting']);
+
+    // The other settles to $0.20: this one fits and runs.
+    await server.connection.collection('tw_town_research_threads').updateOne(busy, { $set: { status: 'recorded', owner: null, leaseUntil: null } });
+    await stores.researchSpend.add({ month: MONTH, townKey: 'amherst-ma', costMicroUsd: -14_800_000 });
+    clock = new Date(NOW.getTime() + BUDGET_WAIT_MS);
+    await run(runner(model, { config }));
+    expect(calls).toHaveLength(2);
+    expect(await threadDoc({ townKey: 'hanover-nh' })).toMatchObject({ status: 'recorded', attempts: 1 });
+    expect((await stores.researchTowns.findRun(created.id))?.status).toBe('done');
   });
 
   it('a shutdown aborts the call, settles, and puts the thread back with the attempt counted', async () => {

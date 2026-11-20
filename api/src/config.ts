@@ -119,7 +119,8 @@ export const configSchema = z.object({
   /**
    * D66 decision 7: what town research (a system cost, no organization's) may spend in a month, in US dollars, split
    * evenly between the towns in use; 0 turns town research off. [CONFIRM: town research is system cost, at most $40 a
-   * month by default (about 5 towns weekly at the measured cost), split evenly between the towns in use]
+   * month by default (about 3 towns weekly at the measured cost, since a town's slice must hold its month's spend and
+   * one thread's reservation), split evenly between the towns in use]
    */
   TOWNWISE_RESEARCH_TOWN_MONTHLY_USD: z.coerce.number().min(0).max(1000).default(40),
   /**
