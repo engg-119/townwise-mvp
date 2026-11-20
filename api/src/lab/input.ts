@@ -254,8 +254,7 @@ function isParty(note: Flagged): boolean {
  * with more guests and a guest count) is the exception: the forecast read adds its guests on every day it covers, so on
  * a history day it sets no privateEvent and the day's guests go out less its guest count (never below 0). Training then
  * sees the day's base demand and the read adds the party back, so a recurring party ("40 more guests every Friday") is
- * never counted twice through a privateEvent flag collinear with its weekday. [CONFIRM: on a history day a counted
- * party's guests are taken off the day's guests and set no privateEvent] After dataThrough the forecast read applies
+ * never counted twice through a privateEvent flag collinear with its weekday. After dataThrough the forecast read applies
  * closures, buyouts and counted parties itself (forecasts/adjust.ts, spec 14.5), so closed and booked are false and
  * those private events don't set privateEvent: a run never bakes in a status or a lift that editing or deleting the
  * note could not undo, and never counts a party twice. Closures the model learns (weekdays, holidays) still come from
@@ -278,9 +277,7 @@ function isParty(note: Flagged): boolean {
  * party is never counted twice): a buyout sets booked, so training drops the day, and a party sets privateEvent. They
  * never change closed, the likely-closed test, a rule's closure or the guests sent, so a machine-sorted label never
  * reopens a closed day or keeps a near-empty day's guests. After dataThrough they set nothing: an upcoming booking reaches
- * the forecast as the linked note confirming made, which editing can undo. [CONFIRM: a confirmed buyout label books a past
- * day and a party label marks it a private event, unless a note on the day decides] [CONFIRM: labels never change a day's
- * closed or likely-closed status or its guests]
+ * the forecast as the linked note confirming made, which editing can undo.
  * Owner beats agent (D59): on any day, a note a person made that decides the day sets aside every TownwiseAI note
  * covering it (forecasts/adjust.ts ownerBeatsAgent) before the flags are read.
  */

@@ -108,7 +108,7 @@ const MAX_RANGE_DAYS = 92;
 
 /**
  * Each account's adds that fetch, links and Google calendars together: 12 an hour, so removing a calendar and adding it
- * again reads it no more often than "Refresh now" may. [CONFIRM: 12 link adds an hour]
+ * again reads it no more often than "Refresh now" may.
  */
 export const LINK_ADD_BUDGET = { name: 'townwise:calendar-links', limit: 12, windowSeconds: 3600 } as const;
 const linkAddBudgets = new WeakMap<TownwiseContext['redis'], RateLimiter>();

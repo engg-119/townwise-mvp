@@ -14,8 +14,7 @@
 // so a one-day opening or party note opens a day a standing closure rule would close. Before today a rule's closure
 // holds only when the day's guests are missing (no row, no guest count or 0) or under the likely-closed line: real
 // recorded guests beat a standing rule, so they are never dropped from training. A rule's buyout and a closure note
-// keep closing past days. [CONFIRM: a note covering a day beats a rule schedule's closure or buyout, and before today a
-// rule's closure holds only on a day with no guests or guests under the likely-closed line]
+// keep closing past days.
 //
 // A note marking a day's guest count wrong (D67) is read before any of this: trustedGuestDays sets that day's guests to
 // null, so it is a day with sales and no guest count, never likely closed and never in a neighbor's typical guests.

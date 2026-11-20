@@ -34,7 +34,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** The newest calibrations read per organization, as the forecast lab's list reads them. */
 const CALIBRATIONS_READ = 50;
 
-/** [CONFIRM: Needs attention's thresholds: 2 days, 14 days, 7 days, 80%] */
 export const REQUEST_WAITING_DAYS = 2;
 export const NO_UPLOAD_DAYS = 14;
 export const INVITE_WAITING_DAYS = 7;

@@ -9,7 +9,6 @@ import type { Rule, RuleSchedule, RuleSeason } from './api';
 
 export { checkSchedule } from '../locations/noteRules';
 
-/** [CONFIRM: 30 business rules per location, 200 characters each] */
 export const RULE_LIMIT = 30;
 export const RULE_CHARS = 200;
 /** The field shows its character count from here on. */

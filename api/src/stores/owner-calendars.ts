@@ -68,11 +68,11 @@ import { WEEKLY_TITLES_NOTICE } from '../calendar/titles-notice.ts';
 export const CALENDAR_SOURCES_COLLECTION = 'tw_calendar_sources';
 export const CALENDAR_EVENTS_COLLECTION = 'tw_calendar_events';
 
-/** At most this many calendars per location. [CONFIRM: 5 calendars per location] */
+/** At most this many calendars per location. */
 export const MAX_CALENDARS = 5;
-/** The owner's name for a calendar. [CONFIRM: a 60 character name] */
+/** The owner's name for a calendar. */
 export const MAX_LABEL_CHARS = 60;
-/** A link is fetched again this long after it was added or last refreshed. [CONFIRM: 6 hour refresh] */
+/** A link is fetched again this long after it was added or last refreshed. */
 export const REFRESH_INTERVAL_MS = 6 * 60 * 60_000;
 /** "Refresh now" runs at most once per calendar in this long (the calendar-subscription spec). */
 export const MANUAL_REFRESH_INTERVAL_MS = 5 * 60_000;

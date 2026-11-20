@@ -31,8 +31,7 @@ const CHARS_PER_TOKEN = 3;
 
 /**
  * The labels' definitions, from the owner's defaults (2026-11-18, "use the default values"; tasks.md 0.1). The titles are
- * the restaurant's own data, never instructions. [CONFIRM: what counts as a buyout, a party, the restaurant's own event
- * and not a booking, in Sort with TownwiseAI's prompt]
+ * the restaurant's own data, never instructions.
  */
 export const BOOKING_SORT_SYSTEM_PROMPT = [
   'You sort a restaurant\'s own calendar events, so its guest forecast can learn which past days held private bookings.',

@@ -5,7 +5,7 @@ import { provenOrder, readAmount, readDateCell, type DateOrder } from './values'
 // the distinct values of the one column the person names as locations. No cell is kept here except those
 // location values (D11).
 
-/** 50 MB [CONFIRM: 50 MB]. */
+/** 50 MB. */
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 /** Cells sampled per column for its kind. */
 export const SAMPLE_CELLS = 200;
@@ -121,7 +121,7 @@ const GUESSES = {
 
 export interface Guesses { date: number | null; guests: number | null; netSales: number | null }
 
-/** Spec 11.2 header guesses [CONFIRM: header guesses], earlier names in each list first. */
+/** Spec 11.2 header guesses, earlier names in each list first. */
 export function guessColumns(names: readonly string[]): Guesses {
   const keys = names.map(normalized);
   const find = (candidates: readonly string[]): number | null => {

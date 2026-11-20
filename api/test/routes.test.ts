@@ -405,7 +405,7 @@ describe('route table', () => {
       { id: 'org.google_calendars.list', method: 'GET', path: '/org/locations/:locationId/google-calendars', bodyLimit: 'none', ...row },
       { id: 'org.google_calendars.disconnect', method: 'DELETE', path: '/org/google-connection', bodyLimit: 'none', ...row },
     ]);
-    // [CONFIRM: 30 Google calendar calls an account an hour]; every call reaches Google, so a store outage denies.
+    // Every call reaches Google, so a store outage denies.
     expect(ROUTE_LIMITS.google_calendars).toEqual({ name: 'townwise:google-calendars', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' });
     expect(TOWNWISE_ROUTES.filter((r) => r.limiter === 'google_calendars').map((r) => r.id)).toEqual(rows.map((r) => r.id));
   });

@@ -28,11 +28,11 @@ import type { LabScorecard } from './scorecard.ts';
 
 export { HORIZON_DAYS } from './input.ts';
 
-/** What one calibration costs the organization's TownwiseAI month (the job's list price is about $0.03). [CONFIRM] */
+/** What one calibration costs the organization's TownwiseAI month (the job's list price is about $0.03). */
 export const CALIBRATION_CHARGE_MICRO_USD = 100_000;
-/** Calibrations an organization may start in a day (townwise:calibrations; a store outage denies). [CONFIRM] */
+/** Calibrations an organization may start in a day (townwise:calibrations; a store outage denies). */
 export const CALIBRATIONS_PER_ORG_PER_DAY = 4;
-/** A calibration still live this long after it was requested has failed (timeout); its callback closes at the same time. [CONFIRM] */
+/** A calibration still live this long after it was requested has failed (timeout); its callback closes at the same time. */
 export const CALIBRATION_TIMEOUT_MS = 1_200_000;
 /** A pattern change needs this many days of history after it, so the new pattern has weeks to learn from. [CONFIRM] */
 const REGIME_TAIL_DAYS = 56;
@@ -204,7 +204,6 @@ export async function regimeStartFits(
  * answers model_not_run to every such baseline and the start would be charged for nothing; a pattern change date falls
  * inside it, at least 8 weeks before its last day; the month's TownwiseAI budget is not spent (a person's start only);
  * and no calibration of the location is live (a stale one is timed out first).
- * [CONFIRM: a person's calibration starts from 230 days and runs the baseline alone under 595, spec index item 159]
  */
 export async function checkStart(ctx: LabStartContext, req: StartRequest): Promise<StartRefusal | null> {
   if (ctx.labRunner === null) return 'lab_unavailable';

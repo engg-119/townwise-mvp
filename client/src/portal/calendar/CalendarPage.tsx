@@ -214,8 +214,7 @@ function CalendarView(): React.JSX.Element {
   }
   const nextStrip = stripFor(strip, viewStart, bounds, today);
   if (nextStrip !== strip) setStrip(nextStrip);
-  // Whether the forecast chart shows (D64): page state, on at first. [CONFIRM: the forecast chart shown by default on
-  // the Calendar with a “Forecast chart” chip to hide it]
+  // Whether the forecast chart shows (D64): page state, on at first.
   const [chartOn, setChartOn] = useState(true);
   if (nextShown !== shownMonth) setShownMonth(nextShown);
   const month = gridMonthFor(selected, nextShown, rendered);

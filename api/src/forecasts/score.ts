@@ -1,10 +1,10 @@
 // How published forecasts compared with what happened (spec 14.4): live accuracy over the days that have passed,
 // misses included. A day counts when it was forecast open, has a stored guest count and is before today; booked days
 // are left out (the booking rule: a private buyout has no walk-in forecast), and so are days that were closed or likely
-// closed (spec D32: a closure, not a forecast miss). [CONFIRM: live accuracy leaves out closed and likely-closed days]
+// closed (spec D32: a closure, not a forecast miss).
 // A day is compared only with a forecast that couldn't know how it went (D49 as amended 2026-11-18): from a run whose
 // data ends before it (sawDay), whenever the run was made, unless the run may have read a note or rule written once
-// the day began (writtenForRun, reader.ts). [CONFIRM: a past day is compared with any run whose data ends before it]
+// the day began (writtenForRun, reader.ts).
 // The measure is the notebook's, WAPE: the sum of |actual - mid| over the sum of actuals. Under 5 scored days there is
 // no figure. Pure.
 import { utcDay } from '../dates.ts';
@@ -30,7 +30,7 @@ export interface ScoredDay {
   readonly late?: boolean;
   /**
    * The day is in its run's outlook (D52, tiers.ts): left out of live accuracy, which keeps scoring the forecast tier
-   * only. [CONFIRM: outlook days are left out of live accuracy, so it keeps scoring only the forecast tier]
+   * only.
    */
   readonly outlook?: boolean;
 }

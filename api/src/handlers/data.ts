@@ -854,8 +854,7 @@ function nothingToUndo(): AppError {
  * its actions and its answer, and only the call that does records file.ai_undone (counts of what it removed). Answers
  * 200 { item, calibrationKept }. D46: the read's suggested closure rules still open go one at a time, each by
  * compare-and-set, except one whose rule a confirm already wrote under its id, which is finished as accepted; accepted
- * and dismissed ones stay. [CONFIRM: undoing a read removes its suggested rules still waiting and keeps rules already
- * confirmed]
+ * and dismissed ones stay.
  */
 export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);

@@ -1,8 +1,7 @@
 // Suggested closure rules (openspec change suggest-closure-rules, D46, P29, P25): any member, outside view-as (staff open
 // as admin among them), confirms, edits or dismisses a file or sales suggestion through
 // POST .../agent/rule-suggestions/:suggestionId/accept and .../dismiss. A weekly suggestion is 404 here before any
-// write; the weekly routes (handlers/weekly-suggestions.ts) take those, for org admins. [CONFIRM: any member confirms,
-// edits or dismisses a suggested closure rule; weekly suggestions stay with org admins]
+// write; the weekly routes (handlers/weekly-suggestions.ts) take those, for org admins.
 //
 // Confirm writes the suggestion's rule, and Edit the rule in the body, through the rules code as the caller, added by
 // TownwiseAI, with the suggestion's id as the rule's id; then a compare-and-set marks the suggestion accepted, and only

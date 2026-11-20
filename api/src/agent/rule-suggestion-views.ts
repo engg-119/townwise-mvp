@@ -4,7 +4,7 @@
 // file is named by its item ref and its name (none under view-as, as Your data hides it), or null once it is deleted.
 // The sales history's suggestions are computed on read: listed as `sales_weekday_{d}` while no row holds their closure
 // key, and stored only when someone decides one (handlers/rule-suggestions.ts); once a row holds the key it is listed
-// under its own id while open, and hidden otherwise. [CONFIRM: the sales history suggests standing closed weekdays]
+// under its own id while open, and hidden otherwise.
 import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { scheduleSummary } from '../forecasts/reasons.ts';

@@ -14,7 +14,7 @@ import type { LocationRecord } from './stores/locations.ts';
 import type { Coverage } from './stores/sales-days.ts';
 import { localDay, localMinutes, timeZoneOf } from './time-zones.ts';
 
-/** A location's week starts at this hour on Monday, in its town's time zone (lab/schedule.ts). [CONFIRM] */
+/** A location's week starts at this hour on Monday, in its town's time zone (lab/schedule.ts). */
 export const SCHEDULE_START_HOUR = 3;
 
 interface HistoryFields { dayCount: number; firstDate: string; lastDate: string }

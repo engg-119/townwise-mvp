@@ -253,15 +253,13 @@ export function keptLine(error: unknown): string {
 }
 
 /**
- * D60: under the status of a calendar file kept in Your data, what importing it as a calendar did. [CONFIRM: the words
- * for a calendar file imported from Your data]
+ * D60: under the status of a calendar file kept in Your data, what importing it as a calendar did.
  */
 export const CALENDAR_IMPORT = {
   open: 'Open the calendar',
   retry: 'Try again',
   retrying: 'Trying again…',
-  // UI review 2026-11-19: a calendar file kept before D60 imported calendar files. [CONFIRM: the words and the action for
-  // a calendar file kept before calendar files were imported]
+  // UI review 2026-11-19: a calendar file kept before D60 imported calendar files.
   unimported: 'This calendar file was kept before Townwise added calendar files to your calendars, so it isn’t one of them. Import it as a calendar, or delete it if it’s already one of your calendars.',
   unimportedGone: 'This calendar file was kept before Townwise added calendar files to your calendars, and its original was deleted, so it can’t be imported.',
   importOld: 'Import as a calendar',

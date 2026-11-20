@@ -15,8 +15,7 @@ import { Mono } from '../ui/text';
 // own day and its neighbors, calendar/chart.ts chartWindow, so a long week strip draws each day in constant time).
 // `shaded` is today's column (`white` at 5%), `lit` the chosen or hovered one (`white` at 8% on Home, as before), and
 // `chosen` the Calendar's selected day (`mint` at 16% with 1px `mint` edges, D64), so it never reads as today's shade
-// and a hovered column beside it doesn't take its place [CONFIRM: the chart's selected day tinted `mint` at 16% with
-// 1px `mint` edges, apart from today's `white` 5% shade]. `words` stand upright in
+// and a hovered column beside it doesn't take its place. `words` stand upright in
 // columns too narrow for words across (the month's); a column with a word draws no same-weekday-last-year point and
 // the line breaks around it, so the faint line never runs through the word (D64; `wordedLastYear` keeps the key honest).
 // The drawing is always aria-hidden: the surface that draws it says each day in words. `PlotKey` names only what is

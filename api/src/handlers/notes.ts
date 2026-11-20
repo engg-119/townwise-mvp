@@ -40,7 +40,7 @@ export interface NoteView extends NoteContent {
   fromEvent: NoteLinkView | null;
 }
 
-/** Spec 6.7. [CONFIRM: 1,000 notes] */
+/** Spec 6.7. */
 export const MAX_NOTES = 1000;
 /** An end date at most 366 days after the start. */
 const MAX_SPAN_DAYS = 366;
@@ -143,7 +143,7 @@ function sharedContentOf(body: SharedBody): Omit<RuleSchedule, 'endDate'> {
 function validDays(content: RuleSchedule, today: string): boolean {
   const { startTime, endTime, endDate } = content;
   const season = content.season ?? null;
-  // 'HH:MM' strings order as the times do. [CONFIRM: an event with hours ends by midnight on its own day]
+  // 'HH:MM' strings order as the times do.
   const validHours = startTime === null || endTime === null
     ? startTime === endTime
     : startTime < endTime && content.kind !== 'closure';

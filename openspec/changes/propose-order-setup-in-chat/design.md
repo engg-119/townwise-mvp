@@ -70,16 +70,16 @@ As with saving the setup today. A member who is not an org admin gets a card onl
 
 ## Decisions taken for the owner
 
-The coordinator took these on the owner's behalf on 2026-11-18. Each is a `[CONFIRM: ...]` marker in the D56 row (written in phase B) until the owner signs off.
+The coordinator took these on the owner's behalf on 2026-11-18. Each was a `[CONFIRM: ...]` marker in the D56 row (written in phase B) until the owner approved them all on 2026-11-19.
 
-1. `[CONFIRM: the suggestion stays in the conversation as TownwiseAI wrote it, after the file is turned off or deleted too; the card is then no longer served]`
-2. `[CONFIRM: the chat tool's schema has no point-of-sale names, and the card never shows or merges one]`
-3. `[CONFIRM: the card opens Ordering setup unsaved; nothing saves from chat, and the card keeps no saved mark]`
-4. `[CONFIRM: any member may use it, as any member saves the setup today]`
-5. `[CONFIRM: 60 items a card; longer lists go to Read a file with TownwiseAI on Ordering setup]` (unmeasured: the timing spike was skipped)
+1. Approved by the owner on 2026-11-19: the suggestion stays in the conversation as TownwiseAI wrote it, after the file is turned off or deleted too; the card is then no longer served.
+2. Approved by the owner on 2026-11-19: the chat tool's schema has no point-of-sale names, and the card never shows or merges one.
+3. Approved by the owner on 2026-11-19: the card opens Ordering setup unsaved; nothing saves from chat, and the card keeps no saved mark.
+4. Approved by the owner on 2026-11-19: any member may use it, as any member saves the setup today.
+5. Approved by the owner on 2026-11-19: 60 items a card; longer lists go to Read a file with TownwiseAI on Ordering setup. (unmeasured: the timing spike was skipped)
 6. Lenient keys in `parse` (D41's rule: unknown keys dropped), as Decision 3 argues.
-7. `[CONFIRM: charged to the TownwiseAI month, not the files AI budget]`
-8. `[CONFIRM: only from a file attached to the conversation whose content the turn sent, as D36 sends it]`
+7. Approved by the owner on 2026-11-19: charged to the TownwiseAI month, not the files AI budget.
+8. Approved by the owner on 2026-11-19: only from a file attached to the conversation whose content the turn sent, as D36 sends it.
 
 ## Security and privacy
 
@@ -131,7 +131,7 @@ That change landed on `develop` while phase B was built, and the branch was reba
 
 - Code review. "Not now" on a card that stopped being served (404) now says the suggestions aren't available any more and drops the actions. On Ordering setup the merge is kept by card, not by page: a second `?proposal=` in the same page merges and replaces the first card's summary, and a card a save went through for is never read or merged again in that page, also when its address comes back. A setup card says "Loading TownwiseAI's suggestions…" while it loads.
 - Security review, M1. `redacted` (`api/src/model-answer.ts`) reads at most four times the characters it keeps (`REDACT_SCAN_FACTOR`), because the email pattern is quadratic on a long run with no "@" and a stored call is checked again on every read of its conversation. A 60,000-character note took 7.5 seconds before and is checked in well under 100 ms now. A text within the bound is redacted exactly as before, for the setup read (D41) and the file reader (D34) too; a longer one loses its tail before the patterns run. The email pattern itself is unchanged: a lookbehind that makes it linear would stop redacting the second of two addresses written back to back.
-- Security review, the rest. L1: under view-as the card's GET answers counts only, decided by the coordinator (`[CONFIRM: under view-as the setup card shows counts only]`); the client shows the two counts and no action, and Ordering setup merges nothing from such an answer. L2: Ordering setup lists each changed existing item, field by field, and the web pages line, as the card did. N1: the comment on the file check says a picture's first bytes are read. M2: the privacy wording was corrected to what the code does (the conversation keeps what TownwiseAI wrote from a file; which address and number formats are replaced; what survives a deleted original). L3, N2 and N3 changed no code; D56 states N3 plainly.
+- Security review, the rest. L1: under view-as the card's GET answers counts only, decided by the coordinator; the client shows the two counts and no action, and Ordering setup merges nothing from such an answer. L2: Ordering setup lists each changed existing item, field by field, and the web pages line, as the card did. N1: the comment on the file check says a picture's first bytes are read. M2: the privacy wording was corrected to what the code does (the conversation keeps what TownwiseAI wrote from a file; which address and number formats are replaced; what survives a deleted original). L3, N2 and N3 changed no code; D56 states N3 plainly.
 - After toasts (D55) landed: the page's "Saved the ordering setup." and "Loaded the setup as it was last saved." are toasts, and the card's merge goes through its own `applyProposal` in `SetupEditor.tsx`, which does not clear the notice as a person's edit does. The section's own lines (the summary, the change list, the web pages line, set aside, unavailable) are standing state in the page, never toasts.
 - UI review. A setup card that is no longer served says why, as a plain line, and any other failure of its read says to reload. On Ordering setup the section is first on the page and takes focus once its merge lands, since Review used to land far above it. "Not now" leaves "Set aside. Nothing was added. Ask TownwiseAI again if you want these suggestions back.", announced and focused. The card's "Nothing is saved yet" line is last, above its actions; it lists the first ten changed items and says how many more Ordering setup lists; a field change reads `unit: “cases” becomes “kegs”`; a card with nothing to open offers no action; the first line's counts add up when an item is left out. The page carries the picture caveat and its own web pages line, in one list, with the changes as rows under "N items already in your setup by name change when you save:". After "Load their changes" with a card open the toast says the suggestions were added again. The cut line no longer says "on the web".
 

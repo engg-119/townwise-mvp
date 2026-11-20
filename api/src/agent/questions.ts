@@ -55,8 +55,7 @@ export const MAX_QUESTIONS = 5;
 const WINDOW_DAYS = 365;
 /**
  * A weekday is usually closed when this share of its days in the window have no sales, and suggested as closed (D46)
- * when its last WEEKDAY_RECENT_DAYS counted days have none too. [CONFIRM: 60% of at least 4 days, and the last 4 counted
- * days without sales]
+ * when its last WEEKDAY_RECENT_DAYS counted days have none too.
  */
 const WEEKDAY_SHARE = 0.6;
 const WEEKDAY_MIN_DAYS = 4;
