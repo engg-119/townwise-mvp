@@ -79,13 +79,16 @@ function subjectInSentence(subject: Subject): string {
  * A run's status line: “Researching Hanover: 3 of 6 topics done”, “Your restaurant and nearby: last researched Nov 17,
  * 9 events, 3 new”, “Hanover: Queued” (as its topics read), or why the last run ended as it did; a partial run whose
  * unfinished topics were all skipped for budget says so rather than that they didn't finish. Null run: not researched yet.
+ * `paused` (research off for the organization or not running here, as the gap line says): a live run reads “Hanover:
+ * paused, 2 of 6 topics done”, since nothing goes on while it is off.
  */
-export function runLine(subject: Subject, run: TownRun | null): string {
+export function runLine(subject: Subject, run: TownRun | null, paused = false): string {
   const name = subjectName(subject);
   if (run === null) return `${name}: not researched yet`;
   const total = run.threads.length;
   const done = run.threads.filter((thread) => DONE_TOPICS.includes(thread.status)).length;
   const on = run.finishedAt === null ? '' : ` on ${shortDay(run.finishedAt)}`;
+  if (paused && isLive(run)) return total === 0 ? `${name}: paused` : `${name}: paused, ${formatCount(done)} of ${formatCount(total)} topics done`;
   switch (run.status) {
     case 'queued': return `${name}: Queued`;
     case 'running': return `Researching ${subjectInSentence(subject)}: ${formatCount(done)} of ${formatCount(total)} topics done`;
@@ -135,7 +138,7 @@ export function gapLine(gap: ResearchGap, opts: { town: string; admin: boolean; 
 // ---- Research now ----------------------------------------------------------------------------------------------------
 
 export const RESEARCH_NOW = 'Research now';
-export const RESEARCH_NOW_HELP = 'Looks again at your restaurant, its neighborhood and its competitors. Up to 3 times a day.';
+export const RESEARCH_NOW_HELP = 'Looks again at your restaurant, its neighborhood and its competitors. You can press it 6 hours after research last finished, up to 3 times a day.';
 export const RESEARCH_NOW_RUNNING = 'Research is running. This page updates as it goes.';
 export const RESEARCH_STARTED = 'Research started. This page updates as it goes.';
 

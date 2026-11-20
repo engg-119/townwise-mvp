@@ -14,7 +14,7 @@ import { act, cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-li
 import { addDays, localToday } from '../../../src/portal/locations/dates';
 import { resetProfiles } from '../../../src/portal/profile/useProfile';
 import { researchSeenKey } from '../../../src/portal/research/seen';
-import { pressOpensLine, RESEARCH_NOW, RESTORE_NOTICES, switchWords, WEEK_OFF } from '../../../src/portal/town/research-copy';
+import { pressOpensLine, RESEARCH_NOW, RESEARCH_NOW_RUNNING, RESTORE_NOTICES, switchWords, WEEK_OFF } from '../../../src/portal/town/research-copy';
 import {
   ACCESS, fakePortalApi, meOf, openAsAdminMe, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
@@ -129,6 +129,37 @@ test('gaps in words: research off for the organization', async () => {
   expect(await screen.findByText('Town research is off for your organization, so nothing new is being found.')).toBeTruthy();
   expect(screen.getByText(/^Little TownwiseAI budget was left this month/)).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Turn on town research' })).toBeTruthy();
+});
+
+test('with research off, a live run reads paused, Research now says nothing is running and nothing is polled (UI review)', async () => {
+  jest.useFakeTimers({
+    now: new Date(2026, 10, 19, 12, 0, 0),
+    doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance'],
+  });
+  const running = locationRun('running', {
+    threads: [{ thread: 'neighborhood', status: 'recorded', code: null }, { thread: 'competitors', status: 'recorded', code: null }],
+  });
+  const { api } = setup({ research: research({ on: false, gaps: ['off'], next: null, location: running }) });
+  await renderApp('/locations/l1/town', api);
+  expect(await screen.findByText('Town research is off for your organization, so nothing new is being found.')).toBeTruthy();
+  expect(screen.getByText('Your restaurant and nearby: paused, 2 of 2 topics done')).toBeTruthy();
+  expect(screen.queryByText(RESEARCH_NOW_RUNNING)).toBeNull();
+  expect(screen.queryByText(/^Researching your restaurant/)).toBeNull();
+  await act(() => jest.advanceTimersByTimeAsync(90_000));
+  expect(gets(api, `${BASE}/research`)).toBe(1);
+});
+
+test('coming up this week lists a day’s events by start time', async () => {
+  const today = localToday();
+  const { api } = setup({ found: [
+    found({ id: `t-${'c'.repeat(24)}`, title: 'A late show', start: today, end: today, startTime: '19:30' }),
+    found({ id: `t-${'d'.repeat(24)}`, title: 'B early show', start: today, end: today, startTime: '18:30' }),
+    found({ id: `t-${'e'.repeat(24)}`, title: 'Z all day fair', start: today, end: today, startTime: null }),
+  ] });
+  await renderApp('/locations/l1/town', api);
+  await screen.findByText('A late show');
+  // Not by title: an event with no time first, then 6:30 pm before 7:30 pm.
+  expect(screen.getAllByText(/^(A late show|B early show|Z all day fair)$/).map((node) => node.props.children as string)).toEqual(['Z all day fair', 'B early show', 'A late show']);
 });
 
 test('Research now posts, then reads the run, and refusals are words', async () => {

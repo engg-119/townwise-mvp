@@ -47,6 +47,17 @@ describe('status in topics', () => {
     expect(runLine({ kind: 'location' }, null)).toBe('Your restaurant and nearby: not researched yet');
   });
 
+  test('a live run reads paused while research is off, and an ended one as it ended (UI review)', () => {
+    const threads = [{ thread: 'neighborhood', status: 'recorded', code: null }, { thread: 'competitors', status: 'recorded', code: null }];
+    expect(runLine({ kind: 'location' }, run('running', threads, null), true)).toBe('Your restaurant and nearby: paused, 2 of 2 topics done');
+    expect(runLine({ kind: 'town', name: 'Hanover' }, run('queued', [], null), true)).toBe('Hanover: paused');
+    expect(runLine({ kind: 'location' }, run('done'), true)).toBe(runLine({ kind: 'location' }, run('done')));
+  });
+
+  test('Research now\'s help says the 6 hours after a finish and the 3 a day (UI review)', () => {
+    expect(copy.RESEARCH_NOW_HELP).toBe('Looks again at your restaurant, its neighborhood and its competitors. You can press it 6 hours after research last finished, up to 3 times a day.');
+  });
+
   test('each topic in words, a queued one with a code waiting to try again', () => {
     expect(SIX.map(topicLabel)).toEqual([
       'Schools and college', 'Sports', 'Arts and festivals', 'Town meetings, road work and parking', 'Tourism and seasons', 'Markets and community',

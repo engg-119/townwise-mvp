@@ -93,7 +93,10 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
   };
 
   const research = state.status === 'ready' ? state.data : null;
-  const running = research !== null && (isLive(research.location) || isLive(research.town));
+  // Research off for the organization (or not running here): a live run is paused, so nothing is polled and the run
+  // lines say paused, not running (the sweep leaves a switched-off organization's run as it is).
+  const active = research !== null && research.on && research.available;
+  const running = active && (isLive(research.location) || isLive(research.town));
   const onDone = useCallback((): void => {
     setTick((value) => value + 1);
     refreshOrg().catch(() => undefined);
@@ -140,9 +143,9 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
       <Section kicker={RESEARCH_KICKER} title={RESEARCH_HEADING}>
         <View style={styles.block}>
           {location.town.townId === null ? null : (
-            <RunBlock line={runLine({ kind: 'town', name: location.town.name }, data.town)} threads={data.town?.threads ?? []} live={isLive(data.town)} />
+            <RunBlock line={runLine({ kind: 'town', name: location.town.name }, data.town, !active)} threads={data.town?.threads ?? []} live={active && isLive(data.town)} />
           )}
-          <RunBlock line={runLine({ kind: 'location' }, data.location)} threads={data.location?.threads ?? []} live={isLive(data.location)} />
+          <RunBlock line={runLine({ kind: 'location' }, data.location, !active)} threads={data.location?.threads ?? []} live={active && isLive(data.location)} />
           {next === null ? null : <Text style={styles.help}>{next}</Text>}
           {data.gaps.map((gap) => (
             <Text key={gap} style={styles.body}>
@@ -266,15 +269,18 @@ function WeekList(props: { locationId: string; week: Load<ResearchedEvent[] | nu
   if (!props.on) return <Text style={styles.body}>{WEEK_OFF}</Text>;
   if (week.status === 'loading') return <LoadingLine text="Loading this week" minHeight={48} />;
   if (week.status === 'failed' || week.data === null) return <Text style={styles.body}>{WEEK_FAILED}</Text>;
-  // Each event on its first day this week (a season that began earlier, or a weekly market, is not listed by its start).
+  // Each event on its first day this week (a season that began earlier, or a weekly market, is not listed by its start),
+  // by day, then start time (an event with none first), then title.
   const from = localToday();
   const to = addDays(from, 6);
+  const order = (a: { day: string; event: ResearchedEvent }, b: { day: string; event: ResearchedEvent }): number =>
+    a.day.localeCompare(b.day) || (a.event.startTime ?? '').localeCompare(b.event.startTime ?? '') || a.event.title.localeCompare(b.event.title);
   const events = week.data
     .flatMap((event) => {
       const day = firstDay(event, from, to);
       return day === null ? [] : [{ event, day }];
     })
-    .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.event.title < b.event.title ? -1 : 1));
+    .sort(order);
   if (events.length === 0) return <Text style={styles.body}>{WEEK_EMPTY}</Text>;
   const shown = events.slice(0, WEEK_MAX);
   const more = moreLine(events.length - shown.length);
