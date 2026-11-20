@@ -202,6 +202,44 @@ test('members see no Research now and no switch; Restore sends the item’s head
   expect(screen.queryByRole('button', { name: /town research$/ })).toBeNull();
 });
 
+test('a Restore reads this week and the competition again, so the restored event shows at once (UI review)', async () => {
+  const { api, body } = setup({ found: [] });
+  const from = localToday();
+  const week = `${BASE}/calendar?from=${from}&to=${addDays(from, 6)}`;
+  api.answers[`${BASE}/research/events/l-${HEX}`] = () => {
+    body.research = research({ hidden: [] });
+    return { event: found({ id: `l-${HEX}`, head: 'r2' }) };
+  };
+  await renderApp('/locations/l1/town', api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Restore Quiz night' }));
+  expect(await screen.findByText(RESTORE_NOTICES.restored)).toBeTruthy();
+  await waitFor(() => { expect(gets(api, week)).toBe(2); });
+  expect(gets(api, `${BASE}/competition?theme=dark`)).toBe(2);
+});
+
+test('restoring an edited event says the team’s edits were dropped (UI review)', async () => {
+  const { api, body } = setup({
+    research: research({ hidden: [{ id: `l-${HEX}`, title: 'Quiz night, edited', start: '2026-12-03', end: '2026-12-03', head: 'r1', edited: true }] }),
+  });
+  api.answers[`${BASE}/research/events/l-${HEX}`] = () => {
+    body.research = research({ hidden: [] });
+    return { event: found({ id: `l-${HEX}`, head: 'r2' }) };
+  };
+  await renderApp('/locations/l1/town', api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Restore Quiz night, edited' }));
+  expect(await screen.findByText(RESTORE_NOTICES.restoredEdited)).toBeTruthy();
+  expect(screen.queryByText(RESTORE_NOTICES.restored)).toBeNull();
+});
+
+test('a location run with every topic done says it waits for the town’s research (UI review)', async () => {
+  const held = locationRun('running', {
+    threads: [{ thread: 'neighborhood', status: 'recorded', code: null }, { thread: 'competitors', status: 'recorded', code: null }],
+  });
+  const { api } = setup({ research: research({ town: townRun('running', 3), location: held }) });
+  await renderApp('/locations/l1/town', api);
+  expect(await screen.findByText('Your restaurant and nearby: 2 of 2 topics done, waiting for Hanover’s research to finish')).toBeTruthy();
+});
+
 test('a Restore someone beat says so and shows the event as it reads now', async () => {
   const { api, body } = setup();
   api.answers[`${BASE}/research/events/l-${HEX}`] = () => {
@@ -319,6 +357,16 @@ test('within 6 hours of the last run, Research now is disabled and says when it 
   await act(() => jest.advanceTimersByTimeAsync(31 * 60_000));
   expect(screen.getByRole('button', { name: RESEARCH_NOW }).props.accessibilityState).toMatchObject({ disabled: false });
   expect(screen.getByText(/^Looks again at your restaurant/)).toBeTruthy();
+});
+
+test('with research off inside the 6 hours, Research now promises no time (UI review)', async () => {
+  const opens = new Date(Date.now() + 30 * 60_000).toISOString();
+  const { api } = setup({ research: research({ on: false, gaps: ['off'], next: null, pressAt: opens }) });
+  await renderApp('/locations/l1/town', api);
+  const button = await screen.findByRole('button', { name: RESEARCH_NOW });
+  expect(button.props.accessibilityState).toMatchObject({ disabled: true });
+  expect(screen.getByText(/^Looks again at your restaurant/)).toBeTruthy();
+  expect(screen.queryByText(/^Research ran in the last 6 hours/)).toBeNull();
 });
 
 test('coming up this week links a season to a day this week and leaves out a weekly event with no day in it', async () => {

@@ -1,5 +1,5 @@
 import { researchedEventSchema as foundEventSchema } from '../../../src/portal/analytics/api';
-import { compactEntries, dayEntries, fitLines, folded, foundCovers, notNamed, type DaySources } from '../../../src/portal/calendar/entries';
+import { compactEntries, dayEntries, fitLines, folded, foundCovers, foundInFront, notNamed, type DaySources } from '../../../src/portal/calendar/entries';
 import { ALL_FILTERS, type ImportedEvent } from '../../../src/portal/calendar/model';
 import { holiday, note, townEvent } from '../analytics/fakes';
 import { ruleOf } from '../rules/fakes';
@@ -148,6 +148,18 @@ describe('found by research (D66)', () => {
     expect(dayEntries('2026-11-13', sources({ found: [WEEKLY] }))).toEqual([]);
     expect(foundCovers(WEEKLY, '2026-11-12')).toBe(true);
     expect(foundCovers(WEEKLY, '2026-11-23')).toBe(false);
+  });
+
+  test('a multi-week or Unconfirmed one comes after the day’s own found events (UI review)', () => {
+    const season = foundEventSchema.parse(foundEvent({
+      id: `t-${'c'.repeat(24)}`, title: 'Winter parking ban', kind: 'season', start: '2026-11-01', end: '2027-04-30', confidence: 'medium', startTime: null,
+    }));
+    const unconfirmed = foundEventSchema.parse(foundEvent({ id: `t-${'d'.repeat(24)}`, title: 'Maybe a fair', start: DAY, end: DAY, confidence: 'low' }));
+    const week = foundEventSchema.parse(foundEvent({ id: `t-${'e'.repeat(24)}`, title: 'Book week', start: '2026-11-09', end: '2026-11-15' }));
+    const entries = dayEntries(DAY, sources({ found: [season, unconfirmed, WEEKLY, week, FOUND] }));
+    // In the read's order within each half: the weekly market, the 7-day week and the day's own event lead.
+    expect(entries.map((entry) => entry.words)).toEqual(['Thursday market', 'Book week', 'Trivia night', 'Winter parking ban', 'Maybe a fair']);
+    expect([season, unconfirmed, WEEKLY, week, FOUND].map(foundInFront)).toEqual([false, false, true, true, true]);
   });
 
   test('none without found, or with found null (the read failed)', () => {

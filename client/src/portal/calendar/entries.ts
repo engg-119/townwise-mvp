@@ -11,7 +11,7 @@ import type { Filters, FilterKey, ImportedEvent } from './model';
 // (P28) and Home (P11) surface reads, on web and native. The order is the owner's notes (in start order), the business
 // rules whose schedule covers the day (oldest first, whatever the filters), the holidays then town events the filters
 // allow, the imported calendar events (by start time), and the events town research found (D66, "Found by research", in
-// the read's order); term and season periods come last, and only for the surfaces that list them. A day's status never removes an entry. Compact surfaces (the month cell, the tooltip, the
+// the read's order, except that a multi-week or Unconfirmed one comes after the others, foundInFront); term and season periods come last, and only for the surfaces that list them. A day's status never removes an entry. Compact surfaces (the month cell, the tooltip, the
 // week cards, Home's This week and month list) show a title once across sources (compactEntries); the day panel and
 // Home's day detail list every entry with its source.
 
@@ -89,6 +89,20 @@ export function foundCovers(event: Pick<ResearchedEvent, 'start' | 'end' | 'week
 
 const CALENDAR_FALLBACK = 'Your calendar';
 
+/** Longer than this, a found event held every day of its dates (no weekdays) is a multi-week stretch, not a day's event. */
+const FOUND_SHORT_DAYS = 7;
+
+/**
+ * Whether a found event leads the found group (UI review): one held on its own days (at most 7 days long, or on some
+ * weekdays) and not Unconfirmed. A months-long low-confidence season otherwise fills every month cell's first line and
+ * pushes a day's own events into “+N more”; it still shows, after them, and in the day panel.
+ */
+export function foundInFront(event: Pick<ResearchedEvent, 'start' | 'end' | 'weekdays' | 'confidence'>): boolean {
+  if (event.confidence === 'low') return false;
+  if (event.weekdays !== null) return true;
+  return (Date.parse(`${event.end}T00:00:00.000Z`) - Date.parse(`${event.start}T00:00:00.000Z`)) / 86_400_000 + 1 <= FOUND_SHORT_DAYS;
+}
+
 function byStart<T>(items: readonly T[], date: (item: T) => string, time: (item: T) => string | null | undefined): T[] {
   // Array.prototype.sort is stable, so items that start together keep the read's order; all-day ones first.
   return [...items].sort((a, b) => date(a).localeCompare(date(b)) || (time(a) ?? '').localeCompare(time(b) ?? ''));
@@ -105,7 +119,8 @@ export function dayEntries(date: string, from: DaySources, options: { periods?: 
   const imported = from.filters.imported
     ? byStart(from.imported.filter((event) => event.startDate <= date && date <= event.endDate), () => '', (event) => event.startTime)
     : [];
-  const found = from.filters.researched ? (from.found ?? []).filter((event) => foundCovers(event, date)) : [];
+  const covering = from.filters.researched ? (from.found ?? []).filter((event) => foundCovers(event, date)) : [];
+  const found = [...covering.filter(foundInFront), ...covering.filter((event) => !foundInFront(event))];
   const townEntry = (event: TownEvent, at: number): DayEntry => ({
     key: `event:${String(at)}:${event.id}`, kind: event.kind, group: 'town', words: event.title, title: event.title,
     source: { kind: 'town', sources: event.sources }, event,

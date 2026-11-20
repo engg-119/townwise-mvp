@@ -65,6 +65,8 @@ describe('safeText', () => {
     ['See https://example.org', null],
     ['www.fair.org', null],
     ['Write to fair@example.org', null],
+    ['Howe@snorth monthly adult evening', null],
+    ['Jazz @ the Green', 'Jazz @ the Green'],
     ['Fair​day', null],
     ['Fair\u0007', null],
     ['   ', null],

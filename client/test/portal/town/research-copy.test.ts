@@ -1,7 +1,7 @@
 import * as copy from '../../../src/portal/town/research-copy';
 import {
   businessDay, competitorLine, distanceWords, entityLine, eventChips, eventWhen, finishedNotice, gapLine, hiddenHeading,
-  moreLine, nextLine, placeType, pressOpensLine, pressRefusal, runLine, switchLabel, switchState, switchWords, topicLabel, topicState,
+  moreLine, nextLine, placeType, pressOpensLine, pressRefusal, runLine, switchLabel, switchState, switchWords, topicLabel, topicState, townHolds,
 } from '../../../src/portal/town/research-copy';
 import type { TownRun } from '../../../src/portal/research/api';
 
@@ -52,6 +52,21 @@ describe('status in topics', () => {
     expect(runLine({ kind: 'location' }, run('running', threads, null), true)).toBe('Your restaurant and nearby: paused, 2 of 2 topics done');
     expect(runLine({ kind: 'town', name: 'Hanover' }, run('queued', [], null), true)).toBe('Hanover: paused');
     expect(runLine({ kind: 'location' }, run('done'), true)).toBe(runLine({ kind: 'location' }, run('done')));
+  });
+
+  test('a running location run whose topics are all done says it waits for the town’s research (UI review)', () => {
+    const done = [{ thread: 'neighborhood', status: 'recorded', code: null }, { thread: 'competitors', status: 'empty', code: null }];
+    expect(runLine({ kind: 'location' }, run('running', done, null), false, 'Hanover'))
+      .toBe('Your restaurant and nearby: 2 of 2 topics done, waiting for Hanover’s research to finish');
+    // Not while a topic is still going, nor with no town run holding it.
+    const going = [done[0], { thread: 'competitors', status: 'running', code: null }].flatMap((each) => (each === undefined ? [] : [each]));
+    expect(runLine({ kind: 'location' }, run('running', going, null), false, 'Hanover')).toBe('Researching your restaurant and nearby: 1 of 2 topics done');
+    expect(runLine({ kind: 'location' }, run('running', done, null))).toBe('Researching your restaurant and nearby: 2 of 2 topics done');
+    // Paused wins: nothing goes on while research is off.
+    expect(runLine({ kind: 'location' }, run('running', done, null), true, 'Hanover')).toBe('Your restaurant and nearby: paused, 2 of 2 topics done');
+    // Only a running or merging town run holds the location's merge; a queued one does not.
+    expect([townHolds(run('running')), townHolds(run('merging')), townHolds(run('queued')), townHolds(run('done')), townHolds(null)])
+      .toEqual([true, true, false, false, false]);
   });
 
   test('Research now\'s help says the 6 hours after a finish and the 3 a day (UI review)', () => {

@@ -59,7 +59,7 @@ interface ResearchBody {
   on: boolean; available: boolean; next: string | null; pressAt: string | null; gaps: string[];
   town: Record<string, unknown> | null; location: Record<string, unknown> | null;
   entities: { id: string; type: string; name: string; events: number }[];
-  hidden: { id: string; title: string; start: string; end: string; head: string }[];
+  hidden: { id: string; title: string; start: string; end: string; head: string; edited: boolean }[];
 }
 
 async function research(t: Tenant, locationId = t.locationId): Promise<ResearchBody> {
@@ -177,7 +177,7 @@ describe('GET /api/org/locations/:locationId/research', () => {
       { id: hall, type: 'venue', name: 'Riverside Hall', events: 2 },
       { id: club, type: 'organization', name: 'Valley Arts Club', events: 1 },
     ]);
-    expect(body.hidden).toEqual([{ id: `t-${hiddenRow.id}`, title: 'Craft Fair', start: '2026-07-04', end: '2026-07-04', head: hide?.id }]);
+    expect(body.hidden).toEqual([{ id: `t-${hiddenRow.id}`, title: 'Craft Fair', start: '2026-07-04', end: '2026-07-04', head: hide?.id, edited: false }]);
   });
 
   it('organization A adding a location changes nothing in B’s read, the shared town run included', async () => {

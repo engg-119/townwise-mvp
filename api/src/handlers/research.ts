@@ -164,7 +164,7 @@ export async function getResearch(ctx: TownwiseContext, req: Request, res: Respo
     gaps: RESEARCH_GAPS.filter((gap) => gaps.has(gap)),
     entities: whoAndWhere(upcoming, [...ownEntities, ...townEntities]),
     hidden: views.filter((view) => view.hidden && view.end >= window.from)
-      .map((view) => ({ id: view.id, title: view.title, start: view.start, end: view.end, head: view.head })),
+      .map((view) => ({ id: view.id, title: view.title, start: view.start, end: view.end, head: view.head, edited: view.edited })),
   });
 }
 

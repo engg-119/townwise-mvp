@@ -145,7 +145,7 @@ function QuestionsSection(props: {
       {body}
       <View style={styles.planned}>
         <StatusTag label="Planned" kind="planned" />
-        <Text style={styles.muted}>TownwiseAI’s own research (unusual nights, town events it finds) is planned.</Text>
+        <Text style={styles.muted}>TownwiseAI’s own research into unusual nights is planned.</Text>
       </View>
     </View>
   );

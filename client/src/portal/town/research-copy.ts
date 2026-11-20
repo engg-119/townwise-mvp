@@ -80,9 +80,11 @@ function subjectInSentence(subject: Subject): string {
  * 9 events, 3 new”, “Hanover: Queued” (as its topics read), or why the last run ended as it did; a partial run whose
  * unfinished topics were all skipped for budget says so rather than that they didn't finish. Null run: not researched yet.
  * `paused` (research off for the organization or not running here, as the gap line says): a live run reads “Hanover:
- * paused, 2 of 6 topics done”, since nothing goes on while it is off.
+ * paused, 2 of 6 topics done”, since nothing goes on while it is off. `waitingFor`: the town whose live run holds this
+ * location run's merge (`townHolds`; design decision 8, as fixed in UI review), so a running run whose topics have all ended says
+ * what it waits for (UI review) instead of sitting on “2 of 2 topics done”.
  */
-export function runLine(subject: Subject, run: TownRun | null, paused = false): string {
+export function runLine(subject: Subject, run: TownRun | null, paused = false, waitingFor: string | null = null): string {
   const name = subjectName(subject);
   if (run === null) return `${name}: not researched yet`;
   const total = run.threads.length;
@@ -91,7 +93,11 @@ export function runLine(subject: Subject, run: TownRun | null, paused = false): 
   if (paused && isLive(run)) return total === 0 ? `${name}: paused` : `${name}: paused, ${formatCount(done)} of ${formatCount(total)} topics done`;
   switch (run.status) {
     case 'queued': return `${name}: Queued`;
-    case 'running': return `Researching ${subjectInSentence(subject)}: ${formatCount(done)} of ${formatCount(total)} topics done`;
+    case 'running':
+      if (waitingFor !== null && total > 0 && done === total) {
+        return `${name}: ${formatCount(done)} of ${formatCount(total)} topics done, waiting for ${waitingFor}’s research to finish`;
+      }
+      return `Researching ${subjectInSentence(subject)}: ${formatCount(done)} of ${formatCount(total)} topics done`;
     case 'merging': return `Researching ${subjectInSentence(subject)}: adding what it found to the calendar`;
     case 'done':
     case 'partial': {
@@ -106,6 +112,11 @@ export function runLine(subject: Subject, run: TownRun | null, paused = false): 
     case 'budget': return `${name}: research${on} was skipped, little budget left this month`;
     case 'off': return `${name}: research${on} stopped before it finished`;
   }
+}
+
+/** Whether the town's run holds a location run's merge: while it is `running` or `merging` (a `queued` one does not). */
+export function townHolds(run: Pick<TownRun, 'status'> | null): boolean {
+  return run !== null && (run.status === 'running' || run.status === 'merging');
 }
 
 /** When the next weekly research runs, or null. */
@@ -248,6 +259,8 @@ export function restoreLabel(title: string): string {
 
 export const RESTORE_NOTICES = {
   restored: 'Restored. It shows on the calendar again.',
+  /** Restore returns research's own values (design decision 11), so an edited event's edits go with it. */
+  restoredEdited: 'Restored as research found it. Your team’s edits to it were dropped.',
   changedSince: 'Someone changed this event since this page loaded. Here it is as it reads now.',
   gone: 'This event isn’t available any more.',
 } as const;

@@ -27,7 +27,7 @@ import {
   entityLine, eventWhen, finishedNotice, gapLine, hiddenHeading, isLive, moreLine, nextLine, pressOpensLine, pressRefusal,
   RESEARCH_HEADING, RESEARCH_KICKER, RESEARCH_NOW, RESEARCH_NOW_HELP, RESEARCH_NOW_RUNNING, RESEARCH_STARTED, RESTORE,
   RESTORE_NOTICES, restoreLabel, runLine, SWITCH_FAILED, SWITCH_OPEN_AS_ADMIN, switchLabel, switchState, switchWords,
-  topicLabel, topicState, WEEK_EMPTY, WEEK_FAILED, WEEK_HEADING, WEEK_MAX, WEEK_OFF, WHO_HEADING,
+  topicLabel, topicState, townHolds, WEEK_EMPTY, WEEK_FAILED, WEEK_HEADING, WEEK_MAX, WEEK_OFF, WHO_HEADING,
 } from './research-copy';
 
 // P15's Research section (D66, OpenSpec change town-research-agent, design decision 15), under TownProfile: the town's
@@ -117,6 +117,12 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
   }, [me.user.id, location.id, endedRunId]);
 
   const week = useWeekFound(location.id, tick);
+  // A restore (or a Restore someone beat) puts an event back on the calendar: this week and the Competition card read
+  // again too, as after a run or the switch (UI review).
+  const onHiddenChanged = useCallback(async (): Promise<void> => {
+    await refresh();
+    setTick((value) => value + 1);
+  }, [refresh]);
 
   if (state.status === 'loading') {
     return (
@@ -145,7 +151,7 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
           {location.town.townId === null ? null : (
             <RunBlock line={runLine({ kind: 'town', name: location.town.name }, data.town, !active)} threads={data.town?.threads ?? []} live={active && isLive(data.town)} />
           )}
-          <RunBlock line={runLine({ kind: 'location' }, data.location, !active)} threads={data.location?.threads ?? []} live={active && isLive(data.location)} />
+          <RunBlock line={runLine({ kind: 'location' }, data.location, !active, townHolds(data.town) ? location.town.name : null)} threads={data.location?.threads ?? []} live={active && isLive(data.location)} />
           {next === null ? null : <Text style={styles.help}>{next}</Text>}
           {data.gaps.map((gap) => (
             <Text key={gap} style={styles.body}>
@@ -178,7 +184,7 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
 
       {data.hidden.length === 0 ? null : (
         <Section title={hiddenHeading(data.hidden.length)}>
-          <HiddenList locationId={location.id} hidden={data.hidden} readOnly={readOnly} line={line} onChanged={refresh} setNotice={setNotice} />
+          <HiddenList locationId={location.id} hidden={data.hidden} readOnly={readOnly} line={line} onChanged={onHiddenChanged} setNotice={setNotice} />
         </Section>
       )}
 
@@ -253,7 +259,10 @@ function ResearchNow(props: {
   return (
     <View style={styles.block}>
       <Text style={styles.help}>
-        {props.running ? RESEARCH_NOW_RUNNING : waiting && pressAt !== null ? pressOpensLine(pressAt, new Date(now)) : RESEARCH_NOW_HELP}
+        {props.running
+          ? RESEARCH_NOW_RUNNING
+          // While research is off or not running here the button stays disabled past `pressAt`, so no time is promised.
+          : props.research.on && props.research.available && waiting && pressAt !== null ? pressOpensLine(pressAt, new Date(now)) : RESEARCH_NOW_HELP}
       </Text>
       <View style={styles.actions}>
         <Button variant="outline" label={RESEARCH_NOW} disabled={pressing || !usable} onPress={press} />
@@ -308,7 +317,9 @@ function HiddenList(props: {
     setError(null);
     updateResearchedEvent(api, props.locationId, event.id, { op: 'restore', basedOn: event.head }).then(
       (result) => {
-        setNotice(result.status === 'saved' ? RESTORE_NOTICES.restored : RESTORE_NOTICES.changedSince, result.status !== 'saved');
+        // Restore returns research's own values (design decision 11), so an edited event's notice says its edits went.
+        const saved = event.edited ? RESTORE_NOTICES.restoredEdited : RESTORE_NOTICES.restored;
+        setNotice(result.status === 'saved' ? saved : RESTORE_NOTICES.changedSince, result.status !== 'saved');
         return onChanged();
       },
       (failure: unknown) => {

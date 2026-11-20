@@ -64,17 +64,19 @@ export const EXTRACT_FORMAT = { type: 'json_schema', schema: betaZodOutputFormat
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
 const URL_LIKE = /https?:\/\/|\bwww\.|\b[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*\.(?:com|org|net|edu|gov|io|info|biz|us|co|app|events|live|tickets|me|ly|tv|ca|uk)\b/iu;
 const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
+/** An `@` between two letters or digits that is no email (UI review: a garbled "Howe@snorth" title got past EMAIL). */
+const WORD_AT = /[\p{L}\p{N}]@[\p{L}\p{N}]/u;
 const PHONE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/;
 
 /**
  * The value trimmed, or null when it is empty, longer than `max`, or holds a control or format character, a URL or a
- * web address, an email address or a phone number. Used for extracted titles, entity names and source labels, and for
+ * web address, an email address, an `@` inside a word, or a phone number. Used for extracted titles, entity names and source labels, and for
  * the edits people and TownwiseAI make to researched events.
  */
 export function safeText(value: string, max: number): string | null {
   const trimmed = value.trim();
   if (trimmed === '' || trimmed.length > max) return null;
-  if (CONTROL_OR_FORMAT.test(trimmed) || URL_LIKE.test(trimmed) || EMAIL.test(trimmed) || PHONE.test(trimmed)) return null;
+  if (CONTROL_OR_FORMAT.test(trimmed) || URL_LIKE.test(trimmed) || EMAIL.test(trimmed) || WORD_AT.test(trimmed) || PHONE.test(trimmed)) return null;
   return trimmed;
 }
 

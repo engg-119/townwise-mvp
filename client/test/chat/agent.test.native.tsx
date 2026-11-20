@@ -479,7 +479,7 @@ describe('the side panel', () => {
     expect(within(side).getByText('Townwise treats this day as likely closed until you say. Yes saves a note that you were open with fewer guests, so the day counts. No saves a closure note for it.')).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'Were you closed Feb 1 to Feb 3, 2026?' })).toBeTruthy();
     expect(within(side).getByText('There are no sales for these 3 days.')).toBeTruthy();
-    expect(within(side).getByText('TownwiseAI’s own research (unusual nights, town events it finds) is planned.')).toBeTruthy();
+    expect(within(side).getByText('TownwiseAI’s own research into unusual nights is planned.')).toBeTruthy();
 
     await fireEvent.press(within(side).getByRole('button', { name: 'No, we were closed' }));
     expect(await within(side).findByText('Saved a note: Closure, Sat, Jan 24, 2026. TownwiseAI treats that day as closed.')).toBeTruthy();

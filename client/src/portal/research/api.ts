@@ -49,7 +49,8 @@ export const locationRunSchema = townRunSchema.extend({ id: z.string(), trigger:
 export type LocationRun = z.infer<typeof locationRunSchema>;
 
 const entitySchema = z.object({ id: z.string(), type: z.string(), name: z.string(), events: z.number() });
-const hiddenSchema = z.object({ id: z.string(), title: z.string(), start: z.string(), end: z.string(), head: z.string() });
+// `edited` (additive): whether the team's edits change it, which a restore drops; an older API's item reads false.
+const hiddenSchema = z.object({ id: z.string(), title: z.string(), start: z.string(), end: z.string(), head: z.string(), edited: z.boolean().default(false) });
 export type HiddenEvent = z.infer<typeof hiddenSchema>;
 
 /** GET .../research (`org.research.get`). A run this client can't read is shown as none. */
