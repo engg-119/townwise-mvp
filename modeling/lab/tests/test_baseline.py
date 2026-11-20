@@ -31,7 +31,7 @@ def make_input(first: str, through: str, guests: Callable[[pd.Timestamp], float 
     for day in pd.date_range(first, end):
         count = guests(day) if day <= ts(through) else None
         days.append({"date": iso(day), "guests": count, "term": "interim", "weekOfTerm": -1, "events": events(day),
-                     "closed": False, "privateEvent": False, "booked": False})
+                     "closed": False, "privateEvent": False, "booked": False, "party": False})
     inp = {"schema": schema.INPUT_SCHEMA, "calibrationId": "0" * 24, "metric": "guests", "today": through,
            "dataThrough": through, "horizonDays": forecast.HORIZON_DAYS, "termsThrough": None, "regimeStart": None,
            "days": days,
@@ -148,9 +148,9 @@ def test_a_party_rung_as_a_check_or_two_on_a_closed_weekday_keeps_it_closed():
     mondays = [d for d in baseline_run(make_input("2024-06-03", through, guests))["days"]
                if ts(d["date"]).day_name() == "Monday"]
     assert mondays and all(d["status"] == "closed" for d in mondays)
-    # A Monday with real service among the last 8 still opens the weekday
-    served = ts("2025-08-25")
-    inp = make_input("2024-06-03", through, lambda day: weekly(day) if day == served else guests(day))
+    # Two Mondays with real service among the last 8 still open the weekday (one alone, v12, does not)
+    served = (ts("2025-08-18"), ts("2025-08-25"))
+    inp = make_input("2024-06-03", through, lambda day: weekly(day) if day in served else guests(day))
     assert all(d["status"] == "open" for d in baseline_run(inp)["days"] if ts(d["date"]).day_name() == "Monday")
 
 

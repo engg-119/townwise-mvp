@@ -1,5 +1,5 @@
-// The forecast lab's input (pure, townwise.lab-input/3): every date from the first day with guests to dataThrough + 400,
-// the town's last researched term day (D52), the term and week of term from Hanover's calendar, the notes as three flags, the town's event groups, the town calendar's
+// The forecast lab's input (pure, townwise.lab-input/4): every date from the first day with guests to dataThrough + 400,
+// the town's last researched term day (D52), the term and week of term from Hanover's calendar, the notes as four flags, the town's event groups, the town calendar's
 // entries without a title or URL, and the current published run with its engine. The numbers are synthetic. The last
 // test holds the API's input to the lab's own validator through a golden file.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -69,7 +69,7 @@ describe('labInputOf', () => {
     ];
     const input = inputOf(days);
     expect(input).toMatchObject({
-      schema: 'townwise.lab-input/3', calibrationId: CALIBRATION.id, metric: 'guests', today: TODAY, dataThrough: '2026-05-31',
+      schema: 'townwise.lab-input/4', calibrationId: CALIBRATION.id, metric: 'guests', today: TODAY, dataThrough: '2026-05-31',
       horizonDays: 400, termsThrough: '2028-06-06', regimeStart: null, champion: null,
     });
     expect(input.days[0]?.date).toBe('2025-01-02');
@@ -311,6 +311,29 @@ describe('labInputOf', () => {
     expect(dayOf(small, '2026-05-28')).toMatchObject({ guests: 0, privateEvent: false });
   });
 
+  it('sets party on a history day a counted party covers (D70), never on an uncounted one or after dataThrough', () => {
+    const days = history('2025-01-02', '2026-05-31');
+    const notes = [
+      note({ kind: 'private_event', startDate: '2026-05-30', effect: 'more_guests', expectedGuests: 70 }),
+      note({ kind: 'private_event', startDate: '2026-05-31', effect: 'more_guests' }),
+      note({ kind: 'private_event', startDate: '2026-06-10', effect: 'more_guests', expectedGuests: 70 }),
+    ];
+    const fridays: ScheduledRule = {
+      id: '8'.repeat(24),
+      schedule: { kind: 'private_event', startDate: '2026-05-01', endDate: '2026-06-30', weekdays: [5], effect: 'more_guests', expectedGuests: 40, startTime: null, endTime: null },
+    };
+    const input = inputOf(days, notes, null, [fridays]);
+    expect(dayOf(input, '2026-05-30')).toMatchObject({ party: true, privateEvent: false });
+    expect(dayOf(input, '2026-05-29')).toMatchObject({ party: true, privateEvent: false }); // the rule's, a history Friday
+    expect(dayOf(input, '2026-05-31')).toMatchObject({ party: false, privateEvent: true }); // no guest count
+    expect(dayOf(input, '2026-05-28')).toMatchObject({ party: false, privateEvent: false });
+    // After dataThrough (2026-05-31) the forecast read adds a counted party: never party
+    expect(dayOf(input, '2026-06-10')).toMatchObject({ party: false, privateEvent: false });
+    expect(dayOf(input, '2026-06-05')).toMatchObject({ party: false, privateEvent: false });
+    expect(input.days.filter((each) => each.date > input.dataThrough).every((each) => !each.party)).toBe(true);
+    expect(inputOf(days).days.every((each) => !each.party)).toBe(true);
+  });
+
   it('never calls today’s near-empty row likely closed: its upload may be partial (spec D32)', () => {
     const input = inputOf([...history('2025-01-02', '2026-05-31'), day('2026-06-01', 1), day(TODAY, 1)]);
     expect(dayOf(input, '2026-06-01')).toMatchObject({ guests: null, closed: true });
@@ -415,9 +438,14 @@ describe('labInputOf', () => {
     expect(labInputSchema.safeParse({ ...input, champion: { ...input.champion, recordedWeekdayBiasMeanAbs: -0.01 } }).success).toBe(false);
   });
 
-  it('labInputSchema refuses versions 1 and 2, as the lab does', () => {
+  it('labInputSchema refuses versions 1 to 3, as the lab does', () => {
     const input = inputOf(history('2025-01-02', '2026-05-31'));
     expect(labInputSchema.safeParse({ ...input, schema: 'townwise.lab-input/1' }).success).toBe(false);
+    // Version 3: no party on its days (D70)
+    expect(labInputSchema.safeParse({ ...input, schema: 'townwise.lab-input/3' }).success).toBe(false);
+    const withoutParty = input.days.map((each) => Object.fromEntries(Object.entries(each).filter(([key]) => key !== 'party')));
+    expect(labInputSchema.safeParse({ ...input, days: withoutParty }).success).toBe(false);
+    expect(labInputSchema.safeParse({ ...input, days: input.days.map((each) => ({ ...each, party: 0 })) }).success).toBe(false);
     expect(labInputSchema.safeParse({ ...input, calendar: undefined }).success).toBe(false);
     // Version 2: 182 future days and no termsThrough
     const withoutTerms = Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'termsThrough'));
@@ -518,7 +546,7 @@ describe('labInputFingerprint (D42, the weekly refresh’s “changed since its 
       { ...base, regimeStart: '2026-01-05' },
     ];
     for (const input of changed) expect(labInputFingerprint(input)).not.toBe(fingerprint);
-    expect(labInputFingerprint(base, 'v12')).not.toBe(fingerprint);
+    expect(labInputFingerprint(base, 'v14')).not.toBe(fingerprint);
     expect(labInputFingerprint(base, LAB_MODEL_VERSION)).toBe(fingerprint);
   });
 });
@@ -609,7 +637,8 @@ describe('confirmed booking labels (learn-from-calendar-bookings, D58)', () => {
       { startDate: '2026-05-15', endDate: '2026-05-16', booking: 'party' },
     ]);
     expect(dayOf(input, '2026-05-29')).toMatchObject({ booked: true, privateEvent: false, closed: false, guests: stored('2026-05-29') });
-    expect(dayOf(input, '2026-05-30')).toMatchObject({ booked: false, privateEvent: true, closed: false, guests: stored('2026-05-30') });
+    // A party label sets privateEvent, never party: it has no guest count to take off (D70)
+    expect(dayOf(input, '2026-05-30')).toMatchObject({ booked: false, privateEvent: true, party: false, closed: false, guests: stored('2026-05-30') });
     expect([dayOf(input, '2026-05-15').privateEvent, dayOf(input, '2026-05-16').privateEvent, dayOf(input, '2026-05-17').privateEvent]).toEqual([true, true, false]);
     expect(withLabels([])).toEqual(withLabels(undefined));
     expect(withLabels(undefined)).toEqual(inputOf(days));
@@ -673,6 +702,8 @@ describe('the input the API builds, against the lab', () => {
       note({ kind: 'closure', startDate: '2025-08-12', endDate: '2025-08-13', effect: 'closed' }),
       note({ kind: 'private_event', startDate: '2025-10-17', effect: 'more_guests' }),
       note({ kind: 'private_event', startDate: '2026-02-14', effect: 'closed' }),
+      // A counted party: its guests come off the day, which goes out with party true (D70)
+      note({ kind: 'private_event', startDate: '2025-12-05', effect: 'more_guests', expectedGuests: 30 }),
       note({ kind: 'closure', startDate: '2026-07-04', effect: 'closed' }),
     ];
     const run = { id: 'd4'.repeat(12), dataThrough: '2026-01-31', model: { family: 'hybrid_linear_xgboost' } } as ForecastRunRecord;
@@ -706,6 +737,7 @@ describe('the input the API builds, against the lab', () => {
     expect(labInputSchema.safeParse(input).success).toBe(true);
     expect(input).toMatchObject({ today: '2026-06-01', dataThrough: '2026-05-31', regimeStart: '2026-01-05' });
     expect(daysBetween(input.days[0]?.date ?? '', input.dataThrough)).toBe(636);
+    expect(input.days.filter((each) => each.party).map((each) => each.date)).toEqual(['2025-12-05']);
     const text = `${JSON.stringify(input, null, 1)}\n`;
     if (process.env.TOWNWISE_UPDATE_LAB_GOLDEN === '1') writeFileSync(GOLDEN, text);
     expect(readFileSync(GOLDEN, 'utf8')).toBe(text);
@@ -776,6 +808,17 @@ describe('owner beats agent in the lab input (D59)', () => {
     // Once a person edits it, the note is theirs and both count.
     const edited = { ...agentClosure, updatedAt: new Date(AT.getTime() + 1000) };
     expect(dayOf(inputOf(days, [edited, party]), '2026-05-16')).toMatchObject({ closed: true, privateEvent: true });
+  });
+
+  it('a person’s deciding note sets aside TownwiseAI’s counted party: no party and the guests unreduced (D70)', () => {
+    const agentParty = note({
+      id: 'd4'.repeat(12), kind: 'private_event', startDate: '2026-05-16', effect: 'more_guests', expectedGuests: 30,
+      createdBy: 'townwise_ai', agent: { changeId: 'e5'.repeat(12), at: AT }, createdAt: AT, updatedAt: AT,
+    });
+    const stored = days.find((each) => each.date === '2026-05-16')?.guests ?? -1;
+    expect(dayOf(inputOf(days, [agentParty]), '2026-05-16')).toMatchObject({ party: true, privateEvent: false, guests: stored - 30 });
+    const persons = note({ kind: 'private_event', startDate: '2026-05-16', effect: 'more_guests', expectedGuests: null });
+    expect(dayOf(inputOf(days, [agentParty, persons]), '2026-05-16')).toMatchObject({ party: false, privateEvent: true, guests: stored });
   });
 
   it('a TownwiseAI note alone sets its flags as any note does, and a D34 note from a file counts as TownwiseAI’s until edited', () => {

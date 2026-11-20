@@ -444,8 +444,8 @@ describe('the job’s callback', () => {
     const other = (await started(await team())).job;
     await inputFor(other);
     const result = labResultFor(labInputSchema.parse({
-      schema: 'townwise.lab-input/3', calibrationId: calibration.id, metric: 'guests', today: '2026-06-01', dataThrough: '2026-05-31',
-      horizonDays: 400, termsThrough: null, regimeStart: null, days: [{ date: '2026-05-31', guests: 1, term: 'interim', weekOfTerm: -1, events: [], closed: false, privateEvent: false, booked: false }],
+      schema: 'townwise.lab-input/4', calibrationId: calibration.id, metric: 'guests', today: '2026-06-01', dataThrough: '2026-05-31',
+      horizonDays: 400, termsThrough: null, regimeStart: null, days: [{ date: '2026-05-31', guests: 1, term: 'interim', weekOfTerm: -1, events: [], closed: false, privateEvent: false, booked: false, party: false }],
       calendar: [], champion: null,
     }));
     server.logs.length = 0;

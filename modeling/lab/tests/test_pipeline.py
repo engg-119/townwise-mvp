@@ -386,7 +386,7 @@ def check_comparison(cmp: dict, lab_input: dict) -> None:
 def check_envelope(result: dict, lab_input: dict) -> None:
     assert list(result) == ["schema", "calibrationId", "ok", "codeVersion", "params", "scorecard", "run"]
     assert result["schema"] == schema.RESULT_SCHEMA == "townwise.lab-result/1"
-    assert schema.INPUT_SCHEMA == "townwise.lab-input/3"
+    assert schema.INPUT_SCHEMA == "townwise.lab-input/4"
     assert result["calibrationId"] == lab_input["calibrationId"]
     assert result["ok"] is True and result["codeVersion"] == CODE
     json.dumps(result, allow_nan=False)
@@ -450,7 +450,7 @@ def test_result_matches_contract(model_result, lab_input):
 
     assert result["run"]["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION,
                                       "notebookCommit": CODE}
-    assert version.MODEL_VERSION == "v11"
+    assert version.MODEL_VERSION == "v13"
 
 
 def test_a_model_run_carries_how_its_trees_learned(model_result, result, lab_input):
@@ -876,20 +876,30 @@ def test_closed_weekday_and_holiday_rules(engine, results, lab_input):
     status = statuses_of(inp)
     assert status["2025-12-25"] == "open" and status["2025-12-24"] == "closed" and status["2025-11-27"] == "closed"
 
-    # A weekday is closed when none of its last 8 dates had guests, counting only weeks with guests on another day
+    # A weekday is closed when at most 1 of its last 8 dates had guests, counting only weeks with guests on another day
     inp = copy.deepcopy(lab_input)
-    thursdays = [d for d in inp["days"] if d["date"] <= inp["dataThrough"] and day(d["date"]).weekday() == 3][-9:]
-    assert thursdays[0]["guests"] and thursdays[0]["guests"] > 0
-    for d in thursdays[1:]:
+    thursdays = [d for d in inp["days"] if d["date"] <= inp["dataThrough"] and day(d["date"]).weekday() == 3][-10:]
+    assert day(thursdays[-1]["date"]) + timedelta(days=3) <= day(inp["dataThrough"])  # in a complete week: it counts
+    assert all(d["guests"] and d["guests"] > 0 for d in thursdays[:2])
+    for d in thursdays[:2]:
+        d["privateEvent"] = d["booked"] = False  # served: a private event or buyout never is
+    for d in thursdays[2:]:
         d["guests"] = None
     status = statuses_of(inp)
     future_thursdays = [when for when in status if day(when).weekday() == 3
                         and when not in holidays_closed + sorted(booked | closed_note)]  # Thanksgiving is a Thursday
     assert future_thursdays and all(status[when] == "closed" for when in future_thursdays)
-    week_of_last = day(thursdays[-1]["date"]) - timedelta(days=3)
-    for d in inp["days"]:
-        if week_of_last <= day(d["date"]) <= week_of_last + timedelta(days=6):
-            d["guests"] = None  # a week with no guests at all: not evidence about Thursdays
+
+    def empty_week_of(thursday: dict) -> None:
+        monday = day(thursday["date"]) - timedelta(days=3)
+        for d in inp["days"]:
+            if monday <= day(d["date"]) <= monday + timedelta(days=6):
+                d["guests"] = None  # a week with no guests at all: not evidence about Thursdays
+
+    empty_week_of(thursdays[-1])  # the last 8 counted Thursdays now hold one with guests: still closed
+    status = statuses_of(inp)
+    assert all(status[when] == "closed" for when in future_thursdays)
+    empty_week_of(thursdays[-2])  # and now two
     status = statuses_of(inp)
     assert all(status[when] == "open" for when in future_thursdays)
 
@@ -898,11 +908,186 @@ def test_a_closing_holiday_with_no_past_occurrence_stays_open():
     dates = pd.Series(pd.date_range("2025-06-01", "2025-07-10"))
     frame = pd.DataFrame({"date": dates, "weekday": dates.dt.day_name(), "guests": np.where(dates <= "2025-06-30", 20.0,
                                                                                             np.nan),
-                          "closed": False, "booked": False})
+                          "closed": False, "private_event": 0, "booked": False})
     frame = pd.concat([frame, features.holiday_flags(frame.date)], axis=1)
     status = forecast.statuses(frame, pd.Timestamp("2025-06-30"))
     assert frame.date[status.index].tolist() == list(pd.date_range("2025-07-01", "2025-07-10"))
     assert (status == "open").all()  # July 4 included: no earlier July 4 says the place closes
+
+
+# Closed weekdays (forecast.closed_weekdays, v12): a restaurant open every day at 100 guests, then closed on Sundays and
+# Mondays from June 2025 (no guest count), with the days each test serves on them
+
+CLOSED_FROM = pd.Timestamp("2025-06-01")
+
+
+def closed_weekdays_of(through: str, guests: dict[str, float] | None = None, private: tuple[str, ...] = (),
+                       booked: tuple[str, ...] = (), first: str = "2025-03-03",
+                       party: tuple[str, ...] = ()) -> set[str]:
+    dates = pd.Series(pd.date_range(first, through))
+    shut = dates.dt.day_of_week.isin([6, 0]) & dates.ge(CLOSED_FROM)
+    frame = pd.DataFrame({"date": dates, "weekday": dates.dt.day_name(), "guests": np.where(shut, np.nan, 100.0),
+                          "private_event": dates.isin(pd.to_datetime(list(private))).astype(int),
+                          "booked": dates.isin(pd.to_datetime(list(booked)))})
+    if party:  # a frame without the column reads as one without parties
+        frame["party"] = dates.isin(pd.to_datetime(list(party)))
+    for when, count in (guests or {}).items():
+        frame.loc[frame.date.eq(pd.Timestamp(when)), "guests"] = count
+    return forecast.closed_weekdays(frame, pd.Timestamp(through))
+
+
+def test_a_partial_last_week_whose_median_collapses_does_not_reopen_a_closed_weekday():
+    # Data ends on a Tuesday: its week holds only Monday's 4 guests and Tuesday's 49, a median of 26.5 and a bar of
+    # 2.65 that 4 passes. One real Monday among the last 8 is not enough alone, so only that week could reopen Mondays.
+    assert closed_weekdays_of("2025-08-26", {"2025-07-14": 100.0, "2025-08-25": 4.0, "2025-08-26": 49.0}) == {
+        "Sunday", "Monday"}
+    # A complete week counts: the same real Monday then opens Mondays, with July's
+    assert closed_weekdays_of("2025-08-31", {"2025-07-14": 100.0, "2025-08-25": 100.0}) == {"Sunday"}
+    # but not while its week is still partial
+    assert closed_weekdays_of("2025-08-26", {"2025-07-14": 100.0, "2025-08-25": 100.0}) == {"Sunday", "Monday"}
+
+
+def test_a_private_event_or_booked_day_on_a_closed_weekday_does_not_reopen_it():
+    # Two parties on closed Sundays, rung as full rooms, beside one real Sunday: one served date in 8
+    parties = {"2025-08-17": 60.0, "2025-08-24": 80.0}
+    real = {"2025-07-13": 100.0}
+    assert closed_weekdays_of("2025-08-31", parties | real, private=("2025-08-17",), booked=("2025-08-24",)) == {
+        "Sunday", "Monday"}
+    assert closed_weekdays_of("2025-08-31", parties | real) == {"Monday"}  # unflagged, they would have reopened it
+
+
+def test_one_served_date_in_the_last_eight_does_not_reopen_a_weekday_but_two_do():
+    assert closed_weekdays_of("2025-08-31", {"2025-08-18": 100.0}) == {"Sunday", "Monday"}
+    assert closed_weekdays_of("2025-08-31", {"2025-08-11": 100.0, "2025-08-18": 100.0}) == {"Sunday"}
+
+
+def test_an_open_weekday_stays_open():
+    assert closed_weekdays_of("2025-05-25") == set()  # before the closures every weekday is served
+    # Tuesdays to Saturdays are served throughout, so only Sundays and Mondays close
+    assert closed_weekdays_of("2025-08-31") == {"Sunday", "Monday"}
+    # A weekday with fewer than 2 counted dates stays open, even unserved: one week of data, closed Sunday and Monday
+    assert closed_weekdays_of("2025-08-31", first="2025-08-25") == set()
+
+
+# D70 (v13): a private event or counted party on a weekday held closed as of the weeks before it opened only for the
+# event, so it leaves training; and such days are neither served nor unserved when closed weekdays are judged.
+
+
+def closed_input(through: str = "2025-08-31", guests: dict[str, float] | None = None, party: tuple[str, ...] = (),
+                 private: tuple[str, ...] = (), first: str = "2025-03-03", shut: tuple[int, ...] = (6, 0)) -> dict:
+    """A valid LabInput from `first` to `through` + 400 days: guests by weekday with a little noise, none on the
+    weekdays `shut` (day_of_week numbers) from CLOSED_FROM on, then `guests` by date, with `party` and `private` days
+    flagged as the API flags them (a counted party's guests already taken off)."""
+    end = pd.Timestamp(through)
+    days = []
+    for n, when in enumerate(pd.date_range(first, end + pd.Timedelta(days=forecast.HORIZON_DAYS))):
+        count = None
+        if when <= end and not (when.day_of_week in shut and when >= CLOSED_FROM):
+            count = float(80 + 10 * when.day_of_week + (n * 7) % 11)
+        key = forecast.iso(when)
+        if when <= end and guests and key in guests:
+            count = guests[key]
+        days.append({"date": key, "guests": count, "term": "interim", "weekOfTerm": -1, "events": [], "closed": False,
+                     "privateEvent": key in private, "booked": False, "party": key in party})
+    inp = {"schema": schema.INPUT_SCHEMA, "calibrationId": "0" * 24, "metric": "guests", "today": through,
+           "dataThrough": through, "horizonDays": forecast.HORIZON_DAYS, "termsThrough": None, "regimeStart": None,
+           "days": days, "calendar": [], "champion": None}
+    schema.validate_input(inp)
+    return inp
+
+
+def trained_dates(inp: dict) -> set[str]:
+    frame = pipeline.frame_of(inp)
+    return {forecast.iso(d) for d in features.training_rows(frame, pd.Timestamp(inp["dataThrough"])).date}
+
+
+def future_status(inp: dict, weekday: str) -> set[str]:
+    frame = pipeline.frame_of(inp)
+    status = forecast.statuses(frame, pd.Timestamp(inp["dataThrough"]))
+    return set(status[frame.weekday[status.index].eq(weekday).to_numpy()])
+
+
+PARTY_MONDAYS = {"2025-08-11": 100.0, "2025-08-18": 100.0}  # counted parties whose leftovers look like full service
+
+
+def test_counted_parties_on_closed_mondays_neither_reopen_mondays_nor_train():
+    assert closed_weekdays_of("2025-08-31", PARTY_MONDAYS, party=tuple(PARTY_MONDAYS)) == {"Sunday", "Monday"}
+    inp = closed_input(guests=PARTY_MONDAYS, party=tuple(PARTY_MONDAYS))
+    assert future_status(inp, "Monday") == {"closed"}
+    assert not set(PARTY_MONDAYS) & trained_dates(inp)
+    assert pipeline.frame_of(inp)[features.PRIVATE_ON_CLOSED].sum() == 2
+    # Unflagged, the same two Mondays are real service: they reopen Mondays and train (v12)
+    assert closed_weekdays_of("2025-08-31", PARTY_MONDAYS) == {"Sunday"}
+    plain = closed_input(guests=PARTY_MONDAYS)
+    assert future_status(plain, "Monday") == {"open"}
+    assert set(PARTY_MONDAYS) <= trained_dates(plain)
+
+
+def test_an_uncounted_private_event_on_a_closed_monday_leaves_training():
+    inp = closed_input(guests={"2025-08-18": 60.0}, private=("2025-08-18",))
+    assert "2025-08-18" not in trained_dates(inp)
+    assert future_status(inp, "Monday") == {"closed"}
+    # The same day unflagged is one served Monday in 8: Mondays stay closed, but it trains
+    assert "2025-08-18" in trained_dates(closed_input(guests={"2025-08-18": 60.0}))
+
+
+@pytest.mark.parametrize("flag", ["party", "private"])
+def test_a_party_every_friday_keeps_fridays_open_and_training(flag):
+    fridays = tuple(forecast.iso(d) for d in pd.date_range("2025-03-07", "2025-08-31", freq="W-FRI"))
+    inp = closed_input(**{flag: fridays})
+    # Every Friday set aside leaves Friday no counted date, so it stays open (fewer than 2), and nothing is flagged
+    assert "Friday" not in forecast.closed_weekdays(pipeline.frame_of(inp), pd.Timestamp("2025-08-31"))
+    assert future_status(inp, "Friday") == {"open"}
+    assert set(fridays) <= trained_dates(inp)  # a counted party on its leftovers
+
+
+def test_a_party_on_an_open_weekday_trains_on_its_leftovers():
+    inp = closed_input(guests={"2025-08-20": 70.0}, party=("2025-08-20",))  # a Wednesday
+    frame = pipeline.frame_of(inp)
+    hist = features.training_rows(frame, pd.Timestamp(inp["dataThrough"]))
+    assert hist.guests[hist.date.eq(pd.Timestamp("2025-08-20"))].tolist() == [70.0]
+
+
+def test_a_party_monday_before_the_closure_is_kept():
+    inp = closed_input(party=("2025-05-19",))  # Mondays close from June
+    assert "2025-05-19" in trained_dates(inp)
+
+
+def test_a_party_spanning_saturday_to_monday_drops_only_monday():
+    days = ("2025-08-16", "2025-08-17", "2025-08-18")
+    inp = closed_input(guests=dict.fromkeys(days, 90.0), party=days, shut=(0,))  # Mondays alone are closed
+    trained = trained_dates(inp)
+    assert {"2025-08-16", "2025-08-17"} <= trained and "2025-08-18" not in trained
+
+
+def test_a_days_flag_reads_only_the_weeks_before_it():
+    """The flag is the same whether the data end on the party day or a year later, when Mondays have reopened, so every
+    cutoff (and every backtest) trains on the same days."""
+    party = ("2025-08-18",)
+    short = pipeline.frame_of(closed_input("2025-08-18", {"2025-08-18": 100.0}, party))
+    reopened = {forecast.iso(d): 100.0 for d in pd.date_range("2025-09-01", "2026-08-31", freq="W-MON")}
+    long = pipeline.frame_of(closed_input("2026-08-31", {"2025-08-18": 100.0} | reopened, party))
+    assert short[features.PRIVATE_ON_CLOSED].sum() == 1
+    days = len(short[short.date <= pd.Timestamp("2025-08-18")])
+    assert short[features.PRIVATE_ON_CLOSED][:days].tolist() == long[features.PRIVATE_ON_CLOSED][:days].tolist()
+    assert "Monday" not in forecast.closed_weekdays(long, pd.Timestamp("2026-08-31"))
+
+
+def test_a_party_monday_after_the_closure_is_in_no_engines_history_or_backtest():
+    party = "2025-08-18"
+    inp = closed_input(guests={party: 100.0}, party=(party,), first="2023-06-05")
+    frame, through = pipeline.frame_of(inp), pd.Timestamp(inp["dataThrough"])
+    hist = features.training_rows(frame, through)
+    assert pd.Timestamp(party) not in set(hist.date)
+    history = baseline.prepare(frame, inp["calendar"], through)
+    assert pd.Timestamp(party) not in history.guests
+    base_preds = baseline.backtest_predictions(history, through, [7, 28])
+    assert not base_preds.empty and pd.Timestamp(party) not in set(base_preds.date)
+    origins = backtest.quarterly_origins(hist.date.min(), through)[-1:]
+    preds = forecast.backtest_predictions(frame, hist, origins, through, features.base_columns(None),
+                                          features.event_columns(frame, hist.index))
+    assert not preds.empty and pd.Timestamp(party) not in set(preds.date)
+    assert pd.Timestamp("2025-08-19") in set(preds.date)  # its Tuesday is forecast as usual
 
 
 def test_open_days_take_the_holiday_multipliers_and_ranges_widened_by_k(lab_input):
@@ -1122,9 +1307,10 @@ def without_level_jump(lab_input: dict) -> dict:
     return inp
 
 
-def test_the_model_wins_a_first_forecast(lab_input):
+def test_a_first_forecast_needs_a_significant_win(lab_input):
     # This fixture's model bands hold 8 of 25 weeks, which the gate refuses (the next test), so its checks are taken
-    # as passed here to pin the WAPE rule alone
+    # as passed here to pin the engine rule alone. Without its level jump the model is more than 0.5 points better on
+    # the same weeks, but not week after week (D69: one-sided p about 0.12): with no current run the baseline stays
     inp = without_level_jump(lab_input)
     inp["champion"] = None
     with pytest.MonkeyPatch.context() as patch:
@@ -1132,8 +1318,19 @@ def test_the_model_wins_a_first_forecast(lab_input):
         out = pipeline.calibrate(inp, CODE)
     engines = out["scorecard"]["engines"]
     assert engines["model"]["weeklyWape"] <= engines["baseline"]["weeklyWape"] - pipeline.ENGINE_MARGIN
-    assert out["scorecard"]["engine"] == "model" and out["run"]["model"]["family"] == "hybrid_linear_xgboost"
+    assert out["scorecard"]["engine"] == "baseline" and out["run"]["model"]["family"] == "seasonal_baseline"
     assert engines["model"]["weeks"] == engines["baseline"]["weeks"]  # scored on the same weeks
+
+
+def test_the_model_wins_a_first_forecast_when_its_win_is_significant(lab_input):
+    inp = without_level_jump(lab_input)
+    inp["champion"] = None
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pipeline, "passes", lambda bt, engine, recorded_bias=None: True)
+        patch.setattr(pipeline, "switch_p_value", lambda incumbent, challenger, lags=pipeline.SWITCH_LAGS:
+                      0.0 if challenger.mean() < incumbent.mean() else 1.0)
+        out = pipeline.calibrate(inp, CODE)
+    assert out["scorecard"]["engine"] == "model" and out["run"]["model"]["family"] == "hybrid_linear_xgboost"
 
 
 def test_the_baseline_is_chosen_when_it_clearly_wins(result, lab_input):
@@ -1232,7 +1429,11 @@ def test_frame_of_input_is_the_fixture_frame(lab_input):
                    "hol_closed", "federal_holiday"]
     expected = synthetic_frame(0)[lab_columns]
     expected = expected[expected.date >= lab_input["days"][0]["date"]].reset_index(drop=True)
-    pd.testing.assert_frame_equal(pipeline.frame_of(lab_input), expected, check_dtype=False)
+    frame = pipeline.frame_of(lab_input)
+    pd.testing.assert_frame_equal(frame[lab_columns], expected, check_dtype=False)
+    # D70's two columns: the fixture has no counted party, and its private events on closed Mondays have no guests
+    assert list(frame.columns) == lab_columns[:10] + ["party"] + lab_columns[10:] + [features.PRIVATE_ON_CLOSED]
+    assert not frame.party.any() and not frame[features.PRIVATE_ON_CLOSED].any()
 
 
 def _prepared(inp):
@@ -1463,47 +1664,96 @@ def test_golden_result_is_current(lab_input):
                  abs_=GOLDEN_ABS, edge_slack=1)
 
 
-# Which engine a calibration returns (design decision 8): the current one sticks unless the other is 0.5 points better
+# Which engine a calibration returns (design decision 8, D69): the current one sticks unless the other is 0.5 points
+# better and that win is significant week by week; with no current run, the baseline unless the model wins that way
+
+SIG = {"model_significant": True, "baseline_significant": True}
+
 
 def test_with_no_current_run_the_model_needs_half_a_point_over_the_baseline():
-    assert pipeline.choose_engine(None, 0.090, 0.102) == "model"
-    assert pipeline.choose_engine(None, 0.097, 0.102) == "model"  # exactly 0.5 points
-    assert pipeline.choose_engine(None, 0.098, 0.102) == "baseline"
+    assert pipeline.choose_engine(None, 0.090, 0.102, **SIG) == "model"
+    assert pipeline.choose_engine(None, 0.097, 0.102, **SIG) == "model"  # exactly 0.5 points
+    assert pipeline.choose_engine(None, 0.098, 0.102, **SIG) == "baseline"
     assert pipeline.choose_engine(None, None, 0.102) == "baseline"  # the model did not run
+
+
+def test_with_no_current_run_an_insignificant_model_win_returns_the_baseline():
+    assert pipeline.choose_engine(None, 0.090, 0.102) == "baseline"
+    assert pipeline.choose_engine(None, 0.090, 0.102, baseline_significant=True) == "baseline"
 
 
 def test_close_engines_do_not_flip_flop():
     # The current run is a baseline run; over four weekly calibrations the model is 0.3 lower, 0.2 higher, 0.4 lower
     # and 0.1 lower than the baseline: every one keeps the baseline, and the same margins keep a current model
     for model_wape in (0.097, 0.102, 0.096, 0.099):
-        assert pipeline.choose_engine("baseline", model_wape, 0.100) == "baseline"
-        assert pipeline.choose_engine("model", 0.100, model_wape) == "model"
+        assert pipeline.choose_engine("baseline", model_wape, 0.100, **SIG) == "baseline"
+        assert pipeline.choose_engine("model", 0.100, model_wape, **SIG) == "model"
 
 
-def test_a_six_tenths_win_switches_engines():
-    assert pipeline.choose_engine("baseline", 0.094, 0.100) == "model"
-    assert pipeline.choose_engine("model", 0.100, 0.094) == "baseline"
+def test_a_six_tenths_win_switches_engines_when_it_is_significant():
+    assert pipeline.choose_engine("baseline", 0.094, 0.100, **SIG) == "model"
+    assert pipeline.choose_engine("model", 0.100, 0.094, **SIG) == "baseline"
+
+
+def test_an_insignificant_win_keeps_the_current_engine():
+    # D69: a large gap that is not significant week by week does not switch, however large
+    assert pipeline.choose_engine("baseline", 0.050, 0.100) == "baseline"
+    assert pipeline.choose_engine("model", 0.100, 0.050) == "model"
 
 
 def test_a_current_model_that_could_not_run_returns_the_baseline():
     assert pipeline.choose_engine("model", None, 0.100) == "baseline"  # the gate holds it (model_not_run)
 
 
+# D69's test: a one-sided Diebold-Mariano p-value on the weeks both engines scored
+
+def _weeks(values):
+    return pd.Series(values, index=pd.date_range("2026-02-02", periods=len(values), freq="7D"), dtype=float)
+
+
+def test_a_consistent_win_is_significant():
+    rng = np.random.default_rng(0)
+    incumbent = _weeks(100 + rng.normal(0, 5, 40))
+    challenger = incumbent - 8 + rng.normal(0, 3, 40)  # better nearly every week
+    assert pipeline.switch_p_value(incumbent, challenger) < 0.01
+    assert pipeline.switch_p_value(challenger, incumbent) > 0.99  # one-sided: the other way is not a win
+
+
+def test_a_noisy_win_is_not_significant():
+    rng = np.random.default_rng(1)
+    incumbent = _weeks(100 + rng.normal(0, 5, 40))
+    noise = rng.normal(0, 30, 40)
+    challenger = incumbent - 1 - (noise - noise.mean())  # exactly 1 better on average, wildly either way week to week
+    assert pipeline.switch_p_value(incumbent, challenger) > pipeline.SWITCH_ALPHA
+
+
+def test_too_few_or_unvarying_weeks_are_never_significant():
+    assert pipeline.switch_p_value(_weeks([100.0] * 11), _weeks([50.0] * 11)) == 1.0  # under 12 shared weeks
+    assert pipeline.switch_p_value(_weeks([100.0] * 20), _weeks([90.0] * 20)) == 1.0  # differences that never vary
+    assert pipeline.switch_p_value(_weeks([100.0] * 20), _weeks([100.0] * 20)) == 1.0
+
+
+def test_only_shared_weeks_are_compared():
+    incumbent = _weeks(np.linspace(100, 140, 30))
+    challenger = incumbent.iloc[:11] - 10  # 11 shared weeks
+    assert pipeline.switch_p_value(incumbent, challenger) == 1.0
+
+
 # An engine the gate would refuse on its own checks (coverage, and the baseline's bias) is not returned when the other
 # passes them: a WAPE winner whose ranges miss would leave a location with no current run without a forecast.
 
 def test_with_no_current_run_a_winner_that_fails_its_checks_falls_back_to_the_other():
-    assert pipeline.choose_engine(None, 0.090, 0.100, model_ok=False) == "baseline"
-    assert pipeline.choose_engine(None, 0.100, 0.090, baseline_ok=False) == "model"
+    assert pipeline.choose_engine(None, 0.090, 0.100, model_ok=False, **SIG) == "baseline"
+    assert pipeline.choose_engine(None, 0.100, 0.090, baseline_ok=False, **SIG) == "model"
     # With neither passing, the WAPE rule stands and the gate says why
-    assert pipeline.choose_engine(None, 0.090, 0.100, model_ok=False, baseline_ok=False) == "model"
+    assert pipeline.choose_engine(None, 0.090, 0.100, model_ok=False, baseline_ok=False, **SIG) == "model"
 
 
 def test_an_engine_switch_needs_the_other_to_pass_its_checks():
-    assert pipeline.choose_engine("baseline", 0.090, 0.100, model_ok=False) == "baseline"
-    assert pipeline.choose_engine("model", 0.100, 0.090, baseline_ok=False) == "model"
+    assert pipeline.choose_engine("baseline", 0.090, 0.100, model_ok=False, **SIG) == "baseline"
+    assert pipeline.choose_engine("model", 0.100, 0.090, baseline_ok=False, **SIG) == "model"
     # A current engine that fails does not switch to a worse one: the current run stays until it lapses
-    assert pipeline.choose_engine("model", 0.090, 0.100, model_ok=False) == "model"
+    assert pipeline.choose_engine("model", 0.090, 0.100, model_ok=False, **SIG) == "model"
 
 
 def bt_of(inside, weeks, bias=0.0, wape=0.10, median=0.15, weekday_bias=0.03):
@@ -1541,8 +1791,8 @@ def test_a_wape_winner_that_fails_only_its_weekday_median_gives_way():
     model, base = bt_of(16, 20, wape=0.140, median=0.150), bt_of(16, 20, wape=0.132, median=0.130)
     ok = {"model_ok": pipeline.passes(model, "model"), "baseline_ok": pipeline.passes(base, "baseline")}
     assert ok == {"model_ok": True, "baseline_ok": False}
-    assert pipeline.choose_engine(None, 0.140, 0.132, **ok) == "model"
-    assert pipeline.choose_engine("model", 0.140, 0.132, **ok) == "model"  # no switch to a draft the gate holds
+    assert pipeline.choose_engine(None, 0.140, 0.132, **ok, **SIG) == "model"
+    assert pipeline.choose_engine("model", 0.140, 0.132, **ok, **SIG) == "model"  # no switch to a draft the gate holds
 
 
 def test_a_model_needs_weekday_bias_within_two_points_of_the_current_runs_recorded_backtest():
@@ -1565,7 +1815,7 @@ def test_no_switch_to_a_model_the_gate_would_hold_for_weekday_bias():
     ok = {"model_ok": pipeline.passes(model, "model", recorded_bias=0.03),
           "baseline_ok": pipeline.passes(base, "baseline", recorded_bias=0.03)}
     assert ok == {"model_ok": False, "baseline_ok": True}
-    assert pipeline.choose_engine("baseline", 0.10, 0.12, **ok) == "baseline"
+    assert pipeline.choose_engine("baseline", 0.10, 0.12, **ok, **SIG) == "baseline"
 
 
 def test_calibrate_judges_the_model_by_the_current_runs_recorded_weekday_bias(lab_input):
