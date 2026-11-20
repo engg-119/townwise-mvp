@@ -27,7 +27,7 @@ import type { LocationRecord, RefitState } from './stores/locations.ts';
 import type { Coverage } from './stores/sales-days.ts';
 import { localDay, localMinutes, timeZoneOf } from './time-zones.ts';
 
-/** A location's week starts at this hour on Monday, in its town's time zone (lab/schedule.ts). [CONFIRM] */
+/** A location's week starts at this hour on Monday, in its town's time zone (lab/schedule.ts). */
 export const SCHEDULE_START_HOUR = 3;
 /**
  * D59: a location's refits start at most once in this long (lab/schedule.ts). Here, beside SCHEDULE_START_HOUR, since

@@ -77,5 +77,26 @@
     "questionId": "gap_2026-05-12_2026-05-13",
     "body": { "answer": "open" },
     "response": { "question": { "id": "gap_2026-05-12_2026-05-13", "answer": "open" }, "note": null }
+  },
+  "partyGuests": {
+    "questions": [
+      { "id": "party_guests_0000000000000000000000a5", "kind": "party_guests", "noteId": "0000000000000000000000a5", "startDate": "2026-04-04", "endDate": "2026-04-04", "weekdays": null }
+    ],
+    "activity": [
+      { "at": "2026-06-01T06:30:00.000Z", "kind": "guest_count_saved", "noteId": "0000000000000000000000a6", "startDate": "2026-04-11", "endDate": "2026-04-11" }
+    ],
+    "answer": {
+      "questionId": "party_guests_0000000000000000000000a5",
+      "body": { "answer": "guests", "guests": 43 },
+      "response": {
+        "question": { "id": "party_guests_0000000000000000000000a5", "answer": "guests" },
+        "note": {
+          "id": "0000000000000000000000a5", "kind": "private_event", "startDate": "2026-04-04", "endDate": "2026-04-04", "weekdays": null,
+          "effect": "more_guests", "expectedGuests": 43, "detail": null, "title": null, "startTime": null, "endTime": null,
+          "createdByEmail": "Deleted person", "createdAt": "2026-04-01T12:00:00.000Z", "updatedAt": "2026-06-01T12:00:00.000Z",
+          "canEdit": false, "source": null, "fromEvent": null
+        }
+      }
+    }
   }
 }

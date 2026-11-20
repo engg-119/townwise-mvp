@@ -731,7 +731,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
 /** The only route that may use staff_self. */
 const VIEW_AS_END = { method: 'POST', path: '/admin/view-as/end' } as const;
 
-/** Spec 10.8. [CONFIRM: limits] */
+/** Spec 10.8. */
 const WRITES_LIMIT = { name: 'townwise:writes', limit: 300, windowSeconds: 600 } as const;
 export const ROUTE_LIMITS = {
   uploads: { name: 'townwise:uploads', limit: 30, windowSeconds: 3600, whenStoreDown: 'allow' },
@@ -756,7 +756,6 @@ export const ROUTE_LIMITS = {
   // outage denies (the writes limiter allows).
   ai_reads: { name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' },
   // connect-google-calendar, design decision 8: every call is a Google call, so a store outage denies, as for Places.
-  // [CONFIRM: 30 Google calendar calls an account an hour]
   google_calendars: { name: 'townwise:google-calendars', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' },
   // D66, Research now: each press spends the organization's TownwiseAI month and sends to Anthropic, so a store outage
   // denies. [CONFIRM: Research now for org admins, the location's threads only, 3 a day per person, not within 6 hours of the last run]

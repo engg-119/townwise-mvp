@@ -2,7 +2,8 @@
 // activity, read from the location's own records; an answer recorded once however often or from however many tabs it is
 // sent, finished after a crash, `closed` saving one closure note and `open` on a likely-closed day one open-day note
 // through the notes rules, `other` saving nothing and never taking the person's words, read-only under view-as, and
-// logged with ids and the answer only. Synthetic days only.
+// logged with ids and the answer only. D71: a past private event's guests, saved into its note by any member, or
+// skipped. Synthetic days only.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -761,6 +762,194 @@ describe('logs', () => {
   });
 });
 
+// D71: a past private event with more guests and no count is asked how many guests came; any member may answer, and
+// the count is written into that note (compare-and-set), never into a log line or an audit event.
+describe('a private event’s guests (D71)', () => {
+  /** A private event with more guests and no count on Saturday 2026-04-04, written by the colleague, with sentinel words. */
+  async function partyNote(locationId: string, over: Record<string, unknown> = {}, owner = orgId): Promise<string> {
+    const _id = new Types.ObjectId();
+    const at = new Date('2026-04-01T12:00:00.000Z');
+    await server.connection.collection('tw_notes').insertOne({
+      _id, orgId: new Types.ObjectId(owner), locationId: new Types.ObjectId(locationId), kind: 'private_event', startDate: '2026-04-04',
+      endDate: '2026-04-04', weekdays: null, effect: 'more_guests', expectedGuests: null, detail: 'Sentinel-party-detail',
+      title: 'Sentinel-party-title', startTime: '18:00', endTime: '22:00', createdBy: colleague.userId, createdAt: at, updatedAt: at, ...over,
+    });
+    return _id.toHexString();
+  }
+  const partyId = (noteId: string): string => `party_guests_${noteId}`;
+  const question = (noteId: string, over: Record<string, unknown> = {}) => ({
+    id: partyId(noteId), kind: 'party_guests', noteId, startDate: '2026-04-04', endDate: '2026-04-04', weekdays: null, ...over,
+  });
+  async function noteDoc(noteId: string): Promise<Record<string, unknown> | null> {
+    return server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(noteId) });
+  }
+
+  it('asks about a past private event with no count, after the days’ questions, with its id and dates only', async () => {
+    const locationId = await askedLocation();
+    const noteId = await partyNote(locationId);
+    // Not asked: a count, a buyout, fewer guests, unknown, today (June 1 in Hanover) and a note still covering a coming day.
+    for (const over of [
+      { expectedGuests: 30 }, { effect: 'closed' }, { effect: 'fewer_guests' }, { effect: 'unknown' },
+      { startDate: '2026-06-01', endDate: '2026-06-01' }, { startDate: '2026-05-30', endDate: '2026-06-02' },
+    ]) await partyNote(locationId, over);
+    const { status, body } = await panel(locationId);
+    expect(status).toBe(200);
+    expect(body.questions).toEqual([GAP, question(noteId)]);
+    expect(JSON.stringify(body)).not.toContain('Sentinel-party');
+  });
+
+  it('a member who is not the note’s author saves the count: the note, both audit events with no count, the refit mark', async () => {
+    const locationId = await askedLocation();
+    const noteId = await partyNote(locationId);
+    const before = await noteDoc(noteId);
+    server.logs.length = 0;
+    const { status, body } = await answer(locationId, partyId(noteId), { answer: 'guests', guests: 43 });
+    expect(status).toBe(200);
+    expect(body.question).toEqual({ id: partyId(noteId), answer: 'guests' });
+    // The note is the colleague's, so the member who answered still can't edit it on the Notes page.
+    expect(body.note).toMatchObject({ id: noteId, expectedGuests: 43, title: 'Sentinel-party-title', canEdit: false });
+    // Only the count and updatedAt changed.
+    expect(await noteDoc(noteId)).toEqual({ ...before, expectedGuests: 43, updatedAt: server.clock.now() });
+    expect((await eventsAt(locationId, 'note.updated')).map((e) => [e.actorUserId, e.details])).toEqual([
+      [member.userId, { locationId, kind: 'private_event', startDate: '2026-04-04', endDate: '2026-04-04' }],
+    ]);
+    expect((await eventsAt(locationId, 'agent.question_answered')).map((e) => [e.actorUserId, e.details])).toEqual([
+      [member.userId, { locationId, questionId: partyId(noteId), answer: 'guests' }],
+    ]);
+    // A note on a stored day wants a refit (D59), so the next one takes the party's guests off April 4.
+    const location = await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(locationId) });
+    expect(location?.refit).toEqual({ wantedAt: server.clock.now() });
+    const lines = logLines(server).filter((line) => line.msg === 'townwise.agent_answer');
+    expect(lines).toEqual([expect.objectContaining({ orgId, locationId, answer: 'guests' })]);
+    expect(server.logs.join('\n')).not.toMatch(/"(guests|expectedGuests)":|Sentinel-party/);
+
+    const after = await panel(locationId);
+    expect(after.body.questions).toEqual([GAP]);
+    expect(after.body.activity).toEqual([{
+      at: server.clock.now().toISOString(), kind: 'guest_count_saved', noteId, startDate: '2026-04-04', endDate: '2026-04-04',
+    }]);
+  });
+
+  it('again, or after a try that wrote its count and stopped, ends with one count, one edit and one answer', async () => {
+    const locationId = await askedLocation();
+    const noteId = await partyNote(locationId);
+    const first = await answer(locationId, partyId(noteId), { answer: 'guests', guests: 40 });
+    const again = await answer(locationId, partyId(noteId), { answer: 'guests', guests: 41 });
+    expect(again).toEqual(first);
+    expect((await noteDoc(noteId))?.expectedGuests).toBe(40);
+    expect(await eventsAt(locationId, 'note.updated')).toHaveLength(1);
+    expect(await eventsAt(locationId, 'agent.question_answered')).toHaveLength(1);
+
+    // A claim of `guests` that wrote its count and stopped is finished as `guests` by any later answer, writing nothing.
+    const stopped = await askedLocation();
+    const stoppedNote = await partyNote(stopped, { expectedGuests: 25 });
+    await server.connection.collection('tw_agent_answers').insertOne({
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(stopped), questionId: partyId(stoppedNote), answer: 'guests',
+      noteId: new Types.ObjectId(stoppedNote), status: 'saving', createdAt: server.clock.now(), updatedAt: server.clock.now(),
+    });
+    const finished = await answer(stopped, partyId(stoppedNote), { answer: 'not_sure' });
+    expect(finished).toMatchObject({ status: 200, body: { question: { answer: 'guests' }, note: { id: stoppedNote, expectedGuests: 25 } } });
+    expect(await answerRows(stopped)).toEqual([expect.objectContaining({ answer: 'guests', status: 'done', noteId: new Types.ObjectId(stoppedNote) })]);
+    expect(await eventsAt(stopped, 'note.updated')).toHaveLength(0);
+  });
+
+  it('two counts at once: the first written wins, and both answers say so', async () => {
+    const locationId = await askedLocation();
+    const noteId = await partyNote(locationId);
+    const results = await Promise.all([40, 55].map((guests) => answer(locationId, partyId(noteId), { answer: 'guests', guests })));
+    const stored = (await noteDoc(noteId))?.expectedGuests;
+    expect([40, 55]).toContain(stored);
+    for (const result of results) expect(result).toMatchObject({ status: 200, body: { question: { answer: 'guests' }, note: { expectedGuests: stored } } });
+    expect(await eventsAt(locationId, 'note.updated')).toHaveLength(1);
+    expect(await eventsAt(locationId, 'agent.question_answered')).toHaveLength(1);
+    expect(await answerRows(locationId)).toEqual([expect.objectContaining({ answer: 'guests', status: 'done' })]);
+  });
+
+  it('never overwrites an edit made since the panel was read: a count typed on the Notes page ends the question', async () => {
+    const locationId = await askedLocation();
+    const noteId = await partyNote(locationId);
+    await server.connection.collection('tw_notes').updateOne({ _id: new Types.ObjectId(noteId) }, { $set: { expectedGuests: 70 } });
+    expect(await answer(locationId, partyId(noteId), { answer: 'guests', guests: 40 })).toMatchObject({ status: 404 });
+    expect((await noteDoc(noteId))?.expectedGuests).toBe(70);
+    expect(await answerRows(locationId)).toHaveLength(0);
+  });
+
+  it('Skip stores not sure, saves nothing, and is never asked again', async () => {
+    const locationId = await askedLocation();
+    const noteId = await partyNote(locationId);
+    const before = await noteDoc(noteId);
+    expect(await answer(locationId, partyId(noteId), { answer: 'not_sure' }))
+      .toEqual({ status: 200, body: { question: { id: partyId(noteId), answer: 'not_sure' }, note: null } });
+    expect(await noteDoc(noteId)).toEqual(before);
+    expect(await eventsAt(locationId, 'note.updated')).toHaveLength(0);
+    const after = await panel(locationId);
+    expect(after.body.questions).toEqual([GAP]);
+    expect(after.body.activity).toEqual([
+      { at: server.clock.now().toISOString(), kind: 'question_answered', questionId: partyId(noteId), answer: 'not_sure' },
+    ]);
+    // An edit since (new dates, still no count) asks nothing: the question is the note's.
+    await server.connection.collection('tw_notes').updateOne({ _id: new Types.ObjectId(noteId) }, { $set: { startDate: '2026-04-11', endDate: '2026-04-11' } });
+    expect((await panel(locationId)).body.questions).toEqual([GAP]);
+  });
+
+  it('takes a whole count from 1 to 20,000 and nothing else; a count on a question about days, or a day’s answer here, is 400', async () => {
+    const locationId = await askedLocation();
+    const noteId = await partyNote(locationId);
+    for (const json of [
+      { answer: 'guests' }, { answer: 'guests', guests: 0 }, { answer: 'guests', guests: 20_001 }, { answer: 'guests', guests: 4.5 },
+      { answer: 'guests', guests: '40' }, { answer: 'guests', guests: 40, extra: 1 }, { answer: 'not_sure', guests: 40 },
+      { answer: 'closed' }, { answer: 'open' }, { answer: 'other' },
+    ]) {
+      expect({ json, ...(await answer(locationId, partyId(noteId), json)) }).toMatchObject({ json, status: 400, body: { error: 'invalid_request' } });
+    }
+    expect(await answer(locationId, GAP_ID, { answer: 'guests', guests: 40 })).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    expect(await answer(locationId, 'party_guests_NOTANID', { answer: 'not_sure' })).toMatchObject({ status: 400 });
+    expect(await answerRows(locationId)).toHaveLength(0);
+    expect((await noteDoc(noteId))?.expectedGuests).toBeNull();
+    // 20,000 is the most a note takes.
+    expect(await answer(locationId, partyId(noteId), { answer: 'guests', guests: 20_000 })).toMatchObject({ status: 200, body: { note: { expectedGuests: 20_000 } } });
+  });
+
+  it('an unknown note, one not asked about, or another organization’s note is 404, and that note is unchanged', async () => {
+    const locationId = await askedLocation();
+    expect(await answer(locationId, partyId(new Types.ObjectId().toHexString()), { answer: 'guests', guests: 40 })).toMatchObject({ status: 404 });
+    const buyout = await partyNote(locationId, { effect: 'closed' });
+    expect(await answer(locationId, partyId(buyout), { answer: 'guests', guests: 40 })).toMatchObject({ status: 404 });
+    // Org B's own note, named from org A's location and from org B's location by org A's member.
+    const otherOrg = await createOrg(server, { name: `Party Diner ${randomUUID().slice(0, 6)}` });
+    const theirs = await addLocation(server, { orgId: otherOrg, name: 'Their Room' });
+    await server.connection.collection('tw_sales_days').insertOne({
+      orgId: new Types.ObjectId(otherOrg), locationId: new Types.ObjectId(theirs), date: '2026-04-04', guests: 100, netSalesCents: null,
+      uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
+    });
+    const theirNote = await partyNote(theirs, {}, otherOrg);
+    const before = await noteDoc(theirNote);
+    for (const where of [locationId, theirs]) {
+      expect(await answer(where, partyId(theirNote), { answer: 'guests', guests: 40 })).toMatchObject({ status: 404, body: { error: 'not_found' } });
+    }
+    expect(await noteDoc(theirNote)).toEqual(before);
+    expect(await server.connection.collection('tw_agent_answers').countDocuments({ questionId: partyId(theirNote) })).toBe(0);
+  });
+
+  it('staff in view-as see the question and are refused an answer with 403 view_as_read_only', async () => {
+    const locationId = await askedLocation();
+    const noteId = await partyNote(locationId);
+    const staff = await signInStaff(server);
+    try {
+      await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: member.userId, orgId });
+      expect((await panel(locationId, staff)).body.questions).toEqual([GAP, question(noteId)]);
+      for (const json of [{ answer: 'guests', guests: 40 }, { answer: 'not_sure' }]) {
+        expect(await answer(locationId, partyId(noteId), json, staff)).toMatchObject({ status: 403, body: { error: 'view_as_read_only' } });
+      }
+      expect(await answerRows(locationId)).toHaveLength(0);
+      expect((await noteDoc(noteId))?.expectedGuests).toBeNull();
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
+  });
+});
+
 // The client reads these answers through its own schemas (client/src/chat/api.ts). Both sides test the one fixture,
 // fixtures/agent-panel.json, and its client copy, client/test/chat/agent-panel.json, so a change to either side's shape
 // fails a test until both and the fixture agree.
@@ -770,6 +959,8 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
   const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8')) as {
     panel: AgentPanel;
     answer: { questionId: string; body: unknown; response: AnswerResult };
+    /** D71: a private event's question and the count saved from one, at a location asked nothing else. */
+    partyGuests: Pick<AgentPanel, 'questions' | 'activity'> & { answer: { questionId: string; body: unknown; response: AnswerResult } };
   };
 
   it('are the client’s: the fixture and its client copy are identical', () => {
@@ -948,5 +1139,40 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
 
     expect(await panel(locationId)).toEqual({ status: 200, body: fixture.panel });
     expect(await answer(locationId, fixture.answer.questionId, fixture.answer.body)).toEqual({ status: 200, body: fixture.answer.response });
+  });
+
+  it('D71: GET answers a private event’s question and a saved count as the fixture holds them, and POST a count as it does', async () => {
+    const locationId = await addLocation(server, { orgId, name: `Party Room ${randomUUID().slice(0, 8)}` });
+    const org = new Types.ObjectId(orgId);
+    const location = new Types.ObjectId(locationId);
+    // Ten days with sales and no gap: the location is asked nothing about its days.
+    await server.connection.collection('tw_sales_days').insertMany(Array.from({ length: 10 }, (_, i) => ({
+      orgId: org, locationId: location, date: plus('2026-04-02', i), guests: 100, netSalesCents: null, uploadId: new Types.ObjectId(),
+      updatedAt: server.clock.now(),
+    })));
+    // Written by someone no longer here, so the member answering is not its author.
+    const partyAt = new Date('2026-04-01T12:00:00.000Z');
+    const countedAt = new Date('2026-06-01T06:30:00.000Z');
+    const party = (id: string, startDate: string, expectedGuests: number | null, updatedAt: Date) => ({
+      _id: new Types.ObjectId(id), orgId: org, locationId: location, kind: 'private_event', startDate, endDate: startDate, weekdays: null,
+      effect: 'more_guests', expectedGuests, detail: null, title: null, startTime: null, endTime: null, createdBy: 'fixture-gone',
+      createdAt: partyAt, updatedAt,
+    });
+    await server.connection.collection('tw_notes').insertMany([
+      party('0000000000000000000000a5', '2026-04-04', null, partyAt), party('0000000000000000000000a6', '2026-04-11', 40, countedAt),
+    ]);
+    await server.connection.collection('tw_agent_answers').insertOne({
+      orgId: org, locationId: location, questionId: 'party_guests_0000000000000000000000a6', answer: 'guests',
+      noteId: new Types.ObjectId('0000000000000000000000a6'), status: 'done', createdAt: countedAt, updatedAt: countedAt,
+    });
+    const { status, body } = await panel(locationId);
+    expect(status).toBe(200);
+    expect({ questions: body.questions, activity: body.activity }).toEqual({
+      questions: fixture.partyGuests.questions, activity: fixture.partyGuests.activity,
+    });
+    const { questionId, body: json, response } = fixture.partyGuests.answer;
+    // The note's updatedAt is the answer's time: the suite's clock has moved on since 12:00 by now.
+    const note = response.note === null ? null : { ...response.note, updatedAt: server.clock.now().toISOString() };
+    expect(await answer(locationId, questionId, json)).toEqual({ status: 200, body: { ...response, note } });
   });
 });

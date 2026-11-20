@@ -52,7 +52,7 @@ export interface SalesHistory {
   uploads: HistoryUploadView[];
 }
 
-/** Spec 11.3 and 18. [CONFIRM: ten years per upload; caps of 20,000 guests and one million dollars a day] */
+/** Spec 11.3 and 18. */
 const MAX_UPLOAD_DAYS = 3660;
 const MAX_GUESTS = 20_000;
 const MAX_NET_SALES_CENTS = 100_000_000;

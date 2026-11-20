@@ -69,7 +69,7 @@ import { suggestFor, SUGGESTIONS_TIME_MS, suggestionsWeek, type SuggestionsOutco
 
 /** The lease a pass holds and renews before each location. */
 export const SCHEDULE_LEASE_MS = 10 * 60_000;
-/** Scheduled calibrations live at once across all organizations. [CONFIRM] */
+/** Scheduled calibrations live at once across all organizations. */
 export const SCHEDULE_LIVE_CAP = 3;
 // SCHEDULE_START_HOUR and REFIT_EVERY_MS live with the calibration state, whose next refresh and `waiting` (D65) read
 // them too (calibration.ts cannot import this module, which reaches it back through the chat's tools).

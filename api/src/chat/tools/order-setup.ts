@@ -19,7 +19,7 @@ import { viewOf } from './shared.ts';
 /**
  * The most items one card carries. A chat call has 16,000 output tokens, thinking included, and a call cut at
  * max_tokens never runs its tool, so this is well under the setup read's 150. Unmeasured: the timing spike planned for
- * it was skipped. [CONFIRM: 60 items a card]
+ * it was skipped.
  */
 export const ORDER_SETUP_ITEMS_MAX = 60;
 

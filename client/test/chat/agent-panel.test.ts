@@ -13,6 +13,9 @@ import { fakeChatApi } from '../helpers/chat';
 const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as {
   panel: { questions: unknown[]; activity: unknown[]; suggestions: unknown[]; weeklySuggestions: unknown; ruleSuggestions: unknown[] };
   answer: { questionId: string; body: { answer: QuestionAnswer }; response: unknown };
+  partyGuests: {
+    questions: unknown[]; activity: unknown[]; answer: { questionId: string; body: { answer: 'guests'; guests: number }; response: unknown };
+  };
 };
 
 test('the fixture holds every question kind and every activity kind the API sends', () => {
@@ -21,6 +24,9 @@ test('the fixture holds every question kind and every activity kind the API send
   expect(fixture.panel.activity.map((a) => (a as { kind: string }).kind)).toEqual([
     'note_saved', 'question_answered', 'upload_applied', 'file_processed', 'forecast_made', 'agent_change', 'question_answered',
   ]);
+  // D71: a past private event's guests, and the count saved from one, held apart so the panel's cards stay as they were.
+  expect(fixture.partyGuests.questions.map((q) => (q as { kind: string }).kind)).toEqual(['party_guests']);
+  expect(fixture.partyGuests.activity.map((a) => (a as { kind: string }).kind)).toEqual(['guest_count_saved']);
   // Every answer an activity item can name, `other` (Something else…) included.
   expect(fixture.panel.activity.flatMap((a) => {
     const item = a as { kind: string; answer?: string };
@@ -75,6 +81,28 @@ test('an answer sends the body the API takes and reads the response it gives', a
   api.respond[path] = () => fixture.answer.response;
   expect(await answerQuestion(api, 'l1', fixture.answer.questionId, fixture.answer.body.answer)).toEqual(fixture.answer.response);
   expect(api.writes).toEqual([{ method: 'POST', path, body: fixture.answer.body }]);
+});
+
+test('D71: the panel reads a private event’s question and a saved count exactly as the API sends them', async () => {
+  const api = fakeChatApi();
+  api.panel = { ...fixture.panel, questions: fixture.partyGuests.questions, activity: fixture.partyGuests.activity };
+  const read = await loadAgentPanel(api, 'l1');
+  expect({ questions: read.questions, activity: read.activity }).toEqual({
+    questions: fixture.partyGuests.questions, activity: fixture.partyGuests.activity,
+  });
+});
+
+test('D71: a private event’s count goes as `guests` beside the answer, and Skip as `not_sure` alone', async () => {
+  const api = fakeChatApi();
+  const { questionId, body, response } = fixture.partyGuests.answer;
+  const path = `/api/org/locations/l1/agent/questions/${questionId}`;
+  api.respond[path] = () => response;
+  expect(await answerQuestion(api, 'l1', questionId, 'guests', body.guests)).toEqual(response);
+  api.respond[path] = () => ({ question: { id: questionId, answer: 'not_sure' }, note: null });
+  await answerQuestion(api, 'l1', questionId, 'not_sure');
+  expect(api.writes).toEqual([
+    { method: 'POST', path, body: { answer: 'guests', guests: 43 } }, { method: 'POST', path, body: { answer: 'not_sure' } },
+  ]);
 });
 
 test('Something else… answers `other` with that one key and reads it back', async () => {

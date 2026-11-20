@@ -146,8 +146,15 @@ const LIKELY_CLOSED_ANSWER: Readonly<Record<string, string>> = {
   ...QUESTION_ANSWER, closed: 'Closed that day', open: 'Open, with few guests',
 };
 
-/** The words for a question's answer, by the kind of question its id names (weekday_, gap_ or likely_closed_). */
+/**
+ * D71: an answer to the question about a past private event's guests. Never the count, which the event does not hold.
+ * [CONFIRM: "Saved the guest count" and "Skipped"]
+ */
+const PARTY_ANSWER: Readonly<Record<string, string>> = { guests: 'Saved the guest count', not_sure: 'Skipped' };
+
+/** The words for a question's answer, by the kind of question its id names (weekday_, gap_, likely_closed_ or party_guests_). */
 function questionAnswer(questionId: string, answer: string): string {
+  if (questionId.startsWith('party_guests_')) return PARTY_ANSWER[answer] ?? '';
   return (questionId.startsWith('likely_closed_') ? LIKELY_CLOSED_ANSWER : QUESTION_ANSWER)[answer] ?? '';
 }
 

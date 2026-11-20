@@ -62,10 +62,10 @@ That change makes TownwiseAI read PDF and Word files in chat (D33). This change 
 
 ## Open Questions
 
-- [CONFIRM: opt-in per file, sends the whole file to Anthropic]
-- [CONFIRM: TownwiseAI writes notes and days from an opted-in file without a second press, all undoable]
-- [CONFIRM: a file read may start a calibration for the org admin who asked]
-- [CONFIRM: reading whole files shares the files AI budget]
+- Approved by the owner on 2026-11-19: opt-in per file, sends the whole file to Anthropic.
+- Approved by the owner on 2026-11-19: TownwiseAI writes notes and days from an opted-in file without a second press, all undoable.
+- Approved by the owner on 2026-11-19: a file read may start a calibration for the org admin who asked.
+- Approved by the owner on 2026-11-19: reading whole files shares the files AI budget.
 - [CONFIRM: 95% of days verified]
 - [CONFIRM: file caps and limits]
 - [CONFIRM: a file read can close at most 31 days, 14 in a row]

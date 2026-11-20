@@ -29,7 +29,11 @@ import { serveAbout } from './about-fakes';
 // to the chat before answering `other`. Device storage holds at most the conversation the page closed on (an id and a
 // time, src/chat/lastChat.ts), never the words.
 
-const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as { panel: { questions: unknown[]; activity: unknown[] } };
+const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as {
+  panel: { questions: unknown[]; activity: unknown[] };
+  /** D71: a private event's question, and the answer a count gets. */
+  partyGuests: { questions: unknown[]; answer: { questionId: string; response: unknown } };
+};
 
 const GAP_HEADING = 'Were you closed May 12 to May 13, 2026?';
 const WORDS = 'A private party had the whole place.';
@@ -49,9 +53,9 @@ function at(width: number): void {
   jest.spyOn(Dimensions, 'get').mockReturnValue({ ...WINDOW, width });
 }
 
-async function renderAgent(path = '/locations/l1/agent') {
+async function renderAgent(path = '/locations/l1/agent', panel: unknown = fixture.panel) {
   const chat = fakeChatApi();
-  chat.panel = fixture.panel;
+  chat.panel = panel;
   serveAbout(chat);
   const portal = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: chat });
   const rendered = await renderApp(path, portal);
@@ -159,4 +163,23 @@ test('the landing shows the questions under the chips, and Something else… sen
       expect(JSON.stringify(call)).not.toContain(WORDS);
     }
   }
+});
+
+// D71: a past private event's guests, on a phone's landing.
+test('a private event’s question saves a count typed in its Guests field, and Save waits for a whole count', async () => {
+  at(375);
+  const path = `/api/org/locations/l1/agent/questions/${fixture.partyGuests.answer.questionId}`;
+  const { chat } = await renderAgent('/locations/l1/agent', { ...fixture.panel, questions: fixture.partyGuests.questions });
+  chat.respond[path] = () => fixture.partyGuests.answer.response;
+  const landing = await screen.findByTestId('chat-landing');
+  expect(await within(landing).findByRole('heading', { name: 'How many guests came for the private event on Sat, Apr 4, 2026?' })).toBeTruthy();
+  const save = () => within(landing).getByRole('button', { name: 'Save' });
+  expect(save().props.accessibilityState).toMatchObject({ disabled: true });
+  await fireEvent.changeText(within(landing).getByLabelText('Guests who came'), '20001');
+  expect(save().props.accessibilityState).toMatchObject({ disabled: true });
+  await fireEvent.changeText(within(landing).getByLabelText('Guests who came'), '43');
+  expect(save().props.accessibilityState).toMatchObject({ disabled: false });
+  await fireEvent.press(save());
+  expect(await within(landing).findByText('Saved: 43 guests on the private event note.')).toBeTruthy();
+  expect(chat.writes).toEqual([{ method: 'POST', path, body: { answer: 'guests', guests: 43 } }]);
 });

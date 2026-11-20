@@ -5,14 +5,11 @@
 // out (files/ai-verify.ts), its summary and facts a reference item TownwiseAI can read in chat, and, when it wrote
 // notes or days and the person who asked is an org admin now, a calibration starts as them. Nothing is written once the
 // person who asked no longer belongs to the organization (or, as staff, their open-as-admin grant ended).
-// [CONFIRM: TownwiseAI writes notes and days from an opted-in file without a second press, all undoable] [CONFIRM: a
-// file read may start a calibration for the org admin who asked] [CONFIRM: a file read can close at most 31 days, 14
+// [CONFIRM: a file read can close at most 31 days, 14
 // in a row]
 //
 // D46: the closed patterns the file states, and a closure the guard refuses only for its span, become suggested closure
-// rules (stores/agent-suggestions.ts), which change nothing until a member confirms one. [CONFIRM: a closure over 14
-// days that a file read may not write as a note becomes a suggested rule] [CONFIRM: 5 suggested rules a file read, 10
-// open per location from files]
+// rules (stores/agent-suggestions.ts), which change nothing until a member confirms one.
 //
 // No multi-document transactions (DocumentDB): the ids are planned first and saved on the read by compare-and-set,
 // each write is keyed by its planned id and skipped when it is already there, and the outcome is recorded last, so a

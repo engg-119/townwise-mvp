@@ -41,7 +41,10 @@ import { suggestionDaysText } from './format';
 
 export interface Answered {
   answer: QuestionAnswer;
-  /** The note the answer saved (a closure note, or a likely-closed question's open-day note), or null. */
+  /**
+   * The note the answer saved (a closure note, or a likely-closed question's open-day note), or (D71) the private event's
+   * note its count was saved into; or null.
+   */
   note: Note | null;
 }
 
@@ -87,7 +90,8 @@ export interface AgentPanelState {
   answering: string | null;
   /** A failed answer's words, by question id. */
   errors: Readonly<Record<string, string>>;
-  answer: (questionId: string, answer: QuestionAnswer, place: QuestionPlace) => void;
+  /** `guests`: a private event's count (D71), with the answer `guests`. */
+  answer: (questionId: string, answer: QuestionAnswer, place: QuestionPlace, guests?: number) => void;
   /** Where the person last used each question's card: only that copy announces what happened. */
   actedIn: Readonly<Record<string, QuestionPlace>>;
   /** Something else…, by question id. */
@@ -304,13 +308,13 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
     setActedIn((current) => (current[questionId] === place ? current : { ...current, [questionId]: place }));
   }
 
-  function answer(questionId: string, choice: QuestionAnswer, place: QuestionPlace): void {
+  function answer(questionId: string, choice: QuestionAnswer, place: QuestionPlace, guests?: number): void {
     if (inflight.current || answered[questionId] !== undefined) return;
     inflight.current = true;
     usedIn(questionId, place);
     setAnswering(questionId);
     setErrors((current) => without(current, questionId));
-    answerQuestion(api, locationId, questionId, choice).then(
+    answerQuestion(api, locationId, questionId, choice, guests).then(
       (result) => {
         setAnswered((current) => ({ ...current, [questionId]: { answer: result.question.answer, note: result.note } }));
         // Whatever was typed for Something else… goes with the question.

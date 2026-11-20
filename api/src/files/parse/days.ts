@@ -6,7 +6,7 @@ import { centsOf, readAmount, readDateCell, readGuests, resolveDate, type DateOr
 // Check the totals (spec 11.2 step 3): rows become days, with the skipped rows and left-out days counted, then
 // the request body of 11.1. The client applies the server's rules of 11.3 first, so a 400 means a client bug.
 
-/** Spec 11.3 [CONFIRM: earliest date; caps; ten years per upload]. */
+/** Spec 11.3. */
 export const EARLIEST_DATE = '2010-01-01';
 export const MAX_GUESTS = 20_000;
 export const MAX_NET_SALES_CENTS = 100_000_000;

@@ -12,7 +12,7 @@ import { FIGURE_KEY } from './model';
 // above the grid, one column per day of the grid's month (calendar/chart.ts), with the forecast's middle and range, an
 // outlook day's range dashed, a past day's stored guests, the same weekday last year, and a status word standing
 // upright in a column with no point while the month has a forecast somewhere; a month with none draws no words and
-// says “No forecast for these days yet.” once under the plot (chart.ts chartWords). Today's column is shaded and its
+// says “No forecast for these days.” once under the plot (chart.ts chartWords). Today's column is shaded and its
 // date `white` and bold; the selected day's column is tinted `mint` with `mint` edges and a `mint` mark under its date,
 // so it never reads as today's; a mouse or pen over another column (web, never touch) lights that one `white` as well,
 // and the selected column keeps its tint. A column is at least 24px wide, so a month that doesn't fit (a phone) scrolls
@@ -22,8 +22,7 @@ import { FIGURE_KEY } from './model';
 // The chart is hidden from screen readers and neither its columns nor its scroller are focusable (tabIndex -1): the
 // grid's cells say each day's forecast and range. A column with a status word draws no same weekday last year
 // (ForecastPlot.tsx), so the key names last year only when another column draws it. Under it, the key (only what is
-// drawn) and the printed scale (ChartKey, which the week view draws under its strip too). [CONFIRM: the forecast chart shown
-// by default on the Calendar with a “Forecast chart” chip to hide it]
+// drawn) and the printed scale (ChartKey, which the week view draws under its strip too).
 
 const C = theme.color;
 const HEIGHT = 120;
@@ -139,7 +138,7 @@ export function MonthChart(props: {
           </View>
         </ScrollView>
       </View>
-      {chart.drawn.forecast ? null : <Text style={styles.scale}>No forecast for these days yet.</Text>}
+      {chart.drawn.forecast ? null : <Text style={styles.scale}>No forecast for these days.</Text>}
       <ChartKey drawn={drawn} top={chart.top} testID="calendar-month-chart-key" />
     </View>
   );

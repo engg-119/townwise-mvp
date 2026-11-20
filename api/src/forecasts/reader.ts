@@ -8,14 +8,13 @@
 // from a run that supplied every day of the week; they are the run's own week rows, never sums of days. Past days
 // carry the stored guests and whether they landed in the range. Live accuracy is scored per run, over the passed days
 // that run supplied, so one run is never credited with another's hits and misses; a closed or likely-closed day (spec
-// D32, ../closed-days.ts) is a closure, not a miss, and is left out. [CONFIRM: live accuracy leaves out closed and
-// likely-closed days] Numbers are raw, as stored; callers round for display. From the town's today on, the location's
-// notes and its business rules with a schedule (D31) adjust each day on read (adjust.ts); past days and run rows stay
-// as the model made them. A week's low, mid and high shift by each of its days' adjusted middle less the model's (a
-// newly closed or booked day takes its model middle off, notes' and rules' guests add; never below 0), and its openDays
-// by the days opened less the days closed; a week is left out only when a changed day has no model middle to take off.
-// [CONFIRM: a week's range shifted by its days' note and rule changes] From today on, each run reason also says whether
-// it usually brings more or fewer guests (effects.ts), from the same reads: the stored days, read once, reach back over
+// D32, ../closed-days.ts) is a closure, not a miss, and is left out. Numbers are raw, as stored; callers round for
+// display. From the town's today on, the location's notes and its business rules with a schedule (D31) adjust each
+// day on read (adjust.ts); past days and run rows stay as the model made them. A week's low, mid and high shift by
+// each of its days' adjusted middle less the model's (a newly closed or booked day takes its model middle off, notes'
+// and rules' guests add; never below 0), and its openDays by the days opened less the days closed; a week is left out
+// only when a changed day has no model middle to take off. From today on, each run reason also says whether it
+// usually brings more or fewer guests (effects.ts), from the same reads: the stored days, read once, reach back over
 // the 52 weeks the effects need when the range reaches today and over the 8 weeks before the first scored day that
 // likely closed reads, and one read of the notes and rules marks the closed days for the effects and the accuracy. The
 // town calendar's term entries are made once for the labels and the effects. A read also scores its own days, each
@@ -36,7 +35,7 @@ import type { NoteRecord, NoteStore } from '../stores/notes.ts';
 import type { SalesDayStore } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
 import {
-  adjustDay, flagsAfterData, orderedReasons, ownerBeatsAgent, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule,
+  adjustDay, flagsAfterData, mayHaveFlagged, orderedReasons, ownerBeatsAgent, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule,
 } from './adjust.ts';
 import { effectHistory, reasonEffects } from './effects.ts';
 import { eachDay, type DayStatus } from './file.ts';
@@ -111,9 +110,10 @@ export interface ForecastDayView {
   madeAfterDay: boolean;
   /**
    * A day before today whose run may have read a private event note or business rule covering it (adjust.ts
-   * flagsAfterData, the lab input's privateEvent flag) last written on or after the day, by the time the run was made
-   * (score.ts writtenForRun): what was learned after the day could have shaped the figure, so `inRange` is null and the
-   * day is not scored (D49 as amended).
+   * flagsAfterData, the lab input's privateEvent flag; for a note, D71, any private event but a buyout, a guest count
+   * written since included) last written on or after the day, by the time the run was made (score.ts writtenForRun):
+   * what was learned after the day could have shaped the figure, so `inRange` is null and the day is not scored (D49 as
+   * amended).
    */
   laterNote: boolean;
   /** The stored guests for a day before today; null otherwise. */
@@ -336,10 +336,12 @@ export function createForecastReader(deps: {
     ) !== null;
     /**
      * A past day whose run may have read a private event note or rule, covering it and last written once the day began
-     * (D49 as amended): the lab input flags one on a day after the run's data (adjust.ts flagsAfterData).
+     * (D49 as amended): the lab input flags one on a day after the run's data (adjust.ts flagsAfterData). D71: a note is
+     * asked whether or not it has a guest count now (mayHaveFlagged), since a count written later leaves the run's figure
+     * from the note without one.
      */
     const laterNoteOn = (date: string, run: ForecastRunRecord): boolean => date < today && (
-      keptOn(date).some((note) => flagsAfterData(note) && writtenForRun(run, date, note.updatedAt))
+      keptOn(date).some((note) => mayHaveFlagged(note) && writtenForRun(run, date, note.updatedAt))
       || scheduled.some((rule) => rule.schedule !== null && noteCovers(rule.schedule, date) && flagsAfterData(rule.schedule)
         && writtenForRun(run, date, rule.updatedAt)));
     const scored = (date: string, { run, row }: Chosen): ScoredDay => ({

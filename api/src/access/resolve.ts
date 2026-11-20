@@ -39,7 +39,7 @@ export type Access =
   | { state: 'org_suspended'; org: { name: string } }
   | { state: 'no_org' };
 
-/** The staff window (D2). [CONFIRM: 60 minutes] */
+/** The staff window (D2). */
 export const STAFF_WINDOW_MS = 60 * 60 * 1000;
 
 /** The person's seat in an active or suspended organization: their resolved organization (4.2 step 3). */

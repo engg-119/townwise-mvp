@@ -25,7 +25,7 @@ const dark = {
   // The effect ramp: the color of Why's ▲ and ▼ by the size of a reason's effect on guests, step 1 to 3 (10 to 15%, 20
   // to 35%, 40% and over), each step greener or redder (more saturated) at about one hue, each at least 4.5:1 on ground,
   // panel and raised (refine-calendar-and-home design decision 8). Its own set of tokens: effectDown3 shares error's
-  // value, but error stays unadopted and field messages stay white (spec 15.7's [CONFIRM], CONFIRM index item 34).
+  // value, but error stays unadopted and field messages stay white (spec 15.7, CONFIRM index item 34, approved by the owner on 2026-11-19).
   effectUp1: '#9cc9ae', effectUp2: '#86cfa4', effectUp3: '#5fd98f',
   effectDown1: '#d1a39e', effectDown2: '#e09a93', effectDown3: '#f2716a',
   // The light backing of a source chip's logo, the same in both palettes, so a dark logo shows on the dark ground.

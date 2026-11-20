@@ -18,7 +18,7 @@
 //   rule's closure or buyout: when a covering note decides the day (a closure, a buyout, or one that says it is open:
 //   an opening, a private event, or more or fewer guests; ../closed-days.ts notesDecide), each rule's closure and buyout
 //   is set aside (outcome `overridden`), so a one-day opening or party note opens a day a standing closure rule would
-//   close. [CONFIRM: a note covering a day beats a rule schedule's closure or buyout]
+//   close.
 // - Owner beats agent (D59, openspec change auto-apply-agent-reads design decision 9): when a note a person made decides
 //   the day (notesDecide), every TownwiseAI note covering it is set aside (outcome `overridden`) before anything else is
 //   read, as a covering note beats a rule. A note is TownwiseAI's while nobody edited it since it was saved: it carries
@@ -87,6 +87,16 @@ const closes = (entry: Effect): boolean => isClosure(entry) && !isBuyout(entry);
  */
 export function flagsAfterData(entry: Effect): boolean {
   return entry.kind === 'private_event' && !isBuyout(entry) && !isParty(entry);
+}
+
+/**
+ * D71: a note a run made after its day may have read as flagsAfterData does, whether or not it has a guest count now:
+ * any private event but a buyout. A count written later (TownwiseAI's question, or the Notes page) makes the note a party
+ * that flagsAfterData no longer names, while the run's figure still came from the uncounted note, so the reader asks
+ * this of a past day's notes and keeps such a day out of those runs' accuracy.
+ */
+export function mayHaveFlagged(entry: Effect): boolean {
+  return entry.kind === 'private_event' && !isBuyout(entry);
 }
 /** What owner-beats-agent reads of a note. */
 type Authored = Pick<NoteRecord, 'agent' | 'source' | 'createdBy' | 'createdAt' | 'updatedAt'>;

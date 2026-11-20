@@ -32,6 +32,10 @@
 // it added are competitors' (the location's stored rows the run first found); null for the town. A town run is shared,
 // so its item carries its status and counts only, never what started it. A run ended `off` (research stopped) is left
 // out, and nothing shows while TOWNWISE_RESEARCH or the organization's switch is off, as the calendar reads none then.
+//
+// D71: a private event's guests saved from a question shows as `guest_count_saved { noteId, startDate, endDate }`, dated
+// when it was answered, with no count (the note holds it) and no title; a skip shows as `question_answered`, which the
+// client words by the id's prefix. A note deleted since is left out.
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
 import type { AgentChangeAction, AgentChangeStatus, AgentSourceKind } from '../stores/agent-changes.ts';
@@ -65,6 +69,7 @@ export type ActivityItem =
   | { at: string; kind: 'upload_applied'; firstDate: string; lastDate: string; dayCount: number }
   | { at: string; kind: 'note_saved'; via: 'chat' | 'question'; noteId: string; noteKind: NoteKind; startDate: string; endDate: string }
   | { at: string; kind: 'question_answered'; questionId: string; answer: 'open' | 'not_sure' | 'other' }
+  | { at: string; kind: 'guest_count_saved'; noteId: string; startDate: string; endDate: string }
   | { at: string; kind: 'file_processed'; fileId: string; firstDate: string; lastDate: string; dayCount: number }
   | {
     at: string; kind: 'agent_change'; changeId: string; action: AgentChangeAction; sourceKind: AgentSourceKind; status: AgentChangeStatus;
@@ -129,11 +134,17 @@ const savedProposals: ActivitySource = async ({ ctx, scope, locationId, userId, 
   });
 };
 
-const answers: ActivitySource = ({ notes, answers: rows }) => {
+export const answerSource: ActivitySource = ({ notes, answers: rows }) => {
   const byId = new Map(notes.map((note) => [note.id, note]));
   return Promise.resolve(rows.filter((row) => row.status === 'done').flatMap((row): ActivityItem[] => {
     const { answer } = row;
     const asked = parseQuestionId(row.questionId);
+    if (answer === 'guests') {
+      const note = byId.get(row.noteId);
+      return note === undefined ? [] : [{
+        at: row.updatedAt.toISOString(), kind: 'guest_count_saved', noteId: note.id, startDate: note.startDate, endDate: note.endDate,
+      }];
+    }
     // `closed` always saves a note; `open` saves one on a likely-closed question.
     if (answer !== 'closed' && (asked === null || noteFor(asked, answer) === null)) {
       return [{ at: row.updatedAt.toISOString(), kind: 'question_answered', questionId: row.questionId, answer }];
@@ -245,7 +256,7 @@ export const researchSource: ActivitySource = async ({ ctx, scope, locationId })
 };
 
 /** Append-only: each later source adds one entry. */
-export const ACTIVITY_SOURCES: readonly ActivitySource[] = [uploads, savedProposals, answers, files, agentChangeSource, forecastMadeSource, researchSource];
+export const ACTIVITY_SOURCES: readonly ActivitySource[] = [uploads, savedProposals, answerSource, files, agentChangeSource, forecastMadeSource, researchSource];
 
 /** The item as the route answers it: without the merge's upload link. */
 function published(item: SourceItem): ActivityItem {

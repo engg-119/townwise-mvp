@@ -9,6 +9,7 @@ import {
   eventLine, monthDay, monthFactPhrase, monthFactsHead, monthGrid, monthItems, WIDE_CELL, type HomeInput, type MonthFact,
 } from '../analytics/week';
 import { MONTH_NAMES, type Metric } from '../analytics/words';
+import { revealOnArrival } from '../calendar/arrival';
 import { dayView, monthCheckLine, pastForecastLines, tooltipLines, type CalendarInput } from '../calendar/model';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import { weekdaysLine } from '../locations/noteRules';
@@ -29,7 +30,7 @@ import { MonthGrid } from './MonthGrid';
 // day with its figure (stored before today, the published forecast's from today on, spec 16.3 P11), and the
 // day the keys select (today at first) or a pointer rests on with its detail beside the grid; on web a pointer also
 // shows the day's tooltip (the Calendar's lines). Choosing a day (a click, Enter, a tap) opens it in the Calendar
-// (P28), which the card also links to. On the calendar in {month} is every town event, holiday and note of the month
+// (P28), which the card also links to; on web below 1024px the Calendar then brings its day panel into view (item 70). On the calendar in {month} is every town event, holiday and note of the month
 // in date order with its sources. D49: the grid's cells are the Calendar's (dayCell, one figure rule), the tooltip and
 // the day detail read the same CalendarInput, with the location's own calendars' events. The grid column grows 3 to the
 // detail's 2 side by side; it measures its width, and cells of 88px or more list two entry lines. "Open the calendar"
@@ -90,7 +91,7 @@ export function ThisMonth(props: {
             selected={selected}
             onSelect={(date) => { setPreview(null); setSelected(date); }}
             onPreview={setPreview}
-            onOpen={(date) => { router.push(calendarHref(locationId, date)); }}
+            onOpen={(date) => { revealOnArrival(locationId, date); router.push(calendarHref(locationId, date)); }}
             tooltip={tooltip}
             label={label}
           />

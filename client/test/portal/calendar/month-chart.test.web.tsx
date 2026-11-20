@@ -75,7 +75,7 @@ test('a day with no point says why, standing upright in its column', () => {
   expect(words).toContain('NO FORECAST');
   expect(words).toContain('NO DATA');
   expect(series('status')[0]?.getAttribute('transform')).toMatch(/rotate\(-90\)$/);
-  expect(chart().textContent).not.toContain('No forecast for these days yet.');
+  expect(chart().textContent).not.toContain('No forecast for these days.');
 });
 
 test('a month with no forecast point draws no words, and says so once under the plot', () => {
@@ -90,7 +90,7 @@ test('a month with no forecast point draws no words, and says so once under the 
   renderChart('2026-11-21', empty);
   expect(series('status')).toHaveLength(0);
   expect(series('last-year-point')).toHaveLength(1);
-  expect(chart().textContent).toContain('No forecast for these days yet.');
+  expect(chart().textContent).toContain('No forecast for these days.');
 });
 
 test('today is shaded and its date bold; the selected day is tinted mint with a mint mark', () => {

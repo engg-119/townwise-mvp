@@ -12,7 +12,7 @@ A forecast read (`ForecastWindow`, spec 14.4) SHALL carry `outlook: boolean` on 
 - **THEN** the day's range adds 70 guests and its reason says so, as on a forecast day
 
 ### Requirement: Outlook days are not scored
-Live accuracy (`api/src/forecasts/score.ts`) SHALL leave outlook days out of each run's `live` and the window's `accuracy`, and such a day SHALL read `scored: false` while still carrying its `actual` and `inRange`. [CONFIRM: outlook days are left out of live accuracy, so it keeps scoring only the forecast tier]
+Live accuracy (`api/src/forecasts/score.ts`) SHALL leave outlook days out of each run's `live` and the window's `accuracy`, and such a day SHALL read `scored: false` while still carrying its `actual` and `inRange`.
 
 #### Scenario: A stale run's outlook day passes
 - **WHEN** a day 100 days after its run was made has passed with stored guests

@@ -7,7 +7,6 @@ import { nativeLine } from './calendars';
 // props, and shows the line that points to the web (with Google calendars on, as the section needs) if it is ever
 // rendered. The siblings share only this type: on web a value exported here would resolve to the .web file itself, so
 // their words are in calendars.ts.
-// [CONFIRM: connecting a Google calendar on the web only]
 
 export interface GoogleConnectProps {
   /** The public OAuth client id the calendar list answered (`google.clientId`), so Google's code is for the server's client. */

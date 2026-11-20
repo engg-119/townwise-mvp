@@ -7,6 +7,7 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import type { DayRecord } from '../../../src/portal/analytics/history';
+import * as arrival from '../../../src/portal/calendar/arrival';
 import { dayMonth, weekDates } from '../../../src/portal/analytics/week';
 import { daysBetween } from '../../../src/portal/locations/dates';
 import { REORDER_OVERVIEW } from '../../../src/portal/home/beside';
@@ -590,11 +591,13 @@ test('a business rule’s reason (D31) shows in the day detail and the tooltip, 
   ]);
 });
 
-test('clicking a day opens /locations/x/calendar?day=that day, and so does Enter', async () => {
+test('clicking a day opens /locations/x/calendar?day=that day, and so does Enter, each asking the Calendar to show its day panel', async () => {
+  const reveal = jest.spyOn(arrival, 'revealOnArrival');
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
   fireEvent.click(cellOf('2026-11-21'));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/calendar'); });
   expect(window.location.search).toBe('?day=2026-11-21');
+  expect(reveal).toHaveBeenLastCalledWith('l1', '2026-11-21');
   cleanup();
 
   await renderAt(portal(meOf(ACCESS.member)));
@@ -602,6 +605,8 @@ test('clicking a day opens /locations/x/calendar?day=that day, and so does Enter
   fireEvent.keyDown(cellOf('2026-11-05'), { key: 'Enter' });
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/calendar'); });
   expect(window.location.search).toBe('?day=2026-11-05');
+  expect(reveal).toHaveBeenLastCalledWith('l1', '2026-11-05');
+  reveal.mockRestore();
 });
 
 /** Last week's chart: its svg, with a 280px box, since jsdom lays nothing out (the viewBox is 280 wide too). */

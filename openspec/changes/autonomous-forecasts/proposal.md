@@ -65,17 +65,17 @@ None. No capability of an unarchived change (notably `refine-calendar-and-home`'
 Every `[CONFIRM]` this change adds, most consequential first (each also goes into D42):
 
 1. Forecasts are on by default for every organization, existing and new (an organization with no `forecasts` field reads as on). This reverses the team's G1, "nothing is published until staff switch it on". Staff can still switch one off, recorded with when and by whom. Approved by the owner on 2026-11-19.
-2. A same-engine draft is compared with the current lab run's recorded backtest, not held-out weeks after its cutoff. An engine switch is decided by the lab on the same backtest weeks with a 0.5-point margin, and a tie keeps the current engine. This changes how G2 is scored.
-3. A same-engine refit publishes when it passes its absolute checks and is no more than 0.5 points worse than the best recorded backtest in the current streak. A tie publishes, the one exception to G2's "ties do not publish".
-4. Scheduled calibrations may start from a 230-day span. This supersedes the owner's 2026-11-10 decision of 595 days for the baseline engine on scheduled calibrations only; a calibration a person starts and the model engine keep 595.
-5. The baseline publishes when the model is not eligible or does not win.
-6. Scheduled calibrations are paid by Townwise, not the organization's TownwiseAI month, and don't count toward its 4 a day (amends D27).
-7. A draft whose next 28 days' middles differ from the current run's by more than 25% is held for staff.
-8. A baseline's absolute checks: 12 backtest weeks with an 80% range, coverage 65% to 95%, weekly bias within 5 points, and a lower weekly WAPE than the weekday median.
-9. Runs reach today plus 91 days, capped at 182 days after the last day of sales. Ranges past 28 days of lead widen by the backtest's longer-horizon bands, and a run stops where fewer than 8 backtest weeks back the next horizon.
-10. At most 3 scheduled calibrations live at once.
-11. Roughly 200 scheduled calibrations a week across all organizations.
-12. A scheduled calibration starts from 03:00 on Monday in the town's time zone.
+2. A same-engine draft is compared with the current lab run's recorded backtest, not held-out weeks after its cutoff. An engine switch is decided by the lab on the same backtest weeks with a 0.5-point margin, and a tie keeps the current engine. This changes how G2 is scored. Approved by the owner on 2026-11-19.
+3. A same-engine refit publishes when it passes its absolute checks and is no more than 0.5 points worse than the best recorded backtest in the current streak. A tie publishes, the one exception to G2's "ties do not publish". Approved by the owner on 2026-11-19.
+4. Scheduled calibrations may start from a 230-day span. This supersedes the owner's 2026-11-10 decision of 595 days for the baseline engine on scheduled calibrations only; a calibration a person starts and the model engine keep 595. Approved by the owner on 2026-11-19.
+5. The baseline publishes when the model is not eligible or does not win. Approved by the owner on 2026-11-19.
+6. Scheduled calibrations are paid by Townwise, not the organization's TownwiseAI month, and don't count toward its 4 a day (amends D27). Approved by the owner on 2026-11-19.
+7. A draft whose next 28 days' middles differ from the current run's by more than 25% is held for staff. Approved by the owner on 2026-11-19.
+8. A baseline's absolute checks: 12 backtest weeks with an 80% range, coverage 65% to 95%, weekly bias within 5 points, and a lower weekly WAPE than the weekday median. Approved by the owner on 2026-11-19.
+9. Runs reach today plus 91 days, capped at 182 days after the last day of sales. Ranges past 28 days of lead widen by the backtest's longer-horizon bands, and a run stops where fewer than 8 backtest weeks back the next horizon. Approved by the owner on 2026-11-19.
+10. At most 3 scheduled calibrations live at once. Approved by the owner on 2026-11-19.
+11. Roughly 200 scheduled calibrations a week across all organizations. Approved by the owner on 2026-11-19.
+12. A scheduled calibration starts from 03:00 on Monday in the town's time zone. Approved by the owner on 2026-11-19.
 
 `TOWNWISE_WEEKLY_FORECASTS` defaulting to true and the worker design are the owner's own directive, not awaiting sign-off.
 

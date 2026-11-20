@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** The earliest business day Townwise accepts, for sales days and notes (spec 11.3, 12). [CONFIRM: earliest date] */
+/** The earliest business day Townwise accepts, for sales days and notes (spec 11.3, 12). */
 export const EARLIEST_DATE = '2010-01-01';
 
 function timeOf(day: string): number {

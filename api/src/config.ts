@@ -95,7 +95,7 @@ export const configSchema = z.object({
    * set false, by the owner's directive (2026-11-16); inert while TOWNWISE_LAB_RUNNER is off.
    */
   TOWNWISE_WEEKLY_FORECASTS: z.stringbool().default(true),
-  /** D42: roughly how many scheduled calibrations may start in one week across all organizations. [CONFIRM] */
+  /** D42: roughly how many scheduled calibrations may start in one week across all organizations. */
   TOWNWISE_WEEKLY_FORECAST_CAP: z.coerce.number().int().min(0).max(10_000).default(200),
   /**
    * TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions): whether the weekly worker makes one

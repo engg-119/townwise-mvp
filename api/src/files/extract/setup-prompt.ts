@@ -14,8 +14,7 @@ export type {
 } from '../../orders/suggestions.ts';
 
 /**
- * Streamed (the answer is up to 150 items). Thinking counts toward max_tokens. [CONFIRM: 150 items a read, 20,000
- * output tokens, low effort, 150 seconds; final after the spike]
+ * Streamed (the answer is up to 150 items). Thinking counts toward max_tokens.
  */
 export const SETUP_MAX_TOKENS = 20_000;
 export const SETUP_EFFORT = 'low';

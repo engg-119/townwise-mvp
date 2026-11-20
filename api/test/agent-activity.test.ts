@@ -11,13 +11,16 @@ import { describe, expect, it } from 'vitest';
 
 import type { MemberPrincipal, OrgScope } from '../src/access/policy.ts';
 import {
-  activityFor, agentChangeSource, ACTIVITY_SOURCES, forecastMadeSource, MAX_ACTIVITY, researchSource, type ActivityInput, type ActivitySource,
+  activityFor, agentChangeSource, ACTIVITY_SOURCES, answerSource, forecastMadeSource, MAX_ACTIVITY, researchSource, type ActivityInput,
+  type ActivitySource,
 } from '../src/agent/activity.ts';
 import { changeView, mayUndo, pastedSources, targetStates, undoable, type Target, type TargetState } from '../src/agent/changes.ts';
 import type { TownwiseContext } from '../src/app.ts';
+import type { AnswerRecord } from '../src/stores/agent-answers.ts';
 import type { AgentChangeRecord } from '../src/stores/agent-changes.ts';
 import type { CalibrationRecord } from '../src/stores/calibrations.ts';
 import type { RunState } from '../src/stores/forecasts.ts';
+import type { NoteRecord } from '../src/stores/notes.ts';
 import type { RunRecordBase, ThreadStatus } from '../src/stores/research-shared.ts';
 import { calibrationRecord } from './helpers/calibration-record.ts';
 
@@ -495,5 +498,37 @@ describe('research runs in TownwiseAI’s activity (D66)', () => {
     const failed = run({ status: 'failed', counts: { found: 0, added: 0, updated: 0, dropped: 0 } });
     const items = await activityFor(input(researchContext({ own: [failed] }), MEMBER), [researchSource]);
     expect(items).toEqual([expect.objectContaining({ subject: 'location', status: 'failed', threadsFailed: 2, competitors: 0 })]);
+  });
+});
+
+describe('a private event’s guests in the activity (D71)', () => {
+  const NOTE = 'c'.repeat(24);
+  const partyNote = {
+    id: NOTE, kind: 'private_event', startDate: '2026-05-16', endDate: '2026-05-17', weekdays: null, effect: 'more_guests', expectedGuests: 40,
+    detail: 'Sentinel-detail', title: 'Sentinel-title', startTime: null, endTime: null, createdBy: 'member', byStaff: false, source: null,
+    fromEvent: null, agent: null, createdAt: new Date('2026-05-01T10:00:00.000Z'), updatedAt: AT,
+  } as NoteRecord;
+  const row = (answer: AnswerRecord['answer'], updatedAt: Date): AnswerRecord => ({
+    questionId: `party_guests_${NOTE}`, answer, noteId: NOTE, status: 'done', updatedAt,
+  });
+
+  it('a saved count is guest_count_saved with the note’s id and dates, never the count, title or detail; a skip is question_answered', async () => {
+    const skippedAt = new Date('2026-06-01T09:00:00.000Z');
+    const items = await activityFor({
+      ...input(contextWith([])), notes: [partyNote],
+      answers: [row('guests', AT), { ...row('not_sure', skippedAt), questionId: `party_guests_${'d'.repeat(24)}`, noteId: 'd'.repeat(24) }],
+    }, [answerSource]);
+    expect(items).toEqual([
+      { at: AT.toISOString(), kind: 'guest_count_saved', noteId: NOTE, startDate: '2026-05-16', endDate: '2026-05-17' },
+      { at: skippedAt.toISOString(), kind: 'question_answered', questionId: `party_guests_${'d'.repeat(24)}`, answer: 'not_sure' },
+    ]);
+    expect(JSON.stringify(items)).not.toMatch(/Sentinel|40/);
+  });
+
+  it('leaves out a count saved on a note deleted since, and a row still saving', async () => {
+    expect(await activityFor({ ...input(contextWith([])), notes: [], answers: [row('guests', AT)] }, [answerSource])).toEqual([]);
+    expect(await activityFor({
+      ...input(contextWith([])), notes: [partyNote], answers: [{ ...row('guests', AT), status: 'saving' }],
+    }, [answerSource])).toEqual([]);
   });
 });
