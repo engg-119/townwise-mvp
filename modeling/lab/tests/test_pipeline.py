@@ -384,7 +384,8 @@ def check_comparison(cmp: dict, lab_input: dict) -> None:
 
 
 def check_envelope(result: dict, lab_input: dict) -> None:
-    assert list(result) == ["schema", "calibrationId", "ok", "codeVersion", "params", "scorecard", "run"]
+    assert list(result) == ["schema", "calibrationId", "ok", "codeVersion", "params", "scorecard", "run",
+                            "backtestDays"]
     assert result["schema"] == schema.RESULT_SCHEMA == "townwise.lab-result/1"
     assert schema.INPUT_SCHEMA == "townwise.lab-input/4"
     assert result["calibrationId"] == lab_input["calibrationId"]
@@ -450,7 +451,7 @@ def test_result_matches_contract(model_result, lab_input):
 
     assert result["run"]["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION,
                                       "notebookCommit": CODE}
-    assert version.MODEL_VERSION == "v13"
+    assert version.MODEL_VERSION == "v14"
 
 
 def test_a_model_run_carries_how_its_trees_learned(model_result, result, lab_input):
@@ -1627,6 +1628,87 @@ def test_backtest_scores_the_horizon_28_weeks(model_result, lab_input):
     folds = backtest.six_month_folds(hist.date.min(), pd.Timestamp(lab_input["dataThrough"]))
     assert [(f["trainThrough"], f["from"], f["to"]) for f in card["backtest"]["folds"]] == [
         tuple(t.strftime("%Y-%m-%d") for t in fold) for fold in folds]
+
+
+# D72 (v14): backtestDays, the backtest's day-by-day predictions for the Calendar's past days
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_backtest_days_are_out_of_sample_whole_guests_by_date(engine, results):
+    result = results[engine]
+    days, through = result["backtestDays"], day(result["run"]["dataThrough"])
+    assert len(days) > 300  # about a year of open days on the fixture
+    dates = [d["date"] for d in days]
+    assert dates == sorted(set(dates))  # ascending, one entry a date
+    for d in days:
+        assert list(d) == ["date", "engine", "dataThrough", "low", "mid", "high"]
+        assert is_date(d["date"]) and is_date(d["dataThrough"]) and d["engine"] in ENGINES
+        assert d["dataThrough"] < d["date"]  # forecast by a fit that trained on no day from it on
+        assert through - timedelta(days=pipeline.BACKTEST_DAYS_BACK) <= day(d["date"]) <= through
+        assert all(is_int(d[k]) for k in ("low", "mid", "high")) and 0 <= d["low"] <= d["mid"] <= d["high"]
+    # The 400 days reach back to before the model's window, so the cut bites on this fixture
+    assert dates[0] == (through - timedelta(days=pipeline.BACKTEST_DAYS_BACK)).isoformat()
+
+
+def test_a_model_runs_backtest_days_are_its_own_in_its_window_and_the_baselines_before_it(model_result, result,
+                                                                                         lab_input):
+    days = model_result["backtestDays"]
+    start, end = model_result["scorecard"]["backtest"]["from"], model_result["scorecard"]["backtest"]["to"]
+    assert all(d["engine"] == ("model" if d["date"] >= start else "baseline") for d in days)
+    assert any(d["engine"] == "baseline" for d in days) and any(d["engine"] == "model" for d in days)
+    assert all(d["date"] <= end for d in days)
+    # The model's are its horizon-28 backtest days, rounded, from its quarterly refits
+    frame, hist, origins, base_cols, event_cols = _prepared(lab_input)
+    through = pd.Timestamp(lab_input["dataThrough"])
+    preds = forecast.backtest_predictions(frame, hist, origins, through, base_cols, event_cols)
+    days28 = backtest.pick(preds, 28, *backtest.score_window(origins, through, 28))
+    own = [d for d in days if d["engine"] == "model"]
+    expected = days28[days28.date >= through - pd.Timedelta(days=pipeline.BACKTEST_DAYS_BACK)].sort_values("date")
+    assert [d["date"] for d in own] == list(expected.date.dt.strftime("%Y-%m-%d"))
+    assert [d["dataThrough"] for d in own] == list(expected.refit.dt.strftime("%Y-%m-%d"))
+    assert {d["dataThrough"] for d in own} <= set(model_result["scorecard"]["backtest"]["origins"])
+    for d, row in zip(own, expected.itertuples()):
+        assert (d["low"], d["mid"], d["high"]) == (round(row.lo), round(row.mid), round(row.hi))
+    # The baseline's fill is the baseline run's own days on those dates: one baseline backtest, whichever engine returns
+    baseline_days = {d["date"]: d for d in result["backtestDays"]}
+    assert all(d == baseline_days[d["date"]] for d in days if d["engine"] == "baseline")
+
+
+def test_a_baseline_runs_backtest_days_are_its_weekly_cutoffs_forecasts(result, lab_input):
+    frame = pipeline.frame_of(lab_input)
+    through = pd.Timestamp(lab_input["dataThrough"])
+    history = baseline.prepare(frame, lab_input["calendar"], through)
+    index_of = {d: i for i, d in history.dates.items()}
+    days = result["backtestDays"]
+    assert {d["engine"] for d in days} == {"baseline"}
+    for cutoff, group in pd.DataFrame(days).groupby("dataThrough"):
+        when = pd.Timestamp(cutoff)
+        # A weekly cutoff, at least 28 days before the Monday of each day it forecast
+        assert when.day_name() == "Sunday"
+        monday = pd.to_datetime(group.date) - pd.to_timedelta(pd.to_datetime(group.date).dt.day_of_week, unit="D")
+        assert (monday - when >= pd.Timedelta(days=28)).all() and (monday - when < pd.Timedelta(days=35)).all()
+        mid = baseline.predict(history, when, pd.Index([index_of[pd.Timestamp(d)] for d in group.date])).mid
+        assert list(group["mid"]) == [round(m) for m in mid]
+
+
+def test_backtest_days_leave_the_rest_of_the_result_as_it_was(lab_input, result, model_result):
+    """v14 changed nothing but adding backtestDays: without them a calibration returns the same result."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pipeline, "_backtest_days", lambda *args: [])
+        bare = {"baseline": pipeline.calibrate(copy.deepcopy(lab_input), CODE),
+                "model": calibrate_as(lab_input, "model")}
+    for engine, full in (("baseline", result), ("model", model_result)):
+        assert bare[engine]["backtestDays"] == []
+        assert {k: v for k, v in bare[engine].items() if k != "backtestDays"} == {
+            k: v for k, v in full.items() if k != "backtestDays"}
+
+
+def test_backtest_days_round_into_order():
+    days28 = pd.DataFrame({"refit": pd.to_datetime(["2025-01-05"] * 2), "date": pd.to_datetime(["2025-02-03",
+                                                                                                "2025-02-04"]),
+                           "lo": [9.6, 0.2], "mid": [9.4, 0.4], "hi": [8.6, 0.3]})  # crossed, as rounding leaves them
+    fill = days28.iloc[:0]
+    out = pipeline._backtest_days(days28, "model", fill, pd.Timestamp("2025-03-01"))
+    assert [(d["low"], d["mid"], d["high"]) for d in out] == [(9, 9, 9), (0, 0, 0)]
 
 
 def test_forecast_tier_unchanged(result):

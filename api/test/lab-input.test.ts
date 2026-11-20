@@ -546,7 +546,7 @@ describe('labInputFingerprint (D42, the weekly refresh’s “changed since its 
       { ...base, regimeStart: '2026-01-05' },
     ];
     for (const input of changed) expect(labInputFingerprint(input)).not.toBe(fingerprint);
-    expect(labInputFingerprint(base, 'v14')).not.toBe(fingerprint);
+    expect(labInputFingerprint(base, 'v15')).not.toBe(fingerprint);
     expect(labInputFingerprint(base, LAB_MODEL_VERSION)).toBe(fingerprint);
   });
 });
