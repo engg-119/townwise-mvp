@@ -138,7 +138,7 @@ export function MonthChart(props: {
           </View>
         </ScrollView>
       </View>
-      {chart.drawn.forecast ? null : <Text style={styles.scale}>No forecast for these days yet.</Text>}
+      {chart.drawn.forecast ? null : <Text style={styles.scale}>No forecast for these days.</Text>}
       <ChartKey drawn={drawn} top={chart.top} testID="calendar-month-chart-key" />
     </View>
   );
