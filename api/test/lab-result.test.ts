@@ -1,4 +1,4 @@
-// The lab result as the callback receives it (D42, lab-input/3): its scorecard names the engine, both engines' figures,
+// The lab result as the callback receives it (D42, lab-input/4): its scorecard names the engine, both engines' figures,
 // its weekly bias, the longer-horizon reports, which the gate reads, and both outlook horizons' reports (D52), so a
 // result without them is refused while a stored scorecard from before still parses (lab-scorecard.test.ts).
 // checkLabResult also holds the engine the scorecard names to its run's model family and its params, and checks the
