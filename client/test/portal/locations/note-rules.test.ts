@@ -1,8 +1,9 @@
 import { noteWords } from '../../../src/portal/analytics/panel';
-import { noteSchema } from '../../../src/portal/locations/api';
+import { NOTE_EFFECTS, noteSchema, SHARED_EFFECTS } from '../../../src/portal/locations/api';
 import {
-  checkNote, clockWords, draftOf, draftOfContent, draftOfImported, emptyDraft, hoursLine, NOTE_COPY, type NoteDraft,
+  checkNote, clockWords, draftOf, draftOfContent, draftOfImported, EFFECT_LABEL, emptyDraft, hoursLine, NOTE_COPY, type NoteDraft,
 } from '../../../src/portal/locations/noteRules';
+import { ruleScheduleSchema } from '../../../src/portal/rules/api';
 import { noteOf } from './fakes';
 
 // Note hours and buyout guests (spec 12, D30): the form checks the same rules as the API's
@@ -150,5 +151,41 @@ describe('the event name (D49, note-titles)', () => {
     expect(emptyDraft().title).toBe('');
     const made = draftOfImported({ startDate: '2026-12-24', endDate: '2026-12-24', startTime: null, endTime: null });
     expect(made.title).toBe('');
+  });
+});
+
+describe('a guest count marked wrong (D67)', () => {
+  const mark = (patch: Partial<NoteDraft> = {}): NoteDraft => ({
+    ...emptyDraft('other'), effect: 'wrong_guest_count', startDate: '2025-10-31', endDate: '2025-11-01', ...patch,
+  });
+
+  test('notes take the effect, words it, and rule schedules and TownwiseAI’s suggestions never do', () => {
+    expect(NOTE_EFFECTS).toContain('wrong_guest_count');
+    expect(SHARED_EFFECTS).not.toContain('wrong_guest_count');
+    expect(EFFECT_LABEL.wrong_guest_count).toBe('Guest count marked wrong');
+    const note = noteOf('m1', { kind: 'other', startDate: '2025-10-31', endDate: '2025-11-01', effect: 'wrong_guest_count', detail: null });
+    expect(noteSchema.parse(note).effect).toBe('wrong_guest_count');
+    const schedule = {
+      kind: 'other', startDate: '2025-10-06', endDate: null, weekdays: [1], effect: 'wrong_guest_count', expectedGuests: null, startTime: null, endTime: null,
+    };
+    expect(ruleScheduleSchema.safeParse(schedule).success).toBe(false);
+    expect(ruleScheduleSchema.safeParse({ ...schedule, effect: 'unknown' }).success).toBe(true);
+  });
+
+  test('checkNote sends no guests and no hours, needs no name or details, and only days before today', () => {
+    const local = '2026-11-19';
+    expect(checkNote(mark({ expectedGuests: '120', startTime: '18:00', endTime: '22:00' }), TODAY, local)).toEqual({
+      input: {
+        kind: 'other', startDate: '2025-10-31', endDate: '2025-11-01', weekdays: null, effect: 'wrong_guest_count', expectedGuests: null,
+        startTime: null, endTime: null, detail: null, title: null,
+      },
+    });
+    expect(checkNote(mark({ startDate: '2026-11-18', endDate: '' }), TODAY, local)).toMatchObject({ input: { endDate: '2026-11-18' } });
+    expect(checkNote(mark({ startDate: '2026-11-17', endDate: local }), TODAY, local)).toEqual({ messages: { endDate: NOTE_COPY.markFuture } });
+    expect(checkNote(mark({ startDate: local, endDate: '' }), TODAY, local)).toEqual({ messages: { startDate: NOTE_COPY.markFuture } });
+    // The helper and the refusal are different sentences, so a refused Save never reads as the helper repeated.
+    expect(NOTE_COPY.pastOnly).toBe('Only days before today.');
+    expect(NOTE_COPY.markFuture).toBe('A guest count can only be marked wrong on days before today.');
+    expect(NOTE_COPY.markEffectHelp).toBe('Townwise leaves this day’s guest count out of forecasts and comparisons. Its sales stay.');
   });
 });

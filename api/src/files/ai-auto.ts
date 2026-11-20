@@ -5,8 +5,7 @@
 // read into sales days (a point-of-sale export, whose meaning is already in Townwise as numbers and which can hold
 // diners' names), a calendar export, a summary or item TownwiseAI kept, a file turned off (D28), or a file whose upload
 // or paste did not finish with its box checked (`aiAuto: true` on complete or on pasted text's save: a chat attachment,
-// an item's edit, text TownwiseAI proposed keeping and an older client never send it). [CONFIRM: a file read into
-// sales days is not sent to TownwiseAI automatically] The reader (files/ai-reader.ts) bounds what runs: duplicates, 20 a
+// an item's edit, text TownwiseAI proposed keeping and an older client never send it). The reader (files/ai-reader.ts) bounds what runs: duplicates, 20 a
 // day and the $1 reserve. Logs carry ids only, never a file name.
 import type { Logger } from '@ckeith26/server-core';
 

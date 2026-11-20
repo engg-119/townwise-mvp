@@ -118,11 +118,30 @@ describe('the location pages', () => {
     const column = filters.parentElement;
     expect(column?.contains(first)).toBe(true);
     expect(filters.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The forecast chart, shown by default, sits between the filters and the grid (D64).
+    const chart = screen.getByTestId('skeleton-calendar-chart');
+    expect(column?.contains(chart)).toBe(true);
+    expect(filters.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chart.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const plot = chart.firstElementChild;
+    expect(plot === null ? null : window.getComputedStyle(plot).height).toBe('144px');
     const panel = screen.getByTestId('skeleton-calendar-panel');
     expect(column?.contains(panel)).toBe(false);
     expect(column?.parentElement?.contains(panel)).toBe(true);
     // The header row: a 216px label block between the arrows and the view switch's block.
     expect(window.getComputedStyle(screen.getByTestId('skeleton-calendar-label')).width).toBe('216px');
+  });
+
+  test('P28 Calendar in the week view: no chart block above the grid (the week draws its chart inside its days), its key and scale lines under it (D64)', async () => {
+    renderPage('/locations/l1/calendar?view=week', hangLocal());
+    await expectSkeleton('calendar', 'Loading the calendar');
+    expect(screen.queryByTestId('skeleton-calendar-chart')).toBeNull();
+    const cells = screen.getAllByTestId('skeleton-calendar-cell');
+    expect(cells).toHaveLength(42);
+    const key = screen.getByTestId('skeleton-calendar-week-key');
+    const last = cells.at(-1);
+    if (last === undefined) throw new Error('no cells');
+    expect(last.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   test('P28 Calendar: after the label the header row holds the view switch’s 130px block and the Your calendars button’s 170px block, the row’s last item', async () => {

@@ -6,6 +6,7 @@
 import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { AgentChangeAction, AgentChangeRecord, AgentChangeStatus, AgentSourceKind } from '../stores/agent-changes.ts';
+import { isPastedText } from '../files/items.ts';
 import type { NoteKind } from '../stores/notes.ts';
 import { TOWNWISE_AI_AUTHOR } from './apply.ts';
 
@@ -100,6 +101,23 @@ export async function targetStates(
   }));
 }
 
+/**
+ * UI review 2026-11-19: the source files of these `file` changes that are text pasted on Your data (files/items.ts
+ * isPastedText), by id, so their lines say "from text you pasted" rather than "from a file you added".
+ */
+export async function pastedSources(
+  ctx: Pick<TownwiseContext, 'stores'>, scope: OrgScope, changes: readonly AgentChangeRecord[],
+): Promise<ReadonlySet<string>> {
+  const ids = [...new Set(changes.flatMap((change) => (change.sourceKind === 'file' && change.sourceId !== null ? [change.sourceId] : [])))];
+  if (ids.length === 0) return new Set();
+  return new Set((await ctx.stores.files.byIds(scope, ids)).filter(isPastedText).map((file) => file.id));
+}
+
+/** Whether a `file` change came from text pasted on Your data, by pastedSources' answer. */
+export function fromPasted(change: Pick<AgentChangeRecord, 'sourceKind' | 'sourceId'>, pasted: ReadonlySet<string>): boolean {
+  return change.sourceKind === 'file' && change.sourceId !== null && pasted.has(change.sourceId);
+}
+
 /** Whether Undo is offered: applied, its target still there and unchanged, and the caller may undo it. */
 export function undoable(
   caller: Pick<MemberPrincipal, 'role' | 'userId' | 'viewAs'>, change: AgentChangeRecord, states: ReadonlyMap<string, Target>,
@@ -116,6 +134,8 @@ export interface AgentChangeView {
   sourceKind: AgentSourceKind;
   /** The file it came from, by its Your data ref (`f_<id>`), or null. */
   sourceRef: string | null;
+  /** UI review 2026-11-19: that file is text pasted on Your data. */
+  sourcePasted: boolean;
   status: AgentChangeStatus;
   startDate: string | null;
   endDate: string | null;
@@ -135,10 +155,12 @@ export interface AgentChangeView {
 
 export function changeView(
   caller: Pick<MemberPrincipal, 'role' | 'userId' | 'viewAs'>, change: AgentChangeRecord, states: ReadonlyMap<string, Target>,
+  pasted: ReadonlySet<string> = new Set(),
 ): AgentChangeView {
   return {
     id: change.id, at: change.appliedAt.toISOString(), action: change.action, sourceKind: change.sourceKind,
-    sourceRef: change.sourceKind === 'file' && change.sourceId !== null ? `f_${change.sourceId}` : null, status: change.status,
+    sourceRef: change.sourceKind === 'file' && change.sourceId !== null ? `f_${change.sourceId}` : null, sourcePasted: fromPasted(change, pasted),
+    status: change.status,
     startDate: change.startDate, endDate: change.endDate, noteKind: change.noteKind, weekdays: change.weekdays, count: change.count,
     why: caller.viewAs === null ? change.why : null,
     undoable: undoable(caller, change, states), targetId: change.status === 'applying' ? null : change.targetId,

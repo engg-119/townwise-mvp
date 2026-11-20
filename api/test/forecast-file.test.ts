@@ -181,8 +181,10 @@ describe('labels come from code and the public calendar, never the file', () => 
       sources: [{ label: 'U.S. Office of Personnel Management', url: 'https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/' }],
       note: null, rule: null,
     }]);
-    // Halloween is no federal holiday and no calendar entry.
-    expect(reasonViews('2026-10-31', [{ kind: 'holiday', ref: null, effectPct: null }], hanover('2026-10-31'))[0]?.label).toBe('Holiday');
+    // Halloween is no federal holiday, but the calendar has it (D68), so the lab's Halloween reason is named by it.
+    expect(reasonViews('2026-10-31', [{ kind: 'holiday', ref: null, effectPct: null }], hanover('2026-10-31'))[0]?.label).toBe('Halloween');
+    // A holiday reason on a day the calendar has no holiday keeps the plain words.
+    expect(reasonViews('2026-10-29', [{ kind: 'holiday', ref: null, effectPct: null }], hanover('2026-10-29'))[0]?.label).toBe('Holiday');
   });
 
   it('names an event by its calendar id or group; a ref that names nothing reads plainly and is never stored', () => {

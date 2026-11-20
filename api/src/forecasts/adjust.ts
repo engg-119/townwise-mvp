@@ -24,8 +24,8 @@
 //   read, as a covering note beats a rule. A note is TownwiseAI's while nobody edited it since it was saved: it carries
 //   `agent` and its `updatedAt` is still `agent.at`, or (D34, from before D59) it carries a file `source` and was never
 //   edited. Once a person edits it, it is theirs. A note TownwiseAI saved from the person's own words in chat (slice 4:
-//   the person its author, no file `source`) is theirs from the start. The lab input applies the same rule (../lab/input.ts). [CONFIRM: a note
-//   a person made beats a TownwiseAI note on the same day] Pure: no store, no clock.
+//   the person its author, no file `source`) is theirs from the start. The lab input applies the same rule (../lab/input.ts).
+//   Pure: no store, no clock.
 import { isBuyout, isClosure, notesDecide } from '../closed-days.ts';
 import type { BusinessRuleRecord, RuleSchedule } from '../stores/business-rules.ts';
 import type { NoteContent, NoteRecord } from '../stores/notes.ts';

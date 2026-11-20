@@ -65,17 +65,19 @@ export function usable(place: FoundPlace): place is UsablePlace {
   return place.town !== null;
 }
 
+const statusSchema = z.object({ placeSearch: z.boolean() });
+
 /**
- * Whether the search is on, without asking Google: autocomplete checks the key before the body, so an empty body
- * answers 503 places_unavailable while the search is off and 400 invalid_request while it is on (api/test
- * places-off.int.test.ts and places.int.test.ts pin both). Any other answer counts as off.
+ * Whether the search is on, without asking Google: GET /api/places/status (api/test places-off.int.test.ts and
+ * places.int.test.ts pin both answers). It used to send autocomplete an empty body and read the refusal, which showed
+ * as a 400 on every page that checked. Any failure counts as off.
  */
 export async function checkPlaceSearch(api: ApiClient): Promise<boolean> {
   try {
-    await api.json('/api/places/autocomplete', autocompleteSchema, { method: 'POST', body: {} });
-    return true;
-  } catch (error) {
-    return hasCode(error, 400, 'invalid_request');
+    const body = await api.json('/api/places/status', statusSchema);
+    return body.placeSearch;
+  } catch {
+    return false;
   }
 }
 

@@ -106,7 +106,7 @@ export const configSchema = z.object({
   /**
    * D59 (openspec change auto-apply-agent-reads, design decision 13): whether TownwiseAI works on its own here, reading
    * each stored file a person adds and saving what it is sure of with Undo. On unless set false (the owner's rule of
-   * 2026-11-16); an organization's own switch (`agentAuto`) must be on too. [CONFIRM: TownwiseAI works on its own by default]
+   * 2026-11-16; approved by the owner on 2026-11-19); an organization's own switch (`agentAuto`) must be on too.
    */
   TOWNWISE_AGENT_AUTO: z.stringbool().default(true),
   /**

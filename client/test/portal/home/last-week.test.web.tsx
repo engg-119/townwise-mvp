@@ -176,6 +176,51 @@ test('no uploads since last Sunday: the forecast for these days replaces “Your
   expect(within(glance()).queryByText(/Your sales stop at/)).toBeNull();
 });
 
+// UI review 2026-11-19: for a moment while the forecast reads were out, the lead said no forecast was published and Last
+// week said the sales stop, then the real words replaced them and the page jumped. Loading is not loaded-and-empty.
+describe('while the forecast reads are out', () => {
+  function held(month: unknown, lastWeek: unknown): { api: FakePortalApi; release: () => void } {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fake = analyticsFake({
+      [MONTH]: month, [LAST_WEEK]: lastWeek, [`${PATH}/sales/history`]: historyBody(UP_TO_LAST_SUNDAY), [`${PATH}/notes`]: { notes: [] },
+      [CALENDAR]: calendarBody(),
+    });
+    const json = fake.json.bind(fake);
+    fake.json = (path, schema, opts) => (path === MONTH || path === LAST_WEEK ? gate.then(() => json(path, schema, opts)) : json(path, schema, opts));
+    return { api: fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake }), release };
+  }
+
+  test('the lead and Last week show skeletons, never the not-published or sales-stop words, then the forecast’s', async () => {
+    const days = WEEK.map((date) => forecastDay({ date, low: 180, mid: 210, high: 245, scored: false }));
+    const { api, release } = held(published(days, null), published(days, null));
+    const card = await renderHome(api);
+    expect(screen.getByTestId('skeleton-home-lead-forecast')).toBeTruthy();
+    expect(within(card).getByTestId('skeleton-last-week')).toBeTruthy();
+    expect(within(glance()).getByTestId('skeleton-last-week-tile')).toBeTruthy();
+    expect(screen.queryByText(forecastLine('Main Street Bar'))).toBeNull();
+    expect(screen.queryByText(/Your sales stop at/)).toBeNull();
+    expect(screen.queryByText(/Your history ends/)).toBeNull();
+    release();
+    expect(await within(card).findByText('No guest count uploaded for these days yet; this is Townwise’s forecast.')).toBeTruthy();
+    expect(within(glance()).getByText('No guest counts for these days yet. Upload your sales to see how Townwise’s forecast did.')).toBeTruthy();
+    expect(screen.queryByTestId('skeleton-home-lead-forecast')).toBeNull();
+    expect(screen.queryByTestId('skeleton-last-week')).toBeNull();
+    expect(screen.queryByTestId('skeleton-last-week-tile')).toBeNull();
+    expect(screen.queryByText(forecastLine('Main Street Bar'))).toBeNull();
+  });
+
+  test('once they answer with nothing published, the lead and Last week say so', async () => {
+    const { api, release } = held(NO_FORECAST, NO_FORECAST);
+    const card = await renderHome(api);
+    expect(screen.queryByText(forecastLine('Main Street Bar'))).toBeNull();
+    release();
+    expect(await screen.findByText(forecastLine('Main Street Bar'))).toBeTruthy();
+    expect(within(card).getByText('Your history ends Nov 15, 2026. Upload the days since to compare last week.')).toBeTruthy();
+    expect(within(glance()).getByText('Your sales stop at Sun, Nov 15, 2026.')).toBeTruthy();
+  });
+});
+
 test('few scored days: only the in-range count, with no percentage', async () => {
   const card = await renderHome(portal(HISTORY, published([scored('2026-11-16'), scored('2026-11-17', false), scored('2026-11-18')], null)));
   expect(await within(card).findByText(sentence('2 of 3 days inside the forecast range.'))).toBeTruthy();

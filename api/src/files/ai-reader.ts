@@ -12,8 +12,7 @@
 // before anything is read or reserved. One whose organization or deploy switch is off by then is skipped
 // `agent_auto_off`; one whose fingerprint matches a file of the location TownwiseAI already read, `duplicate`; past 20
 // a day per organization, `daily_auto_limit`; and one that would leave $1 or less of the files month after its ceiling,
-// `budget_spent`, so a press still runs. [CONFIRM: automatic reads leave $1 of the files month for presses] [CONFIRM: 20
-// automatic file reads a day per organization] Its audit event's actor is TownwiseAI. D59 slice 2: when no read is
+// `budget_spent`, so a press still runs. Its audit event's actor is TownwiseAI. D59 slice 2: when no read is
 // waiting, the same loop claims a file calendar's automatic sort (stores/cross-tenant.ts claimNextCalendarSort, one job
 // per organization across both) under the same lease, heartbeat and waits, and hands it to calendar/auto-sort.ts. Logs
 // and audit carry ids, kinds, codes and counts only: never a file name, its content, the summary, a title or a figure.

@@ -1,5 +1,7 @@
 import { researchedEventSchema as foundEventSchema } from '../../../src/portal/analytics/api';
-import { compactEntries, dayEntries, fitLines, folded, foundCovers, foundInFront, notNamed, type DaySources } from '../../../src/portal/calendar/entries';
+import {
+  compactEntries, dayEntries, fitLines, folded, foundCovers, foundInFront, notNamed, noteChip, noteWords, type DaySources,
+} from '../../../src/portal/calendar/entries';
 import { ALL_FILTERS, type ImportedEvent } from '../../../src/portal/calendar/model';
 import { holiday, note, townEvent } from '../analytics/fakes';
 import { ruleOf } from '../rules/fakes';
@@ -174,4 +176,12 @@ describe('found by research (D66)', () => {
     expect(twice).toHaveLength(2);
     expect(compactEntries(twice).map((entry) => entry.group)).toEqual(['town']);
   });
+});
+
+test('a note marking a day’s guest count wrong (D67) reads “Guest count marked wrong”, or its event name', () => {
+  const mark = note({ kind: 'other', startDate: DAY, effect: 'wrong_guest_count', detail: null });
+  expect(noteChip(mark)).toBe('Guest count marked wrong');
+  expect(noteWords({ ...mark, title: null })).toBe('Guest count marked wrong');
+  expect(noteWords({ ...mark, title: 'Door counter broken' })).toBe('Door counter broken');
+  expect(compactEntries(dayEntries(DAY, sources({ notes: [mark] }))).map((entry) => entry.words)).toEqual(['Guest count marked wrong']);
 });

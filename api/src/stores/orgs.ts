@@ -149,15 +149,15 @@ function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
     suspendedAt: doc.suspendedAt,
     firstJoinedAt: doc.firstJoinedAt ?? null,
     lastSuspendedAt: doc.lastSuspendedAt ?? null,
-    // D42: on by default for every organization, existing and new, until staff switch it off. [CONFIRM]
+    // D42: on by default for every organization, existing and new (approved 2026-11-19), until staff switch it off.
     forecasts: doc.forecasts == null ? { on: true, at: null } : { on: doc.forecasts.on, at: doc.forecasts.at },
     // Weekly suggestions: on by default (owner directive 2026-11-16) until an org admin turns them off. [CONFIRM]
     weeklySuggestions: doc.weeklySuggestions == null
       ? { on: true, at: null } : { on: doc.weeklySuggestions.on, at: doc.weeklySuggestions.at },
-    // Calendar titles to TownwiseAI: on by default (owner, 2026-11-17) until an org admin turns them off. [CONFIRM]
+    // Calendar titles to TownwiseAI: on by default (owner, 2026-11-17; approved 2026-11-19) until an org admin turns them off.
     calendarTitlesToAi: doc.calendarTitlesToAi == null
       ? { on: true, at: null } : { on: doc.calendarTitlesToAi.on, at: doc.calendarTitlesToAi.at },
-    // D59: TownwiseAI works on its own by default (owner rule 2026-11-16) until an org admin turns it off. [CONFIRM]
+    // D59: TownwiseAI works on its own by default (owner rule 2026-11-16; approved 2026-11-19) until an org admin turns it off.
     agentAuto: doc.agentAuto == null ? { on: true, at: null } : { on: doc.agentAuto.on, at: doc.agentAuto.at },
     // D66: research is on by default (owner rule 2026-11-16) until an org admin turns it off. [CONFIRM]
     research: doc.research == null ? { on: true, at: null } : { on: doc.research.on, at: doc.research.at },

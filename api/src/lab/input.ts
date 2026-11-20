@@ -13,7 +13,7 @@ import { z } from 'zod';
 import type { OrgScope } from '../access/policy.ts';
 import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
-import { closingRules, closureOf, isClosure, typicalByDate } from '../closed-days.ts';
+import { closingRules, closureOf, isClosure, trustedGuestDays, typicalByDate } from '../closed-days.ts';
 import { daysBetween, isoDate, utcDay } from '../dates.ts';
 import { flagsAfterData, ownerBeatsAgent, scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
 import { canonicalSha256, eachDay } from '../forecasts/file.ts';
@@ -34,7 +34,7 @@ export const LAB_INPUT_SCHEMA = 'townwise.lab-input/3';
  * The lab's model version (modeling/lab/townwise_lab/version.py's MODEL_VERSION; lab-contract.test.ts holds the two
  * equal). The weekly refresh's fingerprint includes it (D42), so a bump refits every location once.
  */
-export const LAB_MODEL_VERSION = 'v10';
+export const LAB_MODEL_VERSION = 'v11';
 /**
  * Days the input carries after the last day with guests (D52): the furthest a run reaches, its outlook capped at 400
  * days after the last day of sales (the lab's forecast.HORIZON_DAYS).
@@ -201,13 +201,18 @@ function eventsOf(townId: string | null, from: string, to: string): Map<string, 
   return new Map([...groups].map(([date, set]) => [date, [...set].sort()]));
 }
 
+/** The lab flags Halloween itself (hol_halloween), so the calendar's Halloween (D68) would count it twice. */
+const LAB_OWN_HOLIDAYS: ReadonlySet<string> = new Set(['us:halloween']);
+
 /**
  * Every town calendar entry overlapping `from` to `to` (holidays, terms, seasons and events, in townEvents' order), as
- * ids, groups, kinds, dates and confidence only. An id or group the lab's pattern would refuse is left out.
+ * ids, groups, kinds, dates and confidence only. An id or group the lab's pattern would refuse is left out, as is a
+ * holiday the lab flags itself (LAB_OWN_HOLIDAYS).
  */
 function calendarOf(townId: string | null, from: string, to: string): LabCalendarEntry[] {
   return townEvents(townId, { from, to })
     .filter((event) => ENTRY_ID.test(event.id) && (event.group === null || GROUP.test(event.group)))
+    .filter((event) => event.group === null || !LAB_OWN_HOLIDAYS.has(event.group))
     .map((event) => ({ id: event.id, group: event.group, kind: event.kind, start: event.start, end: event.end, confidence: event.confidence }));
 }
 
@@ -265,6 +270,9 @@ function isParty(note: Flagged): boolean {
  * partial, never is. The lab trains only on days with guests that are not closed, and its closed_weekdays and
  * closed_holidays read guests, not the flag, so a null count is what makes them treat the day as one without guests, as
  * they already treat an all-zero day (guests 0).
+ * A history day whose guest count a note marks wrong (D67, ../closed-days.ts trustedGuestDays) goes out with null guests
+ * and not closed, so the lab never trains on it, and its count is in no typical guests; dataThrough still reads the
+ * stored days, so a marked last day stays dataThrough and its run still saw that day's upload.
  * Confirmed booking labels (D58, `bookings`: a confirmed file calendar's buyout and party events, dates and label only),
  * on a history day only and only where no private-event or closure note covers the day (the note decides, so a counted
  * party is never counted twice): a buyout sets booked, so training drops the day, and a party sets privateEvent. They
@@ -274,8 +282,7 @@ function isParty(note: Flagged): boolean {
  * day and a party label marks it a private event, unless a note on the day decides] [CONFIRM: labels never change a day's
  * closed or likely-closed status or its guests]
  * Owner beats agent (D59): on any day, a note a person made that decides the day sets aside every TownwiseAI note
- * covering it (forecasts/adjust.ts ownerBeatsAgent) before the flags are read. [CONFIRM: a note a person made beats a
- * TownwiseAI note on the same day]
+ * covering it (forecasts/adjust.ts ownerBeatsAgent) before the flags are read.
  */
 export function labInputOf(args: {
   calibration: Pick<CalibrationRecord, 'id' | 'regimeStart'>;
@@ -294,8 +301,11 @@ export function labInputOf(args: {
   const last = plusDays(span.last, HORIZON_DAYS);
   const dates = eachDay(span.first, last);
   const { townId } = args.location.town;
-  const rows = new Map(args.days.map((day) => [day.date, day]));
-  const typical = typicalByDate(args.days);
+  // D67: a day whose guest count is marked wrong goes out with no guest count, and its count feeds no typical guests;
+  // the span reads the stored days, so a marked last day stays dataThrough.
+  const trusted = trustedGuestDays(args.days, args.notes);
+  const rows = new Map(trusted.map((day) => [day.date, day]));
+  const typical = typicalByDate(trusted);
   const terms = termsOf(townId, dates);
   const events = eventsOf(townId, span.first, last);
   const schedules: Flagged[] = args.rules.map((rule) => rule.schedule);

@@ -1,7 +1,7 @@
 import { EFFECT_LABEL, KIND_LABEL } from '../../chat/format';
 import { formatCount, formatDate } from '../format';
 import type { Note, NoteEffect, NoteInput, NoteKind } from './api';
-import { daysBetween, EARLIEST_DATE, isCalendarDate, plusYears, utcToday } from './dates';
+import { daysBetween, EARLIEST_DATE, isCalendarDate, localToday, plusYears, utcToday } from './dates';
 
 // The note form (C6) and the notes lists (spec 12, P14). The form checks the same rules as the API's
 // readNoteContent (api/src/handlers/notes.ts), so a 400 means a client bug: the start date from 2010-01-01 to
@@ -9,7 +9,9 @@ import { daysBetween, EARLIEST_DATE, isCalendarDate, plusYears, utcToday } from 
 // number from 1 to 20,000 and none when closed except on a buyout (a private event, closed, where they are the
 // party's size), details up to 280 characters, an event name (D49) of one line up to 120 characters (NFC, no control or
 // format character, each run of white space one space), an event name or details for Other, and hours (local 24-hour
-// 'HH:MM') both set or both empty, the start before the end, and none on a closure.
+// 'HH:MM') both set or both empty, the start before the end, and none on a closure. A guest count marked wrong (D67) is
+// an Other note on days before today, with no guests, no hours and no name or details needed; the form checks the
+// device's today, and the API, which reads the town's, decides.
 
 export { EFFECT_LABEL, KIND_LABEL };
 
@@ -66,7 +68,18 @@ export const NOTE_COPY = {
   /** A note TownwiseAI made from a file (D34): under its author on Notes, and in its edit form. */
   fromAiFile: 'From a file TownwiseAI read',
   fromAiFileEdit: 'Undoing that file’s read removes this note, even after an edit.',
+  /** D67: a guest count can be marked wrong only on days that are over: the end date's helper. */
+  pastOnly: 'Only days before today.',
+  /** D67: why Save refused a mark on today or a later day, a sentence apart from the helper. */
+  markFuture: 'A guest count can only be marked wrong on days before today.',
+  /** D67: the Effect helper while the mark is chosen. */
+  markEffectHelp: 'Townwise leaves this day’s guest count out of forecasts and comparisons. Its sales stay.',
 } as const;
+
+/** D67: the note marks the days' guest counts wrong; its sales stand. */
+export function marksGuestCount(draft: Pick<NoteDraft, 'effect'>): boolean {
+  return draft.effect === 'wrong_guest_count';
+}
 
 /** A business rule's Every year box (D46, P29): its helper and why a season is refused. */
 export const SEASON_COPY = {
@@ -165,9 +178,9 @@ function isBuyout(draft: Pick<NoteDraft, 'kind' | 'effect'>): boolean {
   return draft.kind === 'private_event' && draft.effect === 'closed';
 }
 
-/** The hours, or none on a closure (the form hides them there, so anything typed before is dropped). */
+/** The hours, or none on a closure or a guest-count mark (the form hides them there, so anything typed before is dropped). */
 function hoursOf(draft: NoteDraft, messages: NoteMessages): { startTime: string | null; endTime: string | null } {
-  if (draft.kind === 'closure') return { startTime: null, endTime: null };
+  if (draft.kind === 'closure' || marksGuestCount(draft)) return { startTime: null, endTime: null };
   const start = draft.startTime.trim();
   const end = draft.endTime.trim();
   if (start !== '' && !CLOCK_TIME.test(start)) messages.startTime = NOTE_COPY.time;
@@ -205,7 +218,7 @@ function checkFields(draft: NoteDraft, today: string, openEnd: boolean, messages
   if (typedEnd !== '' && !isCalendarDate(typedEnd)) messages.endDate = NOTE_COPY.date;
   else if (messages.startDate === undefined && end !== null && end < start) messages.endDate = NOTE_COPY.endBefore;
   else if (messages.startDate === undefined && end !== null && daysBetween(start, end) > MAX_SPAN_DAYS) messages.endDate = NOTE_COPY.range;
-  const guests = draft.effect === 'closed' && !isBuyout(draft) ? null : guestsOf(draft.expectedGuests);
+  const guests = (draft.effect === 'closed' && !isBuyout(draft)) || marksGuestCount(draft) ? null : guestsOf(draft.expectedGuests);
   if (guests === 'invalid') messages.expectedGuests = NOTE_COPY.guests;
   const hours = hoursOf(draft, messages);
   if (guests === 'invalid' || Object.keys(messages).length > 0) return null;
@@ -222,8 +235,13 @@ function checkFields(draft: NoteDraft, today: string, openEnd: boolean, messages
   };
 }
 
-/** The API's NoteInput, or the field messages that stop the form. `today` is the server's day (UTC). */
-export function checkNote(draft: NoteDraft, today: string = utcToday()): { input: NoteInput } | { messages: NoteMessages } {
+/**
+ * The API's NoteInput, or the field messages that stop the form. `today` is the server's day (UTC); `deviceToday` the
+ * viewer's, which a guest-count mark (D67) must end before.
+ */
+export function checkNote(
+  draft: NoteDraft, today: string = utcToday(), deviceToday: string = localToday(),
+): { input: NoteInput } | { messages: NoteMessages } {
   const messages: NoteMessages = {};
   const detail = draft.detail.trim();
   const typed = draft.title.normalize('NFC');
@@ -231,8 +249,12 @@ export function checkNote(draft: NoteDraft, today: string = utcToday()): { input
   if (CONTROL_OR_FORMAT.test(typed)) messages.title = NOTE_COPY.titleHidden;
   else if (Array.from(title).length > MAX_TITLE) messages.title = NOTE_COPY.titleLong;
   if (detail.length > MAX_DETAIL) messages.detail = NOTE_COPY.detailLong;
-  else if (draft.kind === 'other' && detail === '' && title === '') messages.detail = NOTE_COPY.detailOther;
+  else if (draft.kind === 'other' && !marksGuestCount(draft) && detail === '' && title === '') messages.detail = NOTE_COPY.detailOther;
   const fields = checkFields(draft, today, false, messages);
+  if (fields !== null && marksGuestCount(draft) && (fields.endDate ?? fields.startDate) >= deviceToday) {
+    if (draft.endDate.trim() === '') messages.startDate = NOTE_COPY.markFuture;
+    else messages.endDate = NOTE_COPY.markFuture;
+  }
   if (fields === null || Object.keys(messages).length > 0) return { messages };
   return {
     input: { ...fields, endDate: fields.endDate ?? fields.startDate, detail: detail === '' ? null : detail, title: title === '' ? null : title },

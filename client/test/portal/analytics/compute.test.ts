@@ -91,6 +91,11 @@ describe('the two reads', () => {
     expect(townEventSchema.parse(event).sources.map((source) => source.label)).toEqual(['home.dartmouth.edu', 'old site']);
   });
 
+  test('townEventSchema reads Halloween’s observance scope (D68)', () => {
+    const halloween = townEvent({ id: 'us:halloween:2026', title: 'Halloween', start: '2026-10-31', kind: 'holiday', scope: 'observance', group: 'us:halloween' });
+    expect(townEventSchema.parse(halloween).scope).toBe('observance');
+  });
+
   test('calendarRange runs from January 1 of the first year with data to the end of this year, inside the API rules', () => {
     expect(calendarRange('2024-03-05', '2026-11-05')).toEqual({ from: '2024-01-01', to: '2026-12-31' });
     expect(calendarRange(null, '2026-11-05')).toEqual({ from: '2026-01-01', to: '2026-12-31' });
@@ -121,6 +126,23 @@ describe('history', () => {
     expect(typical.get('2026-10-10')).toBe(105);
     expect(typical.get('2026-11-07')).toBe(100);
     expect(typical.get('2026-11-06')).toBeNull();
+  });
+
+  test('decodeHistory with the notes reads a guest count marked wrong (D67) as none, keeping the stored count and the sales', () => {
+    const saturdays = [100, 100, 1000, 100].map((guests, index) => day(addDays('2026-10-03', index * 7), guests));
+    const mark = note({ kind: 'other', startDate: '2026-10-17', endDate: '2026-10-17', effect: 'wrong_guest_count', detail: null });
+    const body = historyBody([...saturdays, day('2026-10-31', 5)]);
+    const plain = decodeHistory(body);
+    expect(plain.find((each) => each.date === '2026-10-31')?.typicalGuests).toBe(100);
+    expect(plain.find((each) => each.date === '2026-10-24')?.typicalGuests).toBe(100);
+    const decoded = decodeHistory(body, [mark]);
+    expect(decoded.find((each) => each.date === '2026-10-17')).toEqual({
+      ...day('2026-10-17', null, 2_000_000), typicalGuests: null, storedGuests: 1000,
+    });
+    // Two open Saturdays are left before Oct 24: no typical guests.
+    expect(decoded.find((each) => each.date === '2026-10-24')?.typicalGuests).toBeNull();
+    expect(decoded.find((each) => each.date === '2026-10-24')).not.toHaveProperty('storedGuests');
+    expect(decodeHistory(body, [])).toEqual(plain);
   });
 });
 
@@ -675,6 +697,17 @@ describe('the day panel', () => {
     byDate: lookup, context, uploads, metric: 'guests', included: includedFn(filters, lookup, context), today: '2026-11-26',
     lastDate: '2026-11-24', calendar: calendarBody(),
   };
+
+  test('a guest count marked wrong (D67) shows the stored count and says so; the day is noted, never closed', () => {
+    const mark = note({ kind: 'other', startDate: '2026-11-21', endDate: '2026-11-21', effect: 'wrong_guest_count', detail: null, expectedGuests: null });
+    const marked = byDate([...days.filter((each) => each.date !== '2026-11-21'), { ...day('2026-11-21', null, 482_000), storedGuests: 2 }]);
+    const markedContext = dayContext([mark], []);
+    const panel = dayPanel('2026-11-21', { ...input, byDate: marked, context: markedContext });
+    expect(panel.status).toEqual([]);
+    expect(panel.numbers[0]).toEqual({ label: 'Guests', value: '2, guest count marked wrong' });
+    expect(panel.notes.map((each) => each.words)).toEqual(['Other, guest count marked wrong']);
+    expect(classOf('2026-11-21', marked.get('2026-11-21'), markedContext)).toBe('noted');
+  });
 
   test('shows the day’s numbers, usual, last year, the town calendar with sources, notes and the upload', () => {
     expect(dayPanel('2026-11-21', input)).toEqual({

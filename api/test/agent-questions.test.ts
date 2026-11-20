@@ -451,6 +451,21 @@ describe('business rule schedules (D31)', () => {
     }
   });
 
+  it('a guest count marked wrong (D67) is in no typical guests, so it never makes a day usually busy', () => {
+    // Saturdays: three with 0 guests in January, five with 100 to Mar 7, then 1 guest on Mar 14: 5 of its 8 weeks open.
+    const empty = ['2026-01-17', '2026-01-24', '2026-01-31'];
+    const near = input(FROM, TO, () => false, {}, (day) => (empty.includes(day) ? 0 : day === '2026-03-14' ? 1 : 100));
+    expect(questionsFor(near).map((q) => q.id)).toEqual(['likely_closed_2026-03-14']);
+    // Marking Mar 7 leaves 4 open weeks: not usually busy, so nothing is asked; the marked day itself never is.
+    const mark = note({ kind: 'other', startDate: '2026-03-07', endDate: '2026-03-07', effect: 'wrong_guest_count' });
+    expect(questionsFor({ ...near, notes: [mark] })).toEqual([]);
+    // A marked zero count with sales is never asked about either.
+    const zero = input(FROM, TO, () => false, {}, (day) => (day === '2026-03-14' ? 0 : 100));
+    const sold = { ...zero, days: zero.days.map((day) => (day.date === '2026-03-14' ? { ...day, netSalesCents: 50_000 } : day)) };
+    expect(questionsFor(sold).map((q) => q.id)).toEqual(['likely_closed_2026-03-14']);
+    expect(questionsFor({ ...sold, notes: [{ ...mark, startDate: '2026-03-14', endDate: '2026-03-14' }] })).toEqual([]);
+  });
+
   it('no schedules change nothing', () => {
     const both = input(FROM, TO, (day) => day === '2026-03-09', {}, (day) => (day === '2026-03-14' ? 1 : 100));
     expect(questionsFor(both).map((q) => q.id)).toEqual(['likely_closed_2026-03-14', 'gap_2026-03-09_2026-03-09']);

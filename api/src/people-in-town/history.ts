@@ -6,7 +6,7 @@
 // to one side needs the other and the fixture. Closed includes likely closed (../closed-days.ts, spec D32), and a note
 // covering a day beats a rule schedule there. `today` is the town's today: a day on or after it is never likely closed,
 // and only before it does a day's real guests beat a rule's closure. With no today, every day counts as past.
-import { closureOf, typicalByDate, type Closure } from '../closed-days.ts';
+import { closureOf, trustedGuestDays, typicalByDate, type Closure } from '../closed-days.ts';
 import type { NoteContent } from '../stores/notes.ts';
 import type { SalesDay } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
@@ -74,11 +74,16 @@ export function classOfDay(
 
 const WEEK: readonly Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-/** Every stored open regular day whose term state is known, by term state and weekday. `today`: as classOfDay's. */
+/**
+ * Every stored open regular day whose term state is known, by term state and weekday. `today`: as classOfDay's. A
+ * guest count a note marks wrong (D67) is read as none first, so it is in no day's typical guests (the marked day is
+ * noted, so in no mean).
+ */
 export function yourHistory(
-  days: readonly SalesDay[], notes: readonly ClassNote[], events: readonly ClassEvent[], termStateOf: (date: string) => TermState,
+  stored: readonly SalesDay[], notes: readonly ClassNote[], events: readonly ClassEvent[], termStateOf: (date: string) => TermState,
   rules: readonly ClassRule[] = [], today: string | null = null,
 ): YourHistory {
+  const days = trustedGuestDays(stored, notes);
   const metric = days.some((day) => day.guests !== null) ? 'guests' : 'netSales';
   const typical = typicalByDate(days);
   const sums = new Map<string, { days: number; total: number }>();

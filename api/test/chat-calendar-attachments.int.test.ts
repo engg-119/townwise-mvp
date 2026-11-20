@@ -162,7 +162,7 @@ describe('calendar files attached to a message (D63)', () => {
     const { imports, documents } = sent();
     expect(documents).toEqual([ics('old@example.test')]);
     expect(imports).toEqual([
-      `- ${ref}: not imported: it was kept in Your data before Townwise imported calendar files, and Townwise imports a file only when it is added. To add it as a calendar, the person who added it or an org admin can delete it on the file's page, then add the file again: /locations/${locationId}/data/${ref}`,
+      `- ${ref}: not imported: it was kept in Your data before Townwise imported calendar files. To add it as a calendar, a member can press Import as a calendar on the file's page: /locations/${locationId}/data/${ref}`,
     ]);
     expect(await server.connection.collection('tw_calendar_sources').countDocuments({ locationId: new Types.ObjectId(locationId) })).toBe(0);
     // What the line says works: deleting the file and adding it again imports it.

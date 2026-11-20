@@ -7,7 +7,7 @@ import { formatCount, formatDate, plural } from '../../format';
 // The Bookings section's words (D58, learn-from-calendar-bookings design decisions 7, 10, 11 and 15), pure: each
 // label's name, the calendar's state, the counts, the words shown before Sort with TownwiseAI is pressed, what a sort,
 // a label and Use for forecasts did, and the words for each refusal the bookings routes answer. A label's words name no
-// customer; an event's title is the file's, shown as text. [CONFIRM: the Bookings section's words, awaiting the owner]
+// customer; an event's title is the file's, shown as text. Approved by the owner on 2026-11-19.
 
 /** A label, or none. */
 export type BookingChoice = BookingLabel | 'none';

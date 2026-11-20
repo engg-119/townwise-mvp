@@ -142,6 +142,13 @@ describe('automatic reads are queued when a file is stored (D59)', () => {
     expect(event).toMatchObject({ actorUserId: 'townwise_ai', actorRole: 'system' });
     expect(logLines(server).some((line) => line.msg === 'townwise.ai_read_auto_queued' && line.fileId === id)).toBe(true);
     expect(server.logs.join('\n')).not.toContain(SENTINEL);
+    // UI review 2026-11-19: a change from an added file is not called pasted text.
+    const log = await (await call(server, `/api/org/locations/${t.locationId}/agent/changes`, { session: t.member })).json() as {
+      changes: { sourceRef: string | null; sourcePasted: boolean }[];
+    };
+    const fromFile = log.changes.filter((change) => change.sourceRef === `f_${id}`);
+    expect(fromFile.length).toBeGreaterThan(0);
+    expect(fromFile.some((change) => change.sourcePasted)).toBe(false);
   });
 
   it('a file whose box was unchecked is never queued, and a press still reads it', async () => {
@@ -213,6 +220,13 @@ describe('automatic reads are queued when a file is stored (D59)', () => {
     expect(requests).toHaveLength(1);
     expect(await aiOf(id)).toMatchObject({ status: 'done', auto: true });
     expect(server.logs.join('\n')).not.toContain(SENTINEL);
+    // UI review 2026-11-19: the note it saved names pasted text as its source, in the log and the activity.
+    const log = await (await call(server, `/api/org/locations/${t.locationId}/agent/changes`, { session: t.member })).json() as {
+      changes: { sourceRef: string | null; sourcePasted: boolean }[];
+    };
+    const fromPaste = log.changes.filter((change) => change.sourceRef === `f_${id}`);
+    expect(fromPaste.length).toBeGreaterThan(0);
+    expect(fromPaste.every((change) => change.sourcePasted)).toBe(true);
 
     // No box, or the box unchecked: kept for reference only, and a press still reads it.
     for (const json of [{}, { aiAuto: false }]) {

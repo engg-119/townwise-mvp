@@ -31,10 +31,11 @@ async function failureOf(run: () => Promise<unknown>): Promise<PlacesUnavailable
 }
 
 describe('the route table', () => {
-  it('declares the Places routes for any signed-in person, with the shared places limiter: 2 KB bodies, and 32 KB for the map (D29)', () => {
+  it('declares the Places routes for any signed-in person, with the shared places limiter: 2 KB bodies, and 32 KB for the map (D29); the status read has neither', () => {
     const places = TOWNWISE_ROUTES.filter((route) => route.id.startsWith('places.'))
       .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
     expect(places).toEqual([
+      { id: 'places.status', method: 'GET', path: '/places/status', policy: 'signed_in', bodyLimit: 'none', limiter: undefined },
       { id: 'places.autocomplete', method: 'POST', path: '/places/autocomplete', policy: 'signed_in', bodyLimit: '2kb', limiter: 'places' },
       { id: 'places.details', method: 'POST', path: '/places/details', policy: 'signed_in', bodyLimit: '2kb', limiter: 'places' },
       { id: 'places.map', method: 'POST', path: '/places/map', policy: 'signed_in', bodyLimit: '32kb', limiter: 'places' },

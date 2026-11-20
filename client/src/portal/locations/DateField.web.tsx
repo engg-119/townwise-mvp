@@ -17,6 +17,7 @@ export function DateField(props: DateFieldProps): React.JSX.Element {
     label: props.label,
     ...(props.helper === undefined ? {} : { helper: props.helper }),
     ...(props.messages === undefined ? {} : { messages: props.messages }),
+    ...(props.alert === undefined ? {} : { alert: props.alert }),
   };
   const invalid = (props.messages?.length ?? 0) > 0;
   return (

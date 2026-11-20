@@ -82,7 +82,7 @@ describe('an attached calendar file (D63)', () => {
       `- f_${'d'.repeat(24)}: not added: it is over 1 MB, the most a calendar file can be.`,
       `- f_${'e'.repeat(24)}: not added: Townwise found no calendar in it.`,
       `- f_${'f'.repeat(24)}: added as a calendar before; that calendar was removed since, and Townwise never imports the same file again.`,
-      `- f_${'0'.repeat(24)}: not imported: it was kept in Your data before Townwise imported calendar files, and Townwise imports a file only when it is added. To add it as a calendar, the person who added it or an org admin can delete it on the file's page, then add the file again: /locations/${LOCATION}/data/f_${'0'.repeat(24)}`,
+      `- f_${'0'.repeat(24)}: not imported: it was kept in Your data before Townwise imported calendar files. To add it as a calendar, a member can press Import as a calendar on the file's page: /locations/${LOCATION}/data/f_${'0'.repeat(24)}`,
     ]);
     expect(block).toContain('You can\'t add, retry or remove a calendar');
     // A line names the page only where the person can do something there.

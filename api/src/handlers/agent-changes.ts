@@ -9,8 +9,7 @@
 // calendar (slice 2, a `booking.label` change): the notes that calendar's sort made are undone first, each as its own
 // change (one a person changed since is theirs and stays), then the labels that sort set that nobody changed since are
 // cleared and the confirm TownwiseAI made is taken back, so the calendar waits for Use for forecasts again (or reads as
-// never sorted when no label is left); it answers 409 change_in_progress while the calendar's sort still runs. [CONFIRM:
-// Undo per calendar takes back the notes, labels and confirm TownwiseAI made that nobody changed since] Undo of a
+// never sorted when no label is left); it answers 409 change_in_progress while the calendar's sort still runs. Undo of a
 // correction of a researched event (D66, town-research-agent design decision 12) deletes nothing: it appends a `revert`
 // revision based on the correction's, as the person who pressed it, which the unique index takes only while the
 // correction is the head; a member's revision based on it (there first, or winning the race) leaves the row `adopted`
@@ -25,7 +24,7 @@ import { applyRecorded, recordAfter, recordBefore, recordNotApplied } from '../a
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { TOWNWISE_AI_AUTHOR } from '../agent/apply.ts';
-import { changeView, mayUndo, targetStates, type AgentChangeView } from '../agent/changes.ts';
+import { changeView, mayUndo, pastedSources, targetStates, type AgentChangeView } from '../agent/changes.ts';
 import { wantRefitFor } from '../agent/refit.ts';
 import { isAnswerChange } from '../calendar/answers.ts';
 import type { AgentChangeRecord } from '../stores/agent-changes.ts';
@@ -120,8 +119,8 @@ export async function listAgentChanges(ctx: TownwiseContext, req: Request, res: 
   const before = query.before === undefined ? undefined : parseBefore(query.before);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const page = await ctx.stores.agentChanges.page(scope, location.id, { ...(before === undefined ? {} : { before }), limit: CHANGES_PAGE });
-  const states = await targetStates(ctx, scope, location.id, page.changes);
-  const changes: AgentChangeView[] = page.changes.map((change) => changeView(caller, change, states));
+  const [states, pasted] = await Promise.all([targetStates(ctx, scope, location.id, page.changes), pastedSources(ctx, scope, page.changes)]);
+  const changes: AgentChangeView[] = page.changes.map((change) => changeView(caller, change, states, pasted));
   res.status(200).json({ changes, next: page.next === null ? null : `${page.next.at.toISOString()}_${page.next.id}` });
 }
 
@@ -223,8 +222,8 @@ export async function undoAgentChange(ctx: TownwiseContext, req: Request, res: R
   const author = change.action === 'note.add' ? (await ctx.stores.notes.find(scope, location.id, change.targetId))?.createdBy ?? null : null;
   if (!mayUndo(caller, change, author)) throw new AppError(403, 'forbidden', 'Only an org admin can undo this');
   const after = await undoRow(ctx, caller, location, change);
-  const states = await targetStates(ctx, scope, location.id, [after]);
-  res.status(200).json({ change: changeView(caller, after, states) });
+  const [states, pasted] = await Promise.all([targetStates(ctx, scope, location.id, [after]), pastedSources(ctx, scope, [after])]);
+  res.status(200).json({ change: changeView(caller, after, states, pasted) });
 }
 
 /**

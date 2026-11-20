@@ -12,11 +12,12 @@
 import { z } from 'zod';
 
 import { noteCovers } from '../../agent/questions.ts';
-import { closureOf, TYPICAL_LOOKBACK_DAYS, typicalByDate, type Closure } from '../../closed-days.ts';
+import { closureOf, trustedGuestDays, TYPICAL_LOOKBACK_DAYS, typicalByDate, type Closure } from '../../closed-days.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../../dates.ts';
 import { scheduledRules } from '../../forecasts/adjust.ts';
 import { eachDay } from '../../forecasts/file.ts';
 import { MAX_FORECAST_RANGE_DAYS, type ForecastDayView, type ForecastWindowRun } from '../../forecasts/reader.ts';
+import type { NoteRecord } from '../../stores/notes.ts';
 import type { SalesDay } from '../../stores/sales-days.ts';
 import type { ChatTool, ToolContext, ToolRun } from './registry.ts';
 import { DATE } from './shared.ts';
@@ -310,19 +311,21 @@ async function publishedForecast(tc: ToolContext, from: string, to: string): Pro
   };
 }
 
-/** A range's stored days, from the 8 weeks before it too: their same weekdays give each day its typical guests (D32). */
-function readWithLookback(tc: ToolContext, range: { from: string; to: string }): Promise<SalesDay[]> {
-  return tc.ctx.stores.salesDays.days(tc.scope, tc.location.id, { from: shift(range.from, -TYPICAL_LOOKBACK_DAYS), to: range.to });
+/**
+ * A range's stored days, from the 8 weeks before it too: their same weekdays give each day its typical guests (D32). A
+ * guest count one of `notes` marks wrong (D67) reads as none.
+ */
+async function readWithLookback(tc: ToolContext, range: { from: string; to: string }, notes: readonly NoteRecord[]): Promise<readonly SalesDay[]> {
+  const read = await tc.ctx.stores.salesDays.days(tc.scope, tc.location.id, { from: shift(range.from, -TYPICAL_LOOKBACK_DAYS), to: range.to });
+  return trustedGuestDays(read, notes);
 }
 
 /**
  * Which of the stored days `read` were closed or likely closed, from the location's notes and rule schedules (read
  * once) and the town's today: a function of the read, so the comparison range gets its own typical guests.
  */
-async function closuresOf(tc: ToolContext): Promise<(read: readonly SalesDay[]) => ClosureOn> {
-  const [notes, scheduled] = await Promise.all([
-    tc.ctx.stores.notes.list(tc.scope, tc.location.id), tc.ctx.stores.businessRules.scheduled(tc.scope, tc.location.id),
-  ]);
+async function closuresOf(tc: ToolContext, notes: readonly NoteRecord[]): Promise<(read: readonly SalesDay[]) => ClosureOn> {
+  const scheduled = await tc.ctx.stores.businessRules.scheduled(tc.scope, tc.location.id);
   const schedules = scheduledRules(scheduled).map((rule) => rule.schedule);
   return (read) => {
     const typical = typicalByDate(read);
@@ -341,21 +344,26 @@ function daysAhead(visual: Visual, today: string): Extract<Visual, { kind: 'dail
   return visual.kind === 'daily' ? visual.days.filter((day) => day.date >= today) : [];
 }
 
-/** `days` is the range's stored days; `read` the same with the 8 weeks before (every kind but daily). */
-async function visualFor(tc: ToolContext, req: VisualRequest, days: readonly SalesDay[], read: readonly SalesDay[]): Promise<Visual> {
+/**
+ * `days` is the range's stored days; `read` the same with the 8 weeks before (every kind but daily); both with the
+ * guest counts `notes` mark wrong (D67) read as none.
+ */
+async function visualFor(
+  tc: ToolContext, req: VisualRequest, days: readonly SalesDay[], read: readonly SalesDay[], notes: readonly NoteRecord[],
+): Promise<Visual> {
   if (req.kind === 'daily') {
     if (req.metric !== 'guests') return dailyVisual(req, days, [], null);
     const forecast = await publishedForecast(tc, req.from, req.to);
     return dailyVisual(req, days, forecast.days, forecast.run);
   }
-  const closures = await closuresOf(tc);
+  const closures = await closuresOf(tc, notes);
   switch (req.kind) {
     case 'breakdown': return breakdownVisual(req, days, closures(read));
     case 'days_table': return daysTableVisual(req, days, closures(read));
     case 'metrics': {
       const range = compareRangeOf(req);
       if (range === null) return metricsVisual(req, days, null, closures(read));
-      const before = await readWithLookback(tc, range);
+      const before = await readWithLookback(tc, range, notes);
       const closureOn = closures([...before, ...read]);
       return metricsVisual(req, days, before.filter((day) => day.date >= range.from), closureOn);
     }
@@ -399,9 +407,11 @@ export const showVisualTool: ChatTool<VisualRequest> = {
   inputView: () => null,
   resultView: () => null,
   async run(tc, req) {
+    // D67: a guest count a note marks wrong is drawn as none; its sales stand.
+    const notes = await tc.ctx.stores.notes.list(tc.scope, tc.location.id);
     const read = req.kind === 'daily'
-      ? await tc.ctx.stores.salesDays.days(tc.scope, tc.location.id, { from: req.from, to: req.to })
-      : await readWithLookback(tc, req);
+      ? trustedGuestDays(await tc.ctx.stores.salesDays.days(tc.scope, tc.location.id, { from: req.from, to: req.to }), notes)
+      : await readWithLookback(tc, req, notes);
     const days = read.filter((day) => day.date >= req.from);
     const sales = hasValue(req, days);
     // Daily guests reaching today read the published forecast before deciding: a day from today on has no sales yet. A
@@ -411,7 +421,7 @@ export const showVisualTool: ChatTool<VisualRequest> = {
       const futureNetSales = req.kind === 'daily' && req.metric === 'netSales' && req.from > tc.today;
       return unavailable(futureNetSales ? GUESTS_ONLY_REASON : NO_SALES_REASON);
     }
-    const visual = await visualFor(tc, req, days, read);
+    const visual = await visualFor(tc, req, days, read, notes);
     const ahead = daysAhead(visual, tc.today);
     if (!sales && !ahead.some((day) => day.low !== null || day.status !== undefined)) return unavailable(NO_SALES_OR_FORECAST_REASON);
     return { content: JSON.stringify({ shown: ahead.some((day) => day.low !== null) ? FORECAST_VISUAL_RESULT : VISUAL_RESULT, visual }), visual };

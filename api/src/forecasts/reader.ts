@@ -27,7 +27,7 @@
 // for its live accuracy; the model card's, the newest run's over its days. It logs nothing and stores nothing.
 import type { OrgScope } from '../access/policy.ts';
 import { noteCovers } from '../agent/questions.ts';
-import { closureOf, TYPICAL_LOOKBACK_DAYS, typicalByDate } from '../closed-days.ts';
+import { closureOf, trustedGuestDays, TYPICAL_LOOKBACK_DAYS, typicalByDate } from '../closed-days.ts';
 import { daysBetween, utcDay } from '../dates.ts';
 import type { BusinessRuleStore } from '../stores/business-rules.ts';
 import type { ForecastRow, ForecastRunRecord, ForecastStore } from '../stores/forecasts.ts';
@@ -285,8 +285,9 @@ export function createForecastReader(deps: {
    * Every published run, every chosen day with its actual (before today), and each run's live accuracy over its own
    * days, closed and likely-closed days left out. The stored days are read once, from 8 weeks before the first chosen
    * day (its typical guests, D32), or from `reach.historyFrom` when that is earlier (the reason effects' history), to
-   * yesterday; the notes once, over the chosen days before today and `reach.notes`; the scheduled rules once. None are
-   * read when no run supplies a day.
+   * yesterday; the notes once, over the stored days, the chosen days before today and `reach.notes`; the scheduled rules
+   * once. None are read when no run supplies a day. A stored day whose guest count a note marks wrong (D67) reads with
+   * no guest count.
    */
   async function load(
     scope: OrgScope, locationId: string, today: string,
@@ -302,15 +303,20 @@ export function createForecastReader(deps: {
     const [first] = dates;
     const yesterday = utcDay(new Date(`${today}T00:00:00.000Z`), -1);
     const from = first === undefined ? undefined : firstOf([utcDay(new Date(`${first}T00:00:00.000Z`), -TYPICAL_LOOKBACK_DAYS), reach.historyFrom]);
-    // The notes the scored days need (the chosen days to yesterday), and the caller's.
-    const notesFrom = firstOf([first, reach.notes?.from]);
-    const notesTo = lastOf([dates.filter((date) => date <= yesterday).at(-1), reach.notes?.to]);
-    const [stored, noted, scheduled] = await Promise.all([
-      from !== undefined && from <= yesterday ? salesDays.days(scope, locationId, { from, to: yesterday }) : [],
+    const readsDays = from !== undefined && from <= yesterday;
+    // The notes the scored days need (the chosen days to yesterday), the caller's, and every stored day's (D67: a note
+    // marking a guest count wrong anywhere in the stored range).
+    const notesFrom = firstOf([readsDays ? from : undefined, first, reach.notes?.from]);
+    const notesTo = lastOf([readsDays ? yesterday : undefined, dates.filter((date) => date <= yesterday).at(-1), reach.notes?.to]);
+    const [storedRows, noted, scheduled] = await Promise.all([
+      readsDays ? salesDays.days(scope, locationId, { from, to: yesterday }) : [],
       first === undefined || notesFrom === undefined || notesTo === undefined ? [] : notes.overlapping(scope, locationId, { from: notesFrom, to: notesTo }),
       first === undefined ? [] : businessRules.scheduled(scope, locationId),
     ]);
     const rules = scheduledRules(scheduled);
+    // D67: a day whose guest count is marked wrong has no actual, feeds no typical guests and no effect, and is never
+    // likely closed: it reads as a day with sales and no guest count.
+    const stored = trustedGuestDays(storedRows, noted);
     const notesOn = (date: string): NoteRecord[] => noted.filter((note) => noteCovers(note, date));
     const rulesOn = (date: string): ScheduledRule[] => rules.filter((rule) => noteCovers(rule.schedule, date));
     const actuals = new Map<string, number>();

@@ -23,7 +23,7 @@ const READ_ONLY_ID = 'changes-ro';
 /**
  * The page's intro, slice 2's calendar labels and their Undo included, and (D66, UI review) the researched events
  * TownwiseAI corrected at the person's request, which the page lists too, so neither the heading nor this says "on its
- * own". [CONFIRM: the panel's and switch's words]
+ * own".
  */
 export const CHANGES_INTRO = 'Each note, business rule, summary, set of sales days or set of booking labels TownwiseAI saved here, and each correction it made when you asked to an event town research found, newest first. Undo removes what it added, or puts back what it corrected, as long as nobody changed it since. Undo on a calendar’s booking labels also removes the notes TownwiseAI made from that calendar and stops using its labels for forecasts. Once you change something it added, it’s yours.';
 

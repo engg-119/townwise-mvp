@@ -19,8 +19,9 @@ from townwise_lab import backtest, baseline, compare, features, forecast, holida
 from townwise_lab.forecast import iso
 
 # From the first to the last history day: the span that always gives 12 horizon-28 backtest weeks with an 80% range,
-# so the gate can judge the draft (GATE.minHistoryDays, decided by the owner on 2026-11-10 (spec D27), which the API checks before it starts
-# a calibration). The first refit is up to 30 days after first day + 364, scoring starts up to 34 days after it, and the
+# so the gate can judge the draft (GATE.minHistoryDays, decided by the owner on 2026-11-10 (spec D27): the gate's check
+# on a first model forecast. The API starts any calibration from GATE.baselineMinHistoryDays, 230 days, and under this
+# span only the baseline runs). The first refit is up to 30 days after first day + 364, scoring starts up to 34 days after it, and the
 # 12th week with a range is the 24th scored, ending 167 days after the first: 364 + 30 + 34 + 167. Pinned by
 # test_min_history_days_always_gives_twelve_weeks_with_a_range.
 MIN_HISTORY_DAYS = 595

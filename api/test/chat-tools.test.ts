@@ -281,6 +281,9 @@ describe('the views on a tool call’s card', () => {
 });
 
 // F2: get_day, everything Townwise has for one day, from fakes of the stores it reads. Synthetic data only.
+/** D67: the clause get_sales_days and get_day add to their descriptions (a frozen-prefix change). */
+const MARKED_CLAUSE = 'A day with guestCountMarkedWrong true had its guest count marked wrong by the restaurant: its guests are null, its sales stand, and it is left out of typical guests.';
+
 describe('get_day', () => {
   const TODAY = '2026-11-05';
   const SENTINEL_USER = 'sentinel-user-id-0001';
@@ -481,6 +484,44 @@ describe('get_day', () => {
     // An all-zero row is closed; an upload record that is gone is null.
     const zero = context({ days: [{ date: '2026-11-21', guests: 0, netSalesCents: 0, uploadId: UPLOAD_ID }], uploads: [] }).tc;
     expect((await run({ date: '2026-11-21' }, zero)).parsed).toMatchObject({ sales: { guests: 0, netSalesUsd: 0 }, closed: true, upload: null });
+  });
+
+  it('a day whose guest count is marked wrong (D67): guests null with guestCountMarkedWrong, sales as stored, never likely closed', async () => {
+    const mark = note({ kind: 'other', startDate: '2026-11-21', effect: 'wrong_guest_count', expectedGuests: null, detail: null });
+    // Saturdays of 100 before it, and the marked Saturday's stored 2.
+    const days = ['2026-10-31', '2026-11-07', '2026-11-14'].map((date) => ({ date, guests: 100, netSalesCents: 200_000, uploadId: UPLOAD_ID }));
+    const marked = [...days, { date: '2026-11-21', guests: 2, netSalesCents: 150_000, uploadId: UPLOAD_ID }];
+    const plain = (await run({ date: '2026-11-21' }, context({ days: marked, today: '2026-11-25' }).tc)).parsed;
+    expect(plain).toMatchObject({ sales: { guests: 2 }, likelyClosed: true, dayClass: 'closed' });
+    const { parsed } = await run({ date: '2026-11-21' }, context({ days: marked, notes: [mark], today: '2026-11-25' }).tc);
+    expect(parsed).toMatchObject({
+      sales: { guests: null, netSalesUsd: 1500, guestCountMarkedWrong: true }, closed: false, likelyClosed: false, dayClass: 'noted',
+    });
+    // Unmarked days carry no flag.
+    const other = (await run({ date: '2026-11-14' }, context({ days: marked, notes: [mark], today: '2026-11-25' }).tc)).parsed;
+    expect(other.sales).toEqual({ guests: 100, netSalesUsd: 2000 });
+    expect(toolNamed('get_day')?.definition.description).toContain(MARKED_CLAUSE);
+  });
+
+  it('get_sales_days sends a marked day (D67) with guests null and guestCountMarkedWrong, and leaves its count out of typical guests', async () => {
+    const mark = note({ kind: 'other', startDate: '2026-10-31', endDate: '2026-10-31', effect: 'wrong_guest_count', expectedGuests: null, detail: null });
+    // Saturdays: 100, 100, a marked 2,000, then 5 guests on Nov 7 (4 weeks of history; 3 open without the mark).
+    const days = [
+      { date: '2026-10-17', guests: 100 }, { date: '2026-10-24', guests: 100 }, { date: '2026-10-31', guests: 2000 }, { date: '2026-11-07', guests: 5 },
+    ].map((each) => ({ ...each, netSalesCents: 100_000, uploadId: UPLOAD_ID }));
+    const tool = toolNamed('get_sales_days');
+    const parsed = tool?.parse({ from: '2026-10-31', to: '2026-11-07' }, TODAY);
+    if (tool === undefined || parsed === null || parsed === undefined) throw new Error('invalid input');
+    const rowsOf = async (notes: NoteRecord[]) => (JSON.parse((await tool.run(context({ days, notes, today: '2026-11-25' }).tc, parsed)).content) as { days: unknown[] }).days;
+    expect(await rowsOf([])).toEqual([
+      { date: '2026-10-31', guests: 2000, netSalesUsd: 1000 },
+      { date: '2026-11-07', guests: 5, netSalesUsd: 1000, likelyClosed: true },
+    ]);
+    expect(await rowsOf([mark])).toEqual([
+      { date: '2026-10-31', guests: null, netSalesUsd: 1000, guestCountMarkedWrong: true },
+      { date: '2026-11-07', guests: 5, netSalesUsd: 1000 },
+    ]);
+    expect(tool.definition.description).toContain(MARKED_CLAUSE);
   });
 
   it('shows the date, whether there were sales, closed, counts and source links on its card, never a figure', async () => {

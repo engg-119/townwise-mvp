@@ -13,7 +13,7 @@ import { wantRefitFor } from '../agent/refit.ts';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
-import { folderOf, type DataFolder } from '../data/folders.ts';
+import { folderOf, isUnimportedCalendarFile, type DataFolder } from '../data/folders.ts';
 import {
   DATA_PAGE, listDataItems, loadDataItem, parseRef, refString, type DataCursor, type DataItemRecord, type DataState, type DataVia,
 } from '../data/library.ts';
@@ -513,9 +513,11 @@ export async function getDataItem(ctx: TownwiseContext, req: Request, res: Respo
 /**
  * POST /locations/:locationId/data/:ref/calendar {}: imports a calendar file kept in Your data again (D60), after its
  * import was refused for a cause a retry may mend (`calendar.retry`: the location had 5 calendars, or its original
- * couldn't be read). Any member, as Your calendars' import; never under view-as (the chain refuses it). In order: 400
- * for the body and the ref, 404 for another organization's or an unknown location or item, 503 files_unavailable while
- * stored files are off, and 400 invalid_request for an item that is no calendar file. 200 with the item and its
+ * couldn't be read), or (UI review 2026-11-19, Import as a calendar) for the first time, a calendar file kept before
+ * D60 with no import record while its original is kept. Any member, as Your calendars' import; never under view-as (the
+ * chain refuses it). In order: 400 for the body and the ref, 404 for another organization's or an unknown location or
+ * item, 503 files_unavailable while stored files are off, and 400 invalid_request for an item that is no calendar file
+ * (an old one whose original was deleted included). 200 with the item and its
  * `calendar` as they are after it: a retry refused again says so there, and an item already added, removed or refused
  * for good is answered as it is, so a double press is harmless and never imports a file twice.
  */
@@ -530,10 +532,15 @@ export async function retryDataCalendar(ctx: TownwiseContext, req: Request, res:
   const item = await loadDataItem(ctx, scope, location.id, ref, member.userId);
   if (item === null) throw notFound();
   const calendar = await calendarOf(ctx, scope, item);
-  if (calendar === null || item.file === null) throw invalidRequest();
+  const file = item.file;
+  // UI review 2026-11-19: a calendar file kept before D60 (no record, no calendar) is imported here once, while its
+  // original is kept; the calendar's unique index on the file's id still holds two presses at once to one calendar.
+  const unimported = calendar === null && file !== null && item.ref.type === 'file' && file.purpose === 'reference'
+    && file.status === 'kept' && file.rawDeletedAt === null && isUnimportedCalendarFile(file);
+  if (file === null || (calendar === null && !unimported)) throw invalidRequest();
   let shown = item;
-  if (calendar.status === 'refused' && calendar.retry) {
-    shown = { ...item, file: { ...item.file, calendarImport: await runCalendarImport(ctx, blobs, member, location, item.file) } };
+  if (unimported || (calendar?.status === 'refused' && calendar.retry)) {
+    shown = { ...item, file: { ...file, calendarImport: await runCalendarImport(ctx, blobs, member, location, file) } };
   }
   res.status(200).json({ item: await itemView(ctx, member, shown, { calendar: true }) });
 }

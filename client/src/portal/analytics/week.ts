@@ -7,11 +7,11 @@ import { formatCount, formatDate, plural } from '../format';
 import type { Note } from '../locations/api';
 import type { Rule } from '../rules/api';
 import { addDays, daysBetween, EARLIEST_DATE, monthRange } from '../locations/dates';
-import { valueOf } from '../locations/sales';
+import { formatDollars, valueOf } from '../locations/sales';
 import type { Calendar, ResearchedEvent, TownEvent } from './api';
 import { usual, type Usual } from './baseline';
 import { mondayOf, weekDates } from './cells';
-import { dayFlags, eventsOf, likelyClosedWords, notesOf, type DayContext } from './days';
+import { dayFlags, eventsOf, likelyClosedWords, markedGuestsWords, notesOf, type DayContext } from './days';
 import type { DayRecord } from './history';
 import { plainOf, strong, type Phrase } from './phrase';
 import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPercent, WEEKDAY_NAMES, weekdayOf, type Metric } from './words';
@@ -954,12 +954,28 @@ export interface MonthDay {
   value: number | null;
   /** The day's figure was so few guests for its weekday that it was likely closed (spec D32). */
   likelyClosed: boolean;
+  /** D67: a past day whose guest count a note marks wrong: its stored count and net sales; absent on any other day. */
+  marked?: MarkedDay;
   lastYear: PastDay;
   twoYearsAgo: PastDay;
 }
 
+/** A day whose guest count a note marks wrong (D67): the stored count and the day's net sales. */
+export interface MarkedDay {
+  storedGuests: number;
+  netSalesCents: number | null;
+}
+
+/** The stored count and net sales of a past day whose guest count is marked wrong (D67), as figureOf reads past days. */
+function markedOf(date: string, input: HomeInput): MarkedDay | null {
+  if (input.lastDate === null || date > input.lastDate || date > input.today) return null;
+  const day = input.byDate.get(date);
+  return day?.storedGuests === undefined ? null : { storedGuests: day.storedGuests, netSalesCents: day.netSalesCents };
+}
+
 export function monthDay(date: string, input: HomeInput): MonthDay {
   const value = figureOf(date, input);
+  const marked = markedOf(date, input);
   return {
     date,
     isToday: date === input.today,
@@ -968,6 +984,7 @@ export function monthDay(date: string, input: HomeInput): MonthDay {
     notes: notesOf(input.context, date),
     value,
     likelyClosed: value !== null && dayFlags(date, input.byDate.get(date), input.context).likelyClosed,
+    ...(marked === null ? {} : { marked }),
     lastYear: pastDay(sameWeekdayYearsAgo(date, 1), input),
     twoYearsAgo: pastDay(sameWeekdayYearsAgo(date, 2), input),
   };
@@ -978,14 +995,23 @@ function recordedText(value: number, metric: Metric): string {
   return metric === 'guests' ? plural(value, 'guest', 'guests') : metricText(value, metric);
 }
 
-/** The day detail's “This day” and This week's own day: “241 guests”, “Likely closed (1 guest recorded)”, or that nothing is stored. */
-/** A day's own figure, strong, or what stands in for it. */
-export function thisDayPhrase(day: Pick<MonthDay, 'value' | 'likelyClosed'>, metric: Metric): Phrase {
+/**
+ * The day detail's “This day” and This week's own day: “241 guests”, “Likely closed (1 guest recorded)”, a marked day's
+ * “2 guests recorded, guest count marked wrong. Net sales $480.” (D67, the words of Analytics' day panel), or that
+ * nothing is stored. A day's own figure, strong, or what stands in for it.
+ */
+export function thisDayPhrase(day: Pick<MonthDay, 'value' | 'likelyClosed' | 'marked'>, metric: Metric): Phrase {
+  if (day.value === null && day.marked !== undefined) {
+    const { storedGuests, netSalesCents } = day.marked;
+    const sales: Phrase = netSalesCents === null ? [] : [' Net sales ', strong(formatDollars(netSalesCents)), '.'];
+    // The stored count is not drawn strong, as a likely-closed day's is not: Townwise does not read it.
+    return [`${markedGuestsWords(plural(storedGuests, 'guest', 'guests'))}.`, ...sales];
+  }
   if (day.value === null) return ['No sales stored for this day.'];
   return day.likelyClosed ? [likelyClosedWords(recordedText(day.value, metric))] : [strong(metricText(day.value, metric))];
 }
 
-export function thisDayLine(day: Pick<MonthDay, 'value' | 'likelyClosed'>, metric: Metric): string {
+export function thisDayLine(day: Pick<MonthDay, 'value' | 'likelyClosed' | 'marked'>, metric: Metric): string {
   return plainOf(thisDayPhrase(day, metric));
 }
 

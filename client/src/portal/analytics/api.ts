@@ -88,7 +88,7 @@ export const townEventSchema = z.object({
   start: z.string(),
   end: z.string(),
   kind: z.enum(EVENT_KINDS),
-  scope: z.enum(['national', 'town']),
+  scope: z.enum(['national', 'observance', 'town']), // observance: a holiday no law sets (Halloween, D68)
   group: z.string().nullable(),
   groupLabel: z.string().nullable(),
   sources: z.array(sourceSchema).transform((sources) => sources.filter((source) => WEB_LINK.test(source.url))),

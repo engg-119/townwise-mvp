@@ -61,6 +61,18 @@ def test_holiday_flags_follow_the_notebook_rules():
     assert on[ts("2024-03-15")] == (0, 0, 0, 0)
 
 
+def test_halloween_flags_the_weekend_around_it():
+    days = pd.Series(pd.date_range("2025-10-20", "2029-11-10"))
+    flagged = set(days[features.halloween_weekend(days)].dt.strftime("%Y-%m-%d"))
+    assert flagged == {
+        "2025-10-31", "2025-11-01",  # Friday Halloween: it and the Saturday after
+        "2026-10-30", "2026-10-31",  # Saturday: the Friday before
+        "2027-10-29", "2027-10-30", "2027-10-31",  # Sunday, a closed day at many places: its Friday and Saturday still
+        "2028-10-27", "2028-10-28", "2028-10-31",  # Tuesday: the weekend before (Friday Oct 27)
+        "2029-10-31", "2029-11-02", "2029-11-03",  # Wednesday: the weekend after (Friday Nov 2)
+    }
+
+
 def test_quarterly_origins():
     assert backtest.quarterly_origins(ts("2024-01-01"), ts("2025-10-21")) == [
         ts("2024-12-31"), ts("2025-03-31"), ts("2025-06-30"), ts("2025-09-30")]

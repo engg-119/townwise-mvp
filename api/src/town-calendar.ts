@@ -14,7 +14,8 @@ export interface TownEvent {
   readonly start: string;
   readonly end: string;
   readonly kind: 'holiday' | 'event' | 'term' | 'season';
-  readonly scope: 'national' | 'town';
+  /** national: a US federal holiday; observance: a widely kept day set by no law (Halloween, D68); town: researched. */
+  readonly scope: 'national' | 'observance' | 'town';
   /** A recurring kind, for drivers ('us:thanksgiving', 'hanover-nh:classes:fall'); null for a one-off. */
   readonly group: string | null;
   readonly groupLabel: string | null;
@@ -81,6 +82,36 @@ export function federalHolidays(year: number): TownEvent[] {
   }));
 }
 
+// The Library of Congress's Halloween page is Halloween's source: no law sets the day (D68; owner, 2026-11-19).
+const LOC_HALLOWEEN: TownEventSource = { label: 'Library of Congress', url: 'https://blogs.loc.gov/folklife/category/halloween/' };
+
+const FRIDAY = 5;
+const SATURDAY = 6;
+
+/**
+ * Halloween's nights of `year` (D68), the same as the forecasting lab's hol_halloween (modeling/lab/townwise_lab/
+ * features.py halloween_weekend): Oct 31, the Friday from Oct 27 to Nov 2 and the Saturday after it. Oct 31 is
+ * "Halloween", the others "Halloween weekend", all one group. Not sent to the lab (lab/input.ts), which has its own flag.
+ */
+export function halloween(year: number): TownEvent[] {
+  const nights: string[] = [];
+  for (let date = 27; date <= 34; date += 1) { // Oct 27 to Nov 3
+    const at = new Date(Date.UTC(year, 9, date));
+    const weekday = at.getUTCDay();
+    const friday = weekday === SATURDAY ? date - 1 : date;
+    const weekend = (weekday === FRIDAY || weekday === SATURDAY) && friday >= 27 && friday <= 33; // Friday Oct 27 to Nov 2
+    if (weekend || date === 31) nights.push(at.toISOString().slice(0, 10));
+  }
+  return nights.map((night) => {
+    const isEve = night.endsWith('-10-31');
+    return {
+      id: isEve ? `us:halloween:${String(year)}` : `us:halloween-weekend:${night}`, title: isEve ? 'Halloween' : 'Halloween weekend',
+      start: night, end: night, kind: 'holiday', scope: 'observance', group: 'us:halloween', groupLabel: 'Halloween',
+      confidence: null, sources: [LOC_HALLOWEEN],
+    };
+  });
+}
+
 function slug(text: string): string {
   return text.normalize('NFKD').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
@@ -114,15 +145,15 @@ function sortEvents(events: TownEvent[]): TownEvent[] {
 }
 
 /**
- * The town's researched events and the federal holidays that overlap `range` (inclusive), sorted by start, then id.
- * A town outside the twelve (`null`) gets holidays only.
+ * The town's researched events, the federal holidays and Halloween (D68) that overlap `range` (inclusive), sorted by
+ * start, then id. A town outside the twelve (`null`) gets holidays only.
  */
 export function townEvents(townId: string | null, range: DayRange): TownEvent[] {
   const overlaps = (event: TownEvent): boolean => event.start <= range.to && event.end >= range.from;
   const fromYear = Number(range.from.slice(0, 4));
   const toYear = Number(range.to.slice(0, 4));
   const holidays: TownEvent[] = [];
-  for (let year = fromYear; year <= toYear; year += 1) holidays.push(...federalHolidays(year));
+  for (let year = fromYear; year <= toYear; year += 1) holidays.push(...federalHolidays(year), ...halloween(year));
   const town = townId === null ? [] : townOnly(townId);
   return sortEvents([...holidays, ...town].filter(overlaps));
 }

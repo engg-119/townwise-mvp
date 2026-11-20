@@ -2,6 +2,7 @@
 // published guest forecast and its past guests, runs the engine, and applies the saved edits and active rules. Also
 // what the setup page and TownwiseAI read beside the setup (loadSetupState). Reads: they write nothing and log nothing.
 import type { TownwiseContext } from '../app.ts';
+import { trustedGuestDays } from '../closed-days.ts';
 import type { OrgScope } from '../access/policy.ts';
 import type { ItemSalesCoverage, ItemSalesDay } from '../stores/item-sales.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -62,15 +63,19 @@ export async function loadBoardWithSales(
   if (lacking.length > 0) return { answer: unavailable(lacking), itemSales: [] };
 
   const yesterday = addDays(today, -1);
-  const [itemSales, counts, forecast, history, decisions, rules] = await Promise.all([
+  const guestDays = { from: addDays(today, -MEAN_DAYS), to: yesterday };
+  const [itemSales, counts, forecast, stored, marks, decisions, rules] = await Promise.all([
     stores.itemSales.days(scope, location.id, { from: addDays(today, -ITEM_SALES_DAYS), to: yesterday }),
     stores.orderCounts.latest(scope, location.id, addDays(today, -COUNT_DAYS), setup.items.map((item) => item.id)),
     ctx.ports.forecasts.window(scope, location, { from: today, to: addDays(today, FORECAST_DAYS) }, today),
-    stores.salesDays.days(scope, location.id, { from: addDays(today, -MEAN_DAYS), to: yesterday }),
+    stores.salesDays.days(scope, location.id, guestDays),
+    stores.notes.overlapping(scope, location.id, guestDays),
     // Every delivery on the board is today or later, so older edits are never shown.
     stores.orders.listDecisions(scope, location.id, today),
     stores.orders.listRules(scope, location.id),
   ]);
+  // D67: a guest count a note marks wrong is in no baseline mean.
+  const history = trustedGuestDays(stored, marks);
   const forecastGuests = new Map(forecast.days.flatMap((day) =>
     (day.status === 'open' && day.mid !== null ? [[day.date, day.mid] as const] : [])));
   const closedDays = new Set(forecast.days.flatMap((day) => (day.status === 'closed' ? [day.date] : [])));

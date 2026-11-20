@@ -91,8 +91,10 @@ describe('GET /api/org/locations/:locationId/calendar', () => {
       expect(body.town).toEqual(town);
       expect(body.researched).toBe(false);
       expect(body.covers).toBeNull();
-      expect(body.events).toHaveLength(11);
-      expect(body.events.every((event) => event.kind === 'holiday' && event.scope === 'national')).toBe(true);
+      expect(body.events).toHaveLength(11 + 2); // the federal holidays and Halloween's two nights (D68)
+      expect(body.events.every((event) => event.kind === 'holiday')).toBe(true);
+      expect(body.events.filter((event) => event.scope === 'national')).toHaveLength(11);
+      expect(body.events.filter((event) => event.scope === 'observance').map((event) => event.title)).toEqual(['Halloween weekend', 'Halloween']);
     }
   });
 

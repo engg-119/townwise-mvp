@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 import type { OrgDetail, OrgLocation } from '../../../src/portal/console/schemas';
+import { SEARCH_DEBOUNCE_MS } from '../../../src/portal/onboarding/usePlaceSearch';
 import { GOOGLE_SOURCE, PLACES_SOURCE } from '../../../src/portal/places/PlaceCard';
 import { openAsAdminMe, refusal } from '../../helpers/portal';
 import { choicesOf, choose } from '../../helpers/select';
@@ -136,13 +137,56 @@ test('Add a location sends the setup route, reads the organization again, and st
 test('Add a location: the Places search leads while it is on, as on P10', async () => {
   const api = consoleApi();
   serve(api, () => inSetup([]));
-  // The search is on: autocomplete checks its key before the body (onboarding/places.ts checkPlaceSearch).
-  api.routes['POST /api/places/autocomplete'] = () => refusal(400, 'invalid_request');
+  // The search is on (onboarding/places.ts checkPlaceSearch).
+  api.routes['GET /api/places/status'] = () => ({ placeSearch: true });
   renderAt('/admin/orgs/o1', api);
   expect(await screen.findByRole('combobox', { name: 'Search Google Maps for the location' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Can’t find it? Enter it yourself' }));
   expect(screen.getByRole('combobox', { name: 'Town' })).toBeTruthy();
-  expect(api.calls.filter((call) => call.path === '/api/places/autocomplete')).toHaveLength(1);
+  expect(api.calls.filter((call) => call.path === '/api/places/status')).toHaveLength(1);
+  expect(api.calls.filter((call) => call.path === '/api/places/autocomplete')).toEqual([]);
+});
+
+/** Every autocomplete the page sent, valid or not. */
+function autocompletes(api: ConsoleApi): unknown[] {
+  return api.calls.filter((call) => call.path === '/api/places/autocomplete').map((call) => call.body);
+}
+
+/** Lets the search's debounce (usePlaceSearch.ts, 250 ms) run out, and what it sends settle. */
+async function pastDebounce(): Promise<void> {
+  await act(async () => { await new Promise((resolve) => { setTimeout(resolve, SEARCH_DEBOUNCE_MS + 50); }); });
+}
+
+test('no autocomplete is sent until there is text the API takes: not on load, on focus, under 2 characters or for a saved place', async () => {
+  const api = consoleApi();
+  const places = installPlaces(api);
+  // A location already linked to a place, as a reload after a save finds it.
+  serve(api, () => inSetup([{ ...hanover(), hasPlace: true }]));
+  renderAt('/admin/orgs/o1', api);
+  const search = await screen.findByRole('combobox', { name: 'Search Google Maps for the location' });
+  await pastDebounce();
+  expect(autocompletes(api)).toEqual([]);
+  // Focus, and text under 2 characters after trimming, send nothing.
+  await settle(() => { fireEvent.focus(search); });
+  for (const value of ['L', ' L ', '   ']) fireEvent.change(search, { target: { value } });
+  await pastDebounce();
+  expect(autocompletes(api)).toEqual([]);
+  // The saved place's Rename: the search the dialog opens takes focus and still sends nothing.
+  fireEvent.click(screen.getByRole('button', { name: 'Rename Hanover' }));
+  const dialog = screen.getByRole('dialog', { name: 'Rename Hanover' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Change this location’s place' }));
+  const rename = within(dialog).getByRole('combobox', { name: 'Search Google Maps for this location' });
+  await waitFor(() => { expect(document.activeElement).toBe(rename); });
+  expect((rename as HTMLInputElement).value).toBe('');
+  await pastDebounce();
+  expect(autocompletes(api)).toEqual([]);
+  // The first text the API takes goes once, after the debounce, with no session token yet (D47).
+  fireEvent.change(rename, { target: { value: 'Lou' } });
+  expect(autocompletes(api)).toEqual([]);
+  expect(await within(dialog).findByRole('option', { name: /Lou’s Restaurant/ })).toBeTruthy();
+  expect(autocompletes(api)).toEqual([{ input: 'Lou' }]);
+  expect(places.refused).toEqual([]);
+  expect(places.checks).toBe(1);
 });
 
 /** A checked place's row, named by the place and its town as its suggestion words them. */
