@@ -82,7 +82,7 @@ test('P12 Sales data: its skeleton while the sales load', async () => {
 
 test('P3 Request access: the form’s skeleton while it asks whether the Google Maps search is on', async () => {
   const api = fakePortalApi({ me: meOf(ACCESS.noOrg) });
-  api.answers['/api/places/autocomplete'] = () => new Promise(() => undefined);
+  api.answers['GET /api/places/status'] = () => new Promise(() => undefined);
   await renderApp('/request-access', api);
   await expectSkeleton('request-access', 'Checking for the Google Maps search…');
   expect(screen.getByRole('heading', { name: 'Joining a team that already uses Townwise?' })).toBeTruthy();

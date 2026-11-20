@@ -44,7 +44,7 @@ import { getStaffActivity, leaveOrg, renameOrg } from '../handlers/org.ts';
 import {
   createOwnerCalendar, listOwnerCalendarEvents, listOwnerCalendars, refreshOwnerCalendar, removeOwnerCalendar,
 } from '../handlers/owner-calendars.ts';
-import { placesAutocomplete, placesDetails, placesMap } from '../handlers/places.ts';
+import { placesAutocomplete, placesDetails, placesMap, placesStatus } from '../handlers/places.ts';
 import { getProfile, updateProfile } from '../handlers/profile.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
 import { acceptRuleSuggestion, dismissRuleSuggestion } from '../handlers/rule-suggestions.ts';
@@ -123,6 +123,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'towns.get', method: 'GET', path: '/towns/:townId', policy: 'signed_in', bodyLimit: 'none', openAsAdmin: true,
     handler: getTownProfile,
+  },
+  // Whether the search is on, for P3 and P21's setup panel; it never calls Google.
+  {
+    id: 'places.status', method: 'GET', path: '/places/status', policy: 'signed_in', bodyLimit: 'none', openAsAdmin: true,
+    handler: placesStatus,
   },
   {
     id: 'places.autocomplete', method: 'POST', path: '/places/autocomplete', policy: 'signed_in', bodyLimit: '2kb',
