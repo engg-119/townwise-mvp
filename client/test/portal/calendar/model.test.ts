@@ -8,6 +8,7 @@ import {
 import type { ForecastDay, ForecastReason, ForecastWindow } from '../../../src/portal/estimates/api';
 import { forecastDayLines, WHY_LINES, whyRows } from '../../../src/portal/home/DayDetail';
 import { daysBetween } from '../../../src/portal/locations/dates';
+import { trustedGuestDays } from '../../../src/portal/analytics/days';
 import { holiday, note, townEvent } from '../analytics/fakes';
 import { ruleOf } from '../rules/fakes';
 
@@ -912,6 +913,32 @@ test('the month says how many of its days landed inside the forecast range, in t
   expect(monthCheckLine('2026-12', input({ forecast: windowOf(days) }))).toBeNull();
   expect(monthCheckLine('2026-11', input({ forecast: null }))).toBeNull();
   expect(monthCheckLine('2026-11', input({ forecast: NONE }))).toBeNull();
+});
+
+test('a past day whose guest count is marked wrong (D67) says so in its panel, tooltip and label, never “No data”', () => {
+  const mark = note({ kind: 'other', startDate: '2026-11-07', effect: 'wrong_guest_count', detail: null, expectedGuests: null });
+  // As CalendarPage reads it: the stored days masked by the notes; the API's forecast read gives the day no actual.
+  const salesDays = trustedGuestDays([{ date: '2026-11-07', guests: 138, netSalesCents: 276000 }], [mark]);
+  const marked = input({ salesDays, notes: [mark], forecast: windowOf([forecastDay({ ...PAST, actual: null, inRange: null, scored: false })]) });
+  const cell = cellOf(calendarMonth('2026-11', marked), '2026-11-07');
+  expect(cell).toMatchObject({ figure: { value: 135, kind: 'past_forecast' } });
+  expect(cell.label).toMatch(/^Sat, Nov 7, 2026\. Guest count marked wrong\. 135 guests, forecast, likely 120 to 150\./);
+  expect(tooltipLines('2026-11-07', marked)?.lines[0]).toBe('Guest count marked wrong. 135 guests, forecast (likely 120 to 150)');
+  expect(forecastWords(dayView('2026-11-07', marked).forecast, 'Sawtooth').lines).toEqual([
+    '138 guests recorded, guest count marked wrong.', 'Townwise’s model forecast 120 to 150.',
+  ]);
+  expect(pastForecastLines('2026-11-07', marked)).toEqual(['Guest count marked wrong. 135 guests, forecast, likely 120 to 150.']);
+  // No forecast for the day: the words alone.
+  const bare = input({ salesDays, notes: [mark], forecast: windowOf([]) });
+  expect(cellOf(calendarMonth('2026-11', bare), '2026-11-07').label).toMatch(/^Sat, Nov 7, 2026\. Guest count marked wrong\./);
+  expect(tooltipLines('2026-11-07', bare)?.lines[0]).toBe('Guest count marked wrong');
+  expect(cell.label).not.toContain('No data');
+  // The status word the cell shows matches its label: "Marked wrong", never "No data" (a day before any forecast, as
+  // Oct 31, 2025 is for Sawtooth); a day with nothing stored keeps "No data".
+  const bareCell = cellOf(calendarMonth('2026-11', bare), '2026-11-07');
+  expect(bareCell.status).toBe('marked_wrong');
+  expect(statusWord(bareCell.status)).toBe('Marked wrong');
+  expect(cellOf(calendarMonth('2026-11', input({ salesDays: [], forecast: windowOf([]) })), '2026-11-07').status).toBe('no_data');
 });
 
 test('Home’s day detail says a past day’s forecast the same way: how it did, or the run’s figure with no data', () => {

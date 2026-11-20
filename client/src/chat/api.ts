@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { ApiClient } from '../api/client';
 import { withOrgId } from '../portal/api';
 import { dataItemSchema, type DataItem } from '../portal/data/api';
-import { createNote, NOTE_EFFECTS, NOTE_KINDS, noteSchema, type Note } from '../portal/locations/api';
+import { createNote, NOTE_KINDS, noteSchema, SHARED_EFFECTS, type Note } from '../portal/locations/api';
 import { knownRuleSuggestions, ruleScheduleSchema, ruleSchema, type Rule, type RuleSuggestion } from '../portal/rules/api';
 import type { SseEvent } from '../api/sse';
 import { agentAutoSchema, agentChangeItemSchema, noteSuggestionSchema, type AgentAuto, type NoteSuggestion } from './agentChanges';
@@ -619,7 +619,7 @@ const suggestionCalendarSchema = z.object({ id: z.string(), title: z.string(), s
 /** A suggested note: every field of the notes route's body, hours included. */
 const suggestedNoteSchema = z.object({
   kind: z.enum(NOTE_KINDS), startDate: dateSchema, endDate: dateSchema, weekdays: z.array(z.number().int()).nullable(),
-  effect: z.enum(NOTE_EFFECTS), expectedGuests: z.number().int().nullable(), detail: z.string().nullable(),
+  effect: z.enum(SHARED_EFFECTS), expectedGuests: z.number().int().nullable(), detail: z.string().nullable(),
   startTime: z.string().nullable(), endTime: z.string().nullable(),
   /** The event's name (D49): always null from the weekly pass so far; an API from before it sends none. */
   title: z.string().nullish(),

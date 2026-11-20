@@ -16,9 +16,10 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { daysBetween, EARLIEST_DATE, isCalendarDate, isoDate, plusYears, utcDay } from '../dates.ts';
 import { authorEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
+import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { RuleSchedule, RuleSeason } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
-import { MAX_LINK_UID_CHARS, MAX_NOTE_TITLE_CHARS, type NoteContent, type NoteLink, type NoteRecord } from '../stores/notes.ts';
+import { MAX_LINK_UID_CHARS, MAX_NOTE_TITLE_CHARS, type NoteContent, type NoteEffect, type NoteLink, type NoteRecord } from '../stores/notes.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf } from './team.ts';
 
@@ -58,9 +59,12 @@ const sharedFields = {
   endTime: clockTime.nullish(),
 };
 
-/** A note never has a season (D46: seasons are for rules only). */
+/**
+ * A note never has a season (D46: seasons are for rules only). A note's effect may also mark the days' guest counts
+ * wrong (D67), which a rule's schedule never does.
+ */
 const noteBody = z.object({
-  ...sharedFields, endDate: isoDate, detail: z.string().trim().max(280).nullish(), title: z.string().max(2000).nullish(),
+  ...sharedFields, effect: z.enum([...sharedFields.effect.options, 'wrong_guest_count']), endDate: isoDate, detail: z.string().trim().max(280).nullish(), title: z.string().max(2000).nullish(),
   season: z.null().optional(),
 });
 
@@ -114,7 +118,8 @@ function validSeason(season: RuleSeason): boolean {
   return days <= MAX_SEASON_DAYS;
 }
 
-type SharedBody = z.infer<z.ZodObject<typeof sharedFields>>;
+/** The shared fields, with a note's effects (a rule's schedule takes only the first four). */
+type SharedBody = Omit<z.infer<z.ZodObject<typeof sharedFields>>, 'effect'> & { effect: NoteEffect };
 
 /** The shared fields as stored: a missing optional field reads as null, and weekdays sort ascending. */
 function sharedContentOf(body: SharedBody): Omit<RuleSchedule, 'endDate'> {
@@ -158,13 +163,33 @@ function notFound(): AppError {
   return new AppError(404, 'not_found', 'Not found');
 }
 
+/** Options for readNoteContent and noteContent. */
+export interface NoteReadOptions {
+  /** An edit's stored title, which a body with no `title` key keeps (D49). */
+  keepTitle?: string | null;
+  /** The location's town date. Only with it may a note mark guest counts wrong (D67). */
+  townToday?: string;
+}
+
+/**
+ * D67: a note marking guest counts wrong is an Other note on days before the town's today only (today's upload may be
+ * partial), with no expected guests and no hours. [CONFIRM: the guest-count mark is an Other note, on days before the
+ * town's today only, with no guests, no hours, and no title or detail required]
+ */
+function validMark(content: NoteContent, townToday: string | undefined): boolean {
+  return townToday !== undefined && content.kind === 'other' && content.endDate < townToday && content.expectedGuests === null
+    && content.startTime === null && content.endTime === null;
+}
+
 /**
  * Spec 12 NoteInput. A missing optional field reads as null, and an empty detail or title as none. The title is cleaned
  * by titleOf (D49); a body with no `title` key takes `keepTitle` when given (an edit keeps the stored title, so an app
  * from before titles cannot erase one), before any rule is checked. The shared rules (validDays), and an `other` note
- * needs a title or a detail. Null when any rule fails. The tuning chat validates its note proposals with this too.
+ * needs a title or a detail, except one marking guest counts wrong (D67), which takes the rules of validMark and only
+ * with `townToday`: every caller but the notes routes (TownwiseAI's proposals, saves and follow-ups) passes none, so
+ * TownwiseAI can never save one. Null when any rule fails. The tuning chat validates its note proposals with this too.
  */
-export function readNoteContent(raw: unknown, today: string, opts: { keepTitle?: string | null } = {}): NoteContent | null {
+export function readNoteContent(raw: unknown, today: string, opts: NoteReadOptions = {}): NoteContent | null {
   const parsed = noteBody.safeParse(raw);
   if (!parsed.success) return null;
   const body = parsed.data;
@@ -176,7 +201,9 @@ export function readNoteContent(raw: unknown, today: string, opts: { keepTitle?:
     detail: body.detail === undefined || body.detail === null || body.detail === '' ? null : body.detail,
     title,
   };
-  return validDays(content, today) && (content.kind !== 'other' || content.detail !== null || content.title !== null) ? content : null;
+  if (!validDays(content, today)) return null;
+  if (content.effect === 'wrong_guest_count') return validMark(content, opts.townToday) ? content : null;
+  return content.kind !== 'other' || content.detail !== null || content.title !== null ? content : null;
 }
 
 /**
@@ -204,7 +231,7 @@ export function sameNoteContent(a: NoteContent, b: NoteContent): boolean {
 }
 
 /** The note in a request body; 400 invalid_request when any rule fails. */
-export function noteContent(raw: unknown, today: string, opts: { keepTitle?: string | null } = {}): NoteContent {
+export function noteContent(raw: unknown, today: string, opts: NoteReadOptions = {}): NoteContent {
   const content = readNoteContent(raw, today, opts);
   if (content === null) throw invalid();
   return content;
@@ -336,20 +363,31 @@ export async function linkTo(
   };
 }
 
-/** POST /api/org/locations/:locationId/notes, with Make a note's optional `fromEvent: { calendarId, uid }`. */
+/** The location's town date, which a note marking guest counts wrong must end before (D67). */
+function townTodayOf(location: LocationRecord, now: Date): string {
+  return localDay(now, timeZoneOf(location.town).timeZone);
+}
+
+/**
+ * POST /api/org/locations/:locationId/notes, with Make a note's optional `fromEvent: { calendarId, uid }`. The location
+ * is loaded first, as the note's rules read its town date (D67). A note marking guest counts wrong is saved unlinked.
+ */
 export async function createNote(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
-  const content = noteContent(req.body, utcDay(ctx.now()));
-  const { fromEvent: asked } = parseInput(linkBody, req.body);
+  const now = ctx.now();
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
-  const fromEvent = asked === undefined || asked === null ? null : await linkTo(ctx, caller, location, asked, ctx.now());
+  const content = noteContent(req.body, utcDay(now), { townToday: townTodayOf(location, now) });
+  const { fromEvent: asked } = parseInput(linkBody, req.body);
+  const linkable = asked !== undefined && asked !== null && content.effect !== 'wrong_guest_count';
+  const fromEvent = linkable ? await linkTo(ctx, caller, location, asked, now) : null;
   const note = await addNote(ctx, caller, location, content, fromEvent === null ? {} : { fromEvent });
   res.status(201).json({ note: noteView(note, note.byStaff ? TOWNWISE_STAFF : caller.email, caller) });
 }
 
 /**
  * PATCH /api/org/locations/:locationId/notes/:noteId: a full replace, by the author or an org admin, but for a body with
- * no `title` key, which keeps the stored title (D49), so the note is read before the body is checked.
+ * no `title` key, which keeps the stored title (D49), so the note is read before the body is checked. An edit into a
+ * note marking guest counts wrong drops any calendar-event link, as a create does (D67).
  */
 export async function updateNote(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -357,8 +395,8 @@ export async function updateNote(ctx: TownwiseContext, req: Request, res: Respon
   const now = ctx.now();
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const existing = await editableNote(ctx, caller, location.id, req.params.noteId);
-  const content = noteContent(req.body, utcDay(now), { keepTitle: existing.title });
-  const note = await ctx.stores.notes.replace(scope, location.id, existing.id, content, now);
+  const content = noteContent(req.body, utcDay(now), { keepTitle: existing.title, townToday: townTodayOf(location, now) });
+  const note = await ctx.stores.notes.replace(scope, location.id, existing.id, content, now, { unlink: content.effect === 'wrong_guest_count' });
   if (note === null) throw notFound();
   await recordAfter(ctx, {
     ...actorOf(caller), at: now, orgId: scope.orgId, action: 'note.updated',

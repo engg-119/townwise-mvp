@@ -209,7 +209,7 @@ export function DayDetail(props: {
       <CalendarPart events={day.events} why={why} view={view} locationId={locationId} />
       {history && !day.future ? (
         <Part label="This day">
-          <Mono tone={day.value === null ? 'text3' : 'white'}><PhraseParts phrase={thisDayPhrase(day, metric)} /></Mono>
+          <Mono tone={day.value === null && day.marked === undefined ? 'text3' : 'white'}><PhraseParts phrase={thisDayPhrase(day, metric)} /></Mono>
         </Part>
       ) : null}
       {history ? <Part label="Same weekday last year"><PastCell day={day.lastYear} metric={metric} /></Part> : null}

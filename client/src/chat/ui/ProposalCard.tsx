@@ -69,9 +69,12 @@ export function ProposalCard(props: {
         initial={draftOfContent(proposal)}
         editing={false}
         save={async (input) => {
-          await actions.saveEdited(card.id, input);
+          // A proposal's form never offers the guest-count mark (D67), which only a person's own note takes.
+          if (input.effect === 'wrong_guest_count') return null;
+          await actions.saveEdited(card.id, { ...input, effect: input.effect });
           return null;
         }}
+        marks={false}
         onSaved={() => undefined}
         onCancel={() => { actions.cancelEdit(card.id); }}
         // The composer's button is the chat page's one primary (spec 15.6, D26).

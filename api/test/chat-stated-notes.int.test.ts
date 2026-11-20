@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { PROPOSAL_RESULT, SAVED_RESULT } from '../src/chat/tools/propose-note.ts';
+import { PROPOSAL_RESULT, proposeNoteTool, SAVED_RESULT } from '../src/chat/tools/propose-note.ts';
 import type { ConversationView } from '../src/handlers/chat.ts';
 import { MAX_NOTES } from '../src/handlers/notes.ts';
 import { addLocation, addNote, addOwnerCalendar, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
@@ -263,5 +263,24 @@ describe('propose_note saves what the person stated plainly (D59 slice 4)', () =
       await removeStaffFactor(server);
       await server.connection.collection('tw_view_as_grants').deleteMany({});
     }
+  });
+});
+
+describe('propose_note never makes a guest-count mark (D67)', () => {
+  it('answers its invalid-input message, shows no card and stores nothing, plain or not', async () => {
+    const mark = {
+      kind: 'other', startDate: '2025-10-31', endDate: '2025-11-01', weekdays: null, effect: 'wrong_guest_count', expectedGuests: null,
+      detail: null, title: null,
+    };
+    for (const plain of [true, false]) {
+      const { events, id } = await stated({ ...mark, plain });
+      expect(events.some((each) => each.event === 'proposal')).toBe(false);
+      expect(resultSent()).toBe(proposeNoteTool.invalidInput);
+      expect(await server.connection.collection('tw_chat_proposals').countDocuments({ conversationId: new Types.ObjectId(id) })).toBe(0);
+    }
+    expect(await notes()).toEqual([]);
+    expect(await server.connection.collection('tw_agent_changes').countDocuments({})).toBe(0);
+    // Its input schema never offers the effect.
+    expect(JSON.stringify(proposeNoteTool.definition.input_schema)).not.toContain('wrong_guest_count');
   });
 });

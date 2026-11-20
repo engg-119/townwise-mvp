@@ -5,9 +5,11 @@ import { Checkbox } from '../ui/Checkbox';
 import { FormField } from '../ui/FormField';
 import { Pair, Stack } from '../ui/layout';
 import { Small } from '../ui/text';
-import { NOTE_EFFECTS, NOTE_KINDS, type NoteKind } from './api';
+import { NOTE_KINDS, SHARED_EFFECTS, type NoteEffect, type NoteKind } from './api';
 import { DateField } from './DateField';
-import { DEFAULT_EFFECT, EFFECT_LABEL, KIND_LABEL, MAX_TITLE_UNITS, NOTE_COPY, SEASON_COPY, WEEKDAYS, type NoteDraft, type NoteMessages } from './noteRules';
+import {
+  DEFAULT_EFFECT, EFFECT_LABEL, KIND_LABEL, marksGuestCount, MAX_TITLE_UNITS, NOTE_COPY, SEASON_COPY, WEEKDAYS, type NoteDraft, type NoteMessages,
+} from './noteRules';
 import { ToggleGroup } from './parts';
 
 // The fields a note (C6, spec 12) and a business rule's schedule (D31, P29) share: Kind, then on a note only its
@@ -18,12 +20,21 @@ import { ToggleGroup } from './parts';
 // guests count toward each day's total). A rule's schedule (`noun` rule) also has Every year (D46) under Starts and
 // Ends: checked, the two dates are the first season, which repeats every year with no end, so Ends is required. The
 // note form adds Details and its buttons; the rules page its own. Each group's id starts with `idPrefix`, so two forms
-// on one page never share one.
+// on one page never share one. An Other note (never a rule) may also say its days' guest count was wrong (D67): chosen,
+// it hides Expected guests and the hours, the end date's helper says only days before today, the Effect helper says
+// what the mark does, and the dates' messages, which only Save sets, are announced as alerts.
+
+/** The Effect helper, but for the mark (D67). */
+const EFFECT_HELP = 'Set from the kind. Change it if you expect something else.';
 
 const KIND_OPTIONS = NOTE_KINDS.map((kind) => ({ value: kind, label: KIND_LABEL[kind] }));
-const EFFECT_OPTIONS = NOTE_EFFECTS.map((effect) => ({ value: effect, label: EFFECT_LABEL[effect] }));
+const EFFECT_OPTIONS: readonly { value: NoteEffect; label: string }[] = SHARED_EFFECTS.map((effect) => ({ value: effect, label: EFFECT_LABEL[effect] }));
+/** D67, on an Other note only. [CONFIRM: the words "The guest count was wrong (sales were right)"] */
+const MARK_OPTIONS: readonly { value: NoteEffect; label: string }[] = [
+  ...EFFECT_OPTIONS, { value: 'wrong_guest_count', label: 'The guest count was wrong (sales were right)' },
+];
 /** For a private event, Closed is a buyout. A label of this form's only: the chat's proposal words are unchanged. */
-const EVENT_EFFECT_OPTIONS = NOTE_EFFECTS.map((effect) => ({
+const EVENT_EFFECT_OPTIONS: readonly { value: NoteEffect; label: string }[] = SHARED_EFFECTS.map((effect) => ({
   value: effect, label: effect === 'closed' ? 'Buyout, closed to walk-ins all day' : EFFECT_LABEL[effect],
 }));
 const HOURS_HELP = '24-hour, like 18:30. Leave empty for all day.';
@@ -32,8 +43,9 @@ function guestsHelp(noun: 'note' | 'rule'): string {
   return `Townwise forecasts whole days, so these guests add to the whole day’s total, on each day the ${noun} covers.`;
 }
 
-function effectOptions(kind: NoteKind): typeof EFFECT_OPTIONS {
-  return kind === 'private_event' ? EVENT_EFFECT_OPTIONS : EFFECT_OPTIONS;
+function effectOptions(kind: NoteKind, marks: boolean): typeof EFFECT_OPTIONS {
+  if (kind === 'private_event') return EVENT_EFFECT_OPTIONS;
+  return kind === 'other' && marks ? MARK_OPTIONS : EFFECT_OPTIONS;
 }
 const DAY_OPTIONS = WEEKDAYS.map((day) => ({ value: day.value, label: day.short, accessibilityLabel: day.plural.slice(0, -1) }));
 
@@ -51,10 +63,13 @@ export function NoteFields(props: {
   endHelper: string;
   /** What the fields belong to, in the guests' helper. */
   noun: 'note' | 'rule';
+  /** An Other note may mark its days' guest counts wrong (D67); never a rule, nor a TownwiseAI proposal edited first. */
+  marks?: boolean;
 }): React.JSX.Element {
   const { draft, set, messages, idPrefix } = props;
   const buyout = draft.kind === 'private_event' && draft.effect === 'closed';
   const yearly = props.noun === 'rule' && draft.yearly === true;
+  const mark = marksGuestCount(draft);
   const yearlyHelpId = `${idPrefix}-yearly-help`;
   return (
     <>
@@ -77,13 +92,16 @@ export function NoteFields(props: {
         />
       ) : null}
       <Pair>
-        <DateField label="Starts" value={draft.startDate} onChange={(startDate) => { set({ startDate }); }} messages={list(messages.startDate)} />
+        <DateField
+          label="Starts" value={draft.startDate} onChange={(startDate) => { set({ startDate }); }} messages={list(messages.startDate)} alert={mark}
+        />
         <DateField
           label={yearly ? 'Ends' : 'Ends (optional)'}
-          helper={yearly ? 'The first season’s last day.' : props.endHelper}
+          helper={yearly ? 'The first season’s last day.' : mark ? NOTE_COPY.pastOnly : props.endHelper}
           value={draft.endDate}
           onChange={(endDate) => { set({ endDate }); }}
           messages={list(messages.endDate)}
+          alert={mark}
         />
       </Pair>
       {props.noun === 'rule' ? (
@@ -97,7 +115,7 @@ export function NoteFields(props: {
           {yearly ? <Small nativeID={yearlyHelpId}>{SEASON_COPY.everyYear}</Small> : null}
         </Stack>
       ) : null}
-      {draft.kind === 'closure' ? null : (
+      {draft.kind === 'closure' || mark ? null : (
         <Pair>
           <TimeField label="Starts at" helper={HOURS_HELP} value={draft.startTime} onChange={(startTime) => { set({ startTime }); }} messages={list(messages.startTime)} />
           <TimeField label="Ends at" value={draft.endTime} onChange={(endTime) => { set({ endTime }); }} messages={list(messages.endTime)} />
@@ -115,13 +133,13 @@ export function NoteFields(props: {
       />
       <ToggleGroup
         label="Effect"
-        helper="Set from the kind. Change it if you expect something else."
+        helper={mark ? NOTE_COPY.markEffectHelp : EFFECT_HELP}
         nativeID={`${idPrefix}-effect`}
-        options={effectOptions(draft.kind)}
+        options={effectOptions(draft.kind, props.noun === 'note' && props.marks !== false)}
         isPressed={(effect) => draft.effect === effect}
         onPress={(effect) => { set({ effect }); }}
       />
-      {draft.effect === 'closed' && !buyout ? null : (
+      {(draft.effect === 'closed' && !buyout) || mark ? null : (
         <View style={styles.guests}>
           <FormField
             label={buyout ? 'Guests at the buyout (optional)' : 'Expected guests (optional)'}

@@ -83,7 +83,8 @@ function AnalyticsView(props: {
   const { data, rules, today, locationId, readOnlyId } = props;
   const { history, notes, calendar } = data;
   const { desktop } = useBreakpoint();
-  const days = useMemo(() => decodeHistory(history), [history]);
+  // D67: a guest count a note marks wrong reads as none, as the API reads it; the day panel still shows it.
+  const days = useMemo(() => decodeHistory(history, notes), [history, notes]);
   const index = useMemo(() => byDate(days), [days]);
   const context = useMemo(() => dayContext(notes, calendar.events, ruleSchedules(rules), today), [notes, calendar.events, rules, today]);
   const allYears = useMemo(() => yearsWithData(days), [days]);

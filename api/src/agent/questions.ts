@@ -33,7 +33,7 @@
 // - D59 slice 5: a day an event on one of the location's calendars plainly says was closed is explained, as a covering
 //   closure note makes it, so a gap shrinks to the days left and a likely-closed day is not asked. Weekday evidence is
 //   read from sales alone.
-import { closureOf, isClosure, TYPICAL_WEEKS, typicalGuests } from '../closed-days.ts';
+import { closureOf, isClosure, trustedGuestDays, TYPICAL_WEEKS, typicalGuests } from '../closed-days.ts';
 import { daysBetween, isCalendarDate } from '../dates.ts';
 import type { SalesEvidence } from '../stores/agent-suggestions.ts';
 import type { BusinessRuleRecord, RuleSchedule, RuleSeason } from '../stores/business-rules.ts';
@@ -373,8 +373,9 @@ export function questionsFor(input: QuestionInput): Question[] {
   const explained = (day: string): boolean => input.notes.some((note) => noteCovers(note, day))
     || ruleClosures.some((rule) => noteCovers(rule, day)) || answeredAbout(day) || turnedOff.has(day) || calendarClosed.has(day);
   const closedDay = (day: string): boolean => closedWeekdays.has(weekdayOf(day));
-  // Usually busy, from the same stored days D32's typical guests read (the window and the 56 days before it).
-  const rows = new Map(input.days.map((day) => [day.date, day]));
+  // Usually busy, from the same stored days D32's typical guests read (the window and the 56 days before it). D67: a
+  // count a note marks wrong is in none of them (that day still has sales, as `withSales` reads it).
+  const rows = new Map(trustedGuestDays(input.days, input.notes).map((day) => [day.date, day]));
   const guestsOn = (day: string): number | null | undefined => rows.get(day)?.guests;
   /** The typical guests of a day a gap or likely-closed question may ask about, or null for any other day. */
   const askedTypical = (day: string): number | null => {

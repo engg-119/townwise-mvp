@@ -9,6 +9,8 @@ export interface DateFieldProps {
   onChange: (value: string) => void;
   helper?: string;
   messages?: readonly string[];
+  /** The messages come back from a submit: announced, as FormField's `alert`. */
+  alert?: boolean;
 }
 
 export function DateField(props: DateFieldProps): React.JSX.Element {
@@ -24,6 +26,7 @@ export function DateField(props: DateFieldProps): React.JSX.Element {
       numeric
       {...(props.helper === undefined ? {} : { helper: props.helper })}
       {...(props.messages === undefined ? {} : { messages: props.messages })}
+      {...(props.alert === undefined ? {} : { alert: props.alert })}
     />
   );
 }

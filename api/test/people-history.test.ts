@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { typicalGuests } from '../src/closed-days.ts';
+import { trustedGuestDays, typicalGuests } from '../src/closed-days.ts';
 import { classOfDay, closureOfDay, MIN_CELL_DAYS, yourHistory, type DayClass } from '../src/people-in-town/history.ts';
 import type { TermState } from '../src/people-in-town/term.ts';
 import type { RuleSchedule } from '../src/stores/business-rules.ts';
@@ -47,11 +47,13 @@ describe('the day classes', () => {
 
   for (const each of cases) {
     it(`${each.name}: ${each.class}${each.likelyClosed === true ? ', likely closed' : ''}`, () => {
-      const guests = new Map((each.history ?? []).map((other) => [other.date, other.guests]));
+      // A guest count marked wrong (D67) is read first, on the day and its history, as every reader does.
+      const guests = new Map(trustedGuestDays(each.history ?? [], each.notes).map((other) => [other.date, other.guests]));
       const typical = typicalGuests(each.date, (date) => guests.get(date));
+      const stored = each.day === null ? undefined : trustedGuestDays([{ date: each.date, ...each.day }], each.notes)[0];
       const [rules, today] = [each.rules ?? [], each.today ?? null];
-      expect(classOfDay(each.date, each.day ?? undefined, each.notes, each.events, typical, rules, today)).toBe(each.class);
-      expect(closureOfDay(each.date, each.day ?? undefined, each.notes, typical, rules, today) === 'likely_closed').toBe(each.likelyClosed === true);
+      expect(classOfDay(each.date, stored, each.notes, each.events, typical, rules, today)).toBe(each.class);
+      expect(closureOfDay(each.date, stored, each.notes, typical, rules, today) === 'likely_closed').toBe(each.likelyClosed === true);
     });
   }
 });
@@ -124,6 +126,20 @@ describe('yourHistory', () => {
     const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 200), day('2026-10-10', 2), day('2026-10-17', 200)];
     const rules = [{ kind: 'other' as const, startDate: '2026-10-10', endDate: null, weekdays: null, effect: 'fewer_guests' as const }];
     expect(yourHistory(days, [], [], stateOf, rules).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 5, mean: 160 }]);
+  });
+
+  it('leaves a guest count marked wrong (D67) out of every mean, and out of its neighbors’ likely-closed test', () => {
+    const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 200), day('2026-10-10', 20), day('2026-10-17', 900)];
+    const mark = (date: string) => ({ kind: 'other' as const, startDate: date, endDate: date, weekdays: null, effect: 'wrong_guest_count' as const });
+    expect(yourHistory(days, [], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 5, mean: 304 }]);
+    // Oct 17 marked: its count is in no mean, and the Saturday is noted, not regular.
+    expect(yourHistory(days, [mark('2026-10-17')], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 4, mean: 155 }]);
+    // A marked day is never counted under the netSales metric either: it is noted.
+    expect(yourHistory([day('2026-10-10', 0, 50_000)], [mark('2026-10-10')], [], stateOf)).toMatchObject({ cells: [], first: null });
+    // Oct 3's 10 marked: too few Saturdays remain for Oct 10's typical guests, so its 18 is a slow Saturday, not likely closed.
+    const slow = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 10), day('2026-10-10', 18)];
+    expect(yourHistory(slow, [], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 3, mean: 137 }]);
+    expect(yourHistory(slow, [mark('2026-10-03')], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 3, mean: 139 }]);
   });
 
   it('leaves out a likely-closed day (spec D32): its guests are not a slow Saturday', () => {
