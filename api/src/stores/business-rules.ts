@@ -12,7 +12,7 @@ import type { NoteContent } from './notes.ts';
 
 export const BUSINESS_RULES_COLLECTION = 'tw_business_rules';
 
-/** At most this many rules per location; `list` reads no more. [CONFIRM: 30 business rules per location, 200 characters each] */
+/** At most this many rules per location; `list` reads no more. */
 export const MAX_RULES = 30;
 
 export type RuleVia = 'page' | 'townwise_ai';
@@ -26,8 +26,7 @@ export interface RuleSchedule extends Omit<NoteContent, 'detail' | 'endDate' | '
   readonly endDate: string | null;
   /**
    * D46: the months and days the schedule covers every year from its start, `to` before `from` crossing the new year;
-   * `endDate` is then null. Absent or null: none. [CONFIRM: a yearly rule runs every year from its start until it is
-   * deleted; Feb 29 can't start or end a season; a season is shorter than a year]
+   * `endDate` is then null. Absent or null: none.
    */
   readonly season?: RuleSeason | null;
 }

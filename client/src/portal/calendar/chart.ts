@@ -86,8 +86,7 @@ export function chartDraws(chart: CalendarChart): boolean {
 /**
  * The month chart's upright words: each day's status word while the chart draws a forecast somewhere, else none, since
  * a month with no forecast would be a column of words per day that the grid already says; the chart says it once
- * under the plot instead (MonthChart.tsx). [CONFIRM: a month chart with no forecast point draws no status words and
- * one line, “No forecast for these days yet.”]
+ * under the plot instead (MonthChart.tsx), in one line, “No forecast for these days.” (owner decision, 2026-11-19).
  */
 export function chartWords(chart: CalendarChart): (string | null)[] {
   return chart.days.map((day) => (chart.drawn.forecast ? day.status : null));

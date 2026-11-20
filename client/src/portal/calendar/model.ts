@@ -21,7 +21,7 @@ export { filterOf, noteChip };
 // D32, analytics/days.ts); with none stored, the forecast made for it, captioned “forecast”. Data wins over a forecast
 // and every day shows something: “No data” or “No forecast” once the forecast read answered (figureOf). Forecast figures are rounded here, the middle figure to the nearest
 // guest and a range's low down and high up (spec 14.4, as TownwiseAI's get_forecast); the range always goes with the
-// middle figure in the label, the tooltip and the panel ([CONFIRM] in spec 14.2), and the "8 in 10" sentence only
+// middle figure in the label, the tooltip and the panel (spec 14.2), and the "8 in 10" sentence only
 // with the model's own range, since a range a note moved is no longer the model's 80% one. Business rules with a
 // schedule (D31) change the forecast as notes do, in the API's read: their reasons show like a note's, guests they add
 // are named as theirs, and the panel lists the rules covering the day (no filter hides them; they are edited on Rules).
@@ -35,9 +35,7 @@ export { filterOf, noteChip };
 // An outlook day (D52: after its run's forecast tier, more than 3 months after the run was made or 6 months after its
 // last sales) shows its middle figure marked "Outlook", says "Outlook about ..." in its label and tooltip, heads its
 // panel part "Outlook" and never claims 8 in 10, since no location's outlook has had that measured; a key line under the grid says what an
-// outlook is whenever a shown day is one (outlookKey). [CONFIRM: the outlook's words on the Calendar, Home and
-// TownwiseAI's visuals: a cell's middle figure marked "Outlook", its range in the day panel, and no "8 in 10" claim
-// for an outlook day]
+// outlook is whenever a shown day is one (outlookKey).
 
 /** The filter chips, in toolbar order. `imported` ("Your calendar") shows only when the location has a calendar. */
 export const FILTER_KEYS = ['holidays', 'events', 'terms', 'notes', 'imported'] as const;
@@ -201,8 +199,7 @@ const NO_FIGURE: FigureOf = { status: null, figure: null, noteGuests: 0, words: 
 
 // Actual or forecast (D49, design decision 10, owner 2026-11-18): every surface that shows a day's figure marks a
 // forecast and leaves an actual plain, from these, so a future day and a past day with only the run's figure look the
-// same. [CONFIRM: a forecast's figure is lighter with a leading "~" and the word "forecast"; an actual is a plain solid
-// figure] The "~" is text, so the mark never rests on color alone and fits a phone cell where no word does.
+// same. The "~" is text, so the mark never rests on color alone and fits a phone cell where no word does.
 
 export type FigureSource = 'actual' | 'forecast';
 

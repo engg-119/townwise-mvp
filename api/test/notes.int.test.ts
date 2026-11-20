@@ -10,6 +10,7 @@ import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
+import { TOWNWISE_AI_AUTHOR } from '../src/agent/apply.ts';
 import type { IcsEvent } from '../src/calendar/ics.ts';
 import { createMemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { readNoteContent, sameNoteContent, type NoteView } from '../src/handlers/notes.ts';
@@ -205,6 +206,24 @@ describe('GET, PATCH and DELETE', () => {
       ['note.updated', admin.session.userId], ['note.deleted', admin.session.userId],
     ]);
     expect(events[3]?.details).toEqual({ locationId, kind: 'closure', startDate: '2026-07-04', endDate: '2026-07-05' });
+  });
+
+  it('any member edits and deletes a note TownwiseAI wrote as itself, as its Undo allows (item 16)', async () => {
+    const location = await addLocation(server, { orgId, name: 'Agent Room' });
+    const content = readNoteContent({ ...NOTE, detail: 'From a file' }, '2026-06-01');
+    if (content === null) throw new Error('fixture');
+    const note = await createNoteStore(server.connection).create(({ orgId }) as unknown as OrgScope, location, content, {
+      createdBy: TOWNWISE_AI_AUTHOR, now: server.clock.now(),
+    });
+    const path = `${notesPath(location)}/${note.id}`;
+    const listed = await (await call(server, notesPath(location), { session: colleague.session })).json() as { notes: NoteView[] };
+    expect(listed.notes.find((n) => n.id === note.id)).toMatchObject({ createdByEmail: 'TownwiseAI', canEdit: true });
+    const fixed = { ...NOTE, kind: 'private_event', effect: 'more_guests', expectedGuests: 40 };
+    const res = await call(server, path, { method: 'PATCH', session: colleague.session, json: fixed });
+    expect(res.status).toBe(200);
+    expect((await res.json() as { note: NoteView }).note).toMatchObject({ expectedGuests: 40, canEdit: true });
+    expect((await call(server, path, { method: 'DELETE', session: author.session })).status).toBe(204);
+    expect(await server.connection.collection('tw_notes').countDocuments({ _id: new Types.ObjectId(note.id) })).toBe(0);
   });
 
   it('a note is reachable only through its own location: another location’s path answers 404', async () => {

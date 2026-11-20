@@ -39,7 +39,7 @@ export interface EventDay {
 }
 
 /**
- * Each label's tag in a cell, short enough to leave room for the title. [CONFIRM: the cell tags' words (D62)]
+ * Each label's tag in a cell, short enough to leave room for the title.
  */
 export const CELL_TAG: Readonly<Record<BookingLabel, string>> = {
   buyout: 'Buyout', party: 'Party', own_event: 'Own event', other: 'Not booking',

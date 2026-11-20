@@ -1,5 +1,5 @@
 // The server's additions to the browser's column logic (spec 11A): finding the header row under a title block, and the
-// longer header guess lists. [CONFIRM: header guesses]
+// longer header guess lists.
 import { isBlankRecord } from './csv.ts';
 import { lacksHeader } from './columns.ts';
 

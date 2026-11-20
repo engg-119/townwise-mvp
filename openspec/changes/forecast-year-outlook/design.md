@@ -36,7 +36,7 @@ Alternatives: amending D42's row text in place (hides what changed and when); a 
 
 ### 2. The reach: today plus 365, capped at 400 days after the last day of sales
 
-Owner decision, 2026-11-17: a run reaches the calibration's `today` plus 365 days, capped at `dataThrough` plus 400 (the run file's existing limit, so no file limit changes). The 35 days of slack mean a location whose sales lag by up to 35 days still sees a full year; past that, the year shortens by the excess. The input's future days become 400 (`horizonDays: 400`). `[CONFIRM: runs reach today plus 365 days, capped at 400 days after the last day of sales]`
+Owner decision, 2026-11-17: a run reaches the calibration's `today` plus 365 days, capped at `dataThrough` plus 400 (the run file's existing limit, so no file limit changes). The 35 days of slack mean a location whose sales lag by up to 35 days still sees a full year; past that, the year shortens by the excess. The input's future days become 400 (`horizonDays: 400`).
 
 Alternatives: a cap of 365 (any lag shortens the year; the earlier draft); no cap (an outlook built from a level more than a year old).
 
@@ -71,7 +71,7 @@ The lab backtests two outlook horizons, **182 and 365 days of lead**, on both en
 
 - **Growth floor** g_H = r_prev × sqrt(H / prev).
 - **Backtest ratio** b_H, per side: max(lo_H / lo_28, hi_H / hi_28), where lo and hi are the sizes of the weekly log band's two sides; when a 28-day side is 0 (the range holds zero), that side uses the width ratio. Bands at long leads are rarely symmetric (a year out a level can fall further than it can rise, or the reverse), and the side that grew most sets the ratio, so neither side ends up narrower than its own backtest.
-- **Fewer than 8 backtest weeks** at H: r_H = g_H (`basis: 'growth'`). **8 to 25**: r_H = max(g_H, b_H) (`'growth_or_backtest'`). **26 or more**: r_H = max(r_prev, b_H) (`'backtest'`). `[CONFIRM: 26 backtest weeks at a horizon let its backtest alone set the outlook's band; under 26 the backtest can only widen the square-root-of-lead growth]` (owner decision, 2026-11-17).
+- **Fewer than 8 backtest weeks** at H: r_H = g_H (`basis: 'growth'`). **8 to 25**: r_H = max(g_H, b_H) (`'growth_or_backtest'`). **26 or more**: r_H = max(r_prev, b_H) (`'backtest'`). (owner decision, 2026-11-17).
 
 By lead L from `dataThrough`, past the forecast tier: up to 182, r_182; from 182 to 365, interpolated on the square root of lead between r_182 and r_365 (equal to r_182 × sqrt(L / 182) when r_365 is the pure growth); from 365 to 400, r_365 × sqrt(L / 365). Daily ranges widen by `widen_k` times the day's ratio on both sides, in `forecast.run_file` and `baseline.run_file`; an outlook week (any day in the outlook) widens by the largest ratio among its days in `forecast.assemble`. The run's `widening` carries the forecast tier's entries unchanged and two outlook anchors (`{ fromLead, ratio, horizon }` for 182 and 365), equal to `horizonOutlook`'s ratios.
 
@@ -91,7 +91,7 @@ Alternatives: three horizons (182, 273, 365; cut by review: a third horizon adds
 - **The band.** m is a size of the engine's own weekly misses at H, |log(actual / forecast)|, over the backtest weeks forecast the way the run is (for the baseline, the weeks forecast with last year's shape, `metrics.same_kind`'s later kind; for the model, every week). Weeks at a lead of H share most of their H days, so n of them count as n × 7 / H independent windows (n_eff). From 9 windows (`CONFORMAL_MIN`), m is the split conformal 80% rank on n_eff, ceil(0.8 (n_eff + 1)) of them; from 1 to 9, the largest miss; under 1, the larger of the own weeks' largest miss and the conformal 80% rank of every backtest week at H, of either kind, from 8 weeks; with fewer than 8, there is no band. The every-week rank treats correlated weeks as exchangeable, which the n_eff reasoning rejects, so it is only a floor: the band then never widens when the own weeks reach one window and the floor drops away, unless a new week is a new largest miss (amended on review, 2026-11-19; the rank alone made the band jump to the largest miss after one weekly refit, build notes).
 - **The ratio.** r_H = max(g_H, m / max(-lo_28, hi_28)): the backtest only ever widens the growth floor, at any count of weeks (`basis: 'growth_or_backtest'`, or `'growth'` with no band; `'backtest'` is no longer sent). Every ratio is still at least the one before.
 
-This rule was chosen after the check had been seen (one-sided bands first, then |miss|, then one size on both sides), so decision 6's "set here, before measuring, and not tuned after" does not hold for it. [Decided (owner, 2026-11-19, of PR #118: “Ship #118 as built”): the rule as built ships; the R2 fallback (every outlook ratio at least sqrt(lead / 28), no backtest read; build notes, 2026-11-19) and holding release B were the alternatives.] The first rule's CONFIRM above (spec index item 96) stays until the team decides; the rule as built is `[CONFIRM: the outlook's range rule as built in release B: the growth floor always, widened by a band of the engine's own weekly misses at that lead read the same on both sides, counted as independent windows (a conformal 80% rank from 9 windows, the largest miss from 1 to 9 with no ceiling, under 1 the own weeks' largest miss over a floor of every week's conformal rank, the growth alone under 8 weeks), and outlook weeks the same on both sides]` (index item 160). Build notes, 2026-11-19, hold the numbers.
+This rule was chosen after the check had been seen (one-sided bands first, then |miss|, then one size on both sides), so decision 6's "set here, before measuring, and not tuned after" does not hold for it. [Decided (owner, 2026-11-19, of PR #118: “Ship #118 as built”): the rule as built ships; the R2 fallback (every outlook ratio at least sqrt(lead / 28), no backtest read; build notes, 2026-11-19) and holding release B were the alternatives.] The first rule's CONFIRM above (spec index item 96) stays until the team decides; the rule as built is (index item 160). Build notes, 2026-11-19, hold the numbers.
 
 ### 6. The coverage check can fail, and failing blocks release B
 
@@ -114,7 +114,7 @@ Alternatives: shape 1 for the outlook's last weeks (a seasonal cliff); 2 of the 
 
 ### 8. The model's outlook stops at the town's last researched term
 
-Owner decision, 2026-11-17. The model reads `term` and `week_of_term`, and a day no researched term covers reads `interim`, so a term not yet researched would be forecast as a break. Input version 3 carries `termsThrough` (the last day of the town's last term entry, classes or finals; null for a town with none), and the API records it on the calibration (`tw_calibrations.termsThrough`, optional, absent on older rows). A model run's outlook ends at `termsThrough` when that is earlier; the forecast tier is never cut by it, so the run ends at no earlier than `max(forecastThrough, termsThrough)`. The baseline is not cut. Task A.6 researches Dartmouth's winter and spring 2028 terms so Hanover's model outlook is not cut at 2027-11-24. `[CONFIRM: the trained model's outlook stops at the town's last researched term day; the baseline's does not]`
+Owner decision, 2026-11-17. The model reads `term` and `week_of_term`, and a day no researched term covers reads `interim`, so a term not yet researched would be forecast as a break. Input version 3 carries `termsThrough` (the last day of the town's last term entry, classes or finals; null for a town with none), and the API records it on the calibration (`tw_calibrations.termsThrough`, optional, absent on older rows). A model run's outlook ends at `termsThrough` when that is earlier; the forecast tier is never cut by it, so the run ends at no earlier than `max(forecastThrough, termsThrough)`. The baseline is not cut. Task A.6 researches Dartmouth's winter and spring 2028 terms so Hanover's model outlook is not cut at 2027-11-24.
 
 Events have the same blind spot on single days for both engines; decision 6's hindsight test measures it and the model card says so (decision 12).
 
@@ -136,7 +136,7 @@ The gate (`gate.ts`) is unchanged. `checkLabResult` (`api/src/lab/result.ts`) re
 - `widening`'s `fromLead` does not strictly increase, a ratio is under 1 or decreases, or its outlook anchors differ from `horizonOutlook`'s ratios (`widening_out_of_order`);
 - a model run ends after `max(forecastThrough, termsThrough)` with the calibration's `termsThrough` set (`outlook_past_terms`; `checkLabResult` takes `termsThrough`).
 
-The growth floor itself is pinned by pytest (decision 5's tests), not recomputed in the API. `[CONFIRM: the gate judges nothing about the outlook but these sanity checks]`
+The growth floor itself is pinned by pytest (decision 5's tests), not recomputed in the API.
 
 Alternatives: a new gate reason that holds the draft (it is a lab bug, not a judgment); an API copy of the floor (two implementations of one rule; cut by review).
 
@@ -150,7 +150,7 @@ Alternatives: keeping `windowRows`; a row cap (changes answers); caching (the re
 
 ### 12. Words
 
-Owner decisions, 2026-11-17: an outlook cell shows its middle figure marked as an outlook, with the range in the day panel; the wording below as drafted. `[CONFIRM: the outlook's words on the Calendar, Home, TownwiseAI's visuals and the model card, and no "8 in 10" claim for an outlook day]`
+Owner decisions, 2026-11-17: an outlook cell shows its middle figure marked as an outlook, with the range in the day panel; the wording below as drafted. The owner approved the outlook's words and no "8 in 10" claim for an outlook day on 2026-11-19, with a comma added in the privacy page's Forecasts paragraph.
 
 - **Calendar month cell** (P28): the status line under the number reads "Outlook" (mono uppercase, `text3`, as "Booked"), with the middle figure; its label "Outlook about {212} guests, {150} to {290}."
 - **Week view column**: the status word "Outlook" and the range line as today.
@@ -201,7 +201,7 @@ No migration of existing rows. `outlook`, `tierEnd` and `forecastThrough` are de
 
 ## Open Questions
 
-None blocking. The owner decided the cap, the 26-week bar, the term cap, the cell display, the weekly suggestions' 91 days and the words on 2026-11-17; each is a `[CONFIRM]` for the team's sign-off.
+None blocking. The owner decided the cap, the 26-week bar, the term cap, the cell display, the weekly suggestions' 91 days and the words on 2026-11-17; each was a `[CONFIRM]` for the team's sign-off, and the owner decided them on 2026-11-19 (spec 22.2 items 95 to 102).
 
 ## Build notes (release A, 2026-11-17)
 
@@ -286,7 +286,7 @@ The one failure is `level_shift` seed 13 at three years and 365 days: 10 of 27 w
 | 3 years | 365 | 0.78, 1.37 | 0.80, 1.48 |
 | all | | 0.90, 1.28 | |
 
-A forecast-tier week's log(high / low) is a median 0.32 to 0.33. So an outlook week's high is a median 2.5 times its low, and one in ten is more than 3.5 times (seeds 0 to 3 alone: 0.85 and 1.16). The 90th percentile is under the 1.4 (4 times) the lead set for an owner-facing check overall, but not everywhere: on the Hanover-calendar histories it is 1.51 (1.64 at three years and 365 days) and on the drifting ones 1.56, where about one outlook week in five is more than 4 times as high as it is low (22% and 24%; 6% overall). Since Sawtooth is in Hanover, the owner should see this before release B ships: `[CONFIRM: how wide year-ahead ranges may be: an outlook week's high a median 2.5 times its low and 1 in 10 more than 3.5 times on the synthetic check, and on Hanover-calendar and drifting histories 1 in 5 more than 4 times]` (spec index item 161). Those ranges are wide because they hold: Hanover's histories kept 98% to 100% of their outlook weeks at both horizons and cuts.
+A forecast-tier week's log(high / low) is a median 0.32 to 0.33. So an outlook week's high is a median 2.5 times its low, and one in ten is more than 3.5 times (seeds 0 to 3 alone: 0.85 and 1.16). The 90th percentile is under the 1.4 (4 times) the lead set for an owner-facing check overall, but not everywhere: on the Hanover-calendar histories it is 1.51 (1.64 at three years and 365 days) and on the drifting ones 1.56, where about one outlook week in five is more than 4 times as high as it is low (22% and 24%; 6% overall). Since Sawtooth is in Hanover, the owner should see this before release B ships: (spec index item 161). Those ranges are wide because they hold: Hanover's histories kept 98% to 100% of their outlook weeks at both horizons and cuts.
 
 **What each ratio was read from** (320 calibrations; the branch of `_outlook_band`, and how often its band was wider than the growth floor):
 

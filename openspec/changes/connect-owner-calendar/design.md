@@ -150,8 +150,8 @@ A failed refresh keeps the calendar's last good events (calendar-subscription sp
 
 ## Open Questions
 
-- [CONFIRM: 5 calendars per location, 6 hour refresh, a 60 character name] (defaults I chose).
-- [CONFIRM: 12 link adds per account an hour].
+- (defaults I chose).
+-.
 - Whether "Make a note" from an event should now offer the title as the note's detail. This change keeps it empty, as the spec says today.
 - View-as (decision 11): the panel's actions are disabled in place with the read-only line, as the page's note actions are (2026-11-14: the decisions said to follow how the page does it today, which is disabling, not hiding).
 - Re-importing an updated export adds a second calendar, so its events show twice: phase 1 has no way to replace a file. The help says to remove the old file first; replacing a file in place is a follow-up.

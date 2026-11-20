@@ -22,7 +22,7 @@ export const POPUP_REDIRECT_URI = 'postmessage';
 /** The two calendar scopes connecting asks for, beside `openid` (design decision 2). */
 export const CALENDAR_LIST_SCOPE = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly';
 export const CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events.readonly';
-/** The calendar list's first page only. [CONFIRM: the picker lists a person's first 250 Google calendars] */
+/** The calendar list's first page only. */
 const CALENDAR_LIST_MAX = 250;
 const CALENDAR_LIST_FIELDS = 'nextPageToken,items(id,summary,summaryOverride,primary,accessRole)';
 const CALENDAR_FIELDS = 'id,summary,summaryOverride,primary,accessRole';

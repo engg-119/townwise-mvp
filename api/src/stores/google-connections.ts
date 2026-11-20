@@ -21,7 +21,7 @@ export const GOOGLE_CONNECTIONS_COLLECTION = 'tw_google_connections';
 
 /**
  * A connection is checked again this long after a connect or its last check, so an unused one ends about a day after
- * it was made. [CONFIRM: an unused Google connection is ended after 24 hours]
+ * it was made.
  */
 export const CHECK_INTERVAL_MS = 24 * 60 * 60_000;
 

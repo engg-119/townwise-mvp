@@ -351,7 +351,6 @@ function idTaken(): AppError {
  * POST /api/admin/orgs { name, adminEmail, id? } (F10): the organization and an org admin invitation added by staff. No
  * location: the admin's first page asks for one. With `id`, a repeat of this request answers 200 with the organization
  * it made and writes no second org.created (repeatCreate); any other organization with that id is 409 conflict.
- * [CONFIRM: staff can create organizations without a request]
  */
 export async function createOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);
@@ -704,7 +703,6 @@ const emptyBody = z.object({});
 /**
  * POST /api/admin/people/:userId/sign-out-everywhere {} (F7, P22): every session of the person, through the kit's
  * revokeAllSessions. The event's organization is the person's active organization at the time, or none (spec 9.2).
- * [CONFIRM: sign out everywhere for staff]
  */
 export async function signOutEverywhere(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);

@@ -160,8 +160,7 @@ export const CHAT_TEXT_TIME_MS = 30_000;
  * thread and runs as a chat read does (CHAT_SLOT_WAIT_MS, CHAT_TEXT_TIME_MS). The body is at most 8 MiB (the route's
  * '8mb', as express.json reads it). One replica holds at most two full bodies of reads at once, counted by their
  * Content-Length before they are parsed, since a read holds its content several times over (its JSON, its bytes, the
- * request sent) on a 0.5 GiB replica; past it a read answers 503 extract_busy. [CONFIRM: 5 MB a file in an 8 MB body,
- * 30 PDF pages, 3.75 MB and 8,000 px a picture, 100,000 characters of text]
+ * request sent) on a 0.5 GiB replica; past it a read answers 503 extract_busy.
  */
 export const SETUP_FILE_BYTES = 5 * MIB;
 export const SETUP_PDF_PAGES = 30;

@@ -34,7 +34,6 @@ const personBody = z.object({ email: z.string().max(320) });
  * the paused page. Former members then resolve to no_org. View-as grants keep only ids. The organization row goes last,
  * so a retry still finds it, and only while the organization is still suspended: one reactivated meanwhile keeps its
  * row (409 org_not_suspended, recorded as not applied), though the records already deleted stay deleted.
- * [CONFIRM: staff-only deletion in v1; suspend before deleting an organization]
  */
 export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);

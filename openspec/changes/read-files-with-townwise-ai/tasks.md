@@ -42,6 +42,7 @@
 - [ ] 6.1 `npm run verify` passes
 - [ ] 6.2 Real-app QA with synthetic files only (a calendar, a sales PDF, an inventory sheet, a ZIP, a picture): opt in, see the notes and days, Undo, ask again; never a real customer file
 - [ ] 6.3 Resolve nothing marked `[CONFIRM]` without the team; list them in the PR
+  - Owner decided on 2026-11-19: the per-file choice, the whole file sent, notes and days written without a second press, the calibration for the org admin who asked and the shared files AI budget (spec 22.2 item 58), approved; their `[CONFIRM]` markers were removed. Still open: 31 closed days and 14 in a row, 10 reads at a time, 95% of days verified, and the file caps.
 - [x] 6.4 Open the PR into `develop`
   Done: merged to develop as #69 (b411ba1b, 2026-11-14); the item page's section is client/src/portal/data/item/AiSection.tsx, with tests item-ai.test.web.tsx and item-ai.test.native.tsx.
 

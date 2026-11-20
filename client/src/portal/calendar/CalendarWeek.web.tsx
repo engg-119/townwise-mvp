@@ -28,7 +28,7 @@ import { nearestDay, stripStep, STRIP_GROW_DAYS, VIEW_DAYS } from './strip';
 // Chrome re-snaps to the same day on the insert. With a chart (D64, calendar/chart.ts over the same days) each day draws
 // its own slice of it (chart/ForecastPlot.tsx over the day and its neighbors, chart.ts chartWindows), so the chart's
 // columns are the days' and scroll with them; under the days, the key of what the 7 days in view draw and the scale
-// (MonthChart.tsx ChartKey) [CONFIRM: the week view's key and scale under its days, naming what the 7 in view draw].
+// (MonthChart.tsx ChartKey).
 // Each day is memoized, so a hover, a tooltip or a settle redraws only what changed.
 // From 641px the strip is a role="grid" named by the week label with one row of every rendered day's column, each a
 // full-height gridcell, the click target and the roving tab stop, labeled as its month cell (so both views say the
@@ -41,8 +41,7 @@ import { nearestDay, stripStep, STRIP_GROW_DAYS, VIEW_DAYS } from './strip';
 // least as tall as the month grid at the same width, so switching views keeps the page height. Keys are grid.ts
 // gridMove's in its 'week' layout, Home and End going to the first and last day in view, and the moved-to column takes
 // focus without scrolling. When the selected day moves while a column has focus (a scroll stopped and the selection
-// followed the view), focus moves to it, so the next key starts from the day in view [CONFIRM: keyboard focus on a
-// week column following the selected day when a scroll stop moves it]. A mouse or pen over a column head
+// followed the view), focus moves to it, so the next key starts from the day in view. A mouse or pen over a column head
 // shows the day's tooltip beside the column (above or below the row in the agenda), never over the day; cards and touch
 // show none. An inert day (outside the 25 months) is its head line only, with no data-date; a pending day (its reads in
 // flight) is its head line only, still the tab stop when selected, with no description and no tooltip.

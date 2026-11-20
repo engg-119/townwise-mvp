@@ -35,7 +35,7 @@ export interface LocationSummary {
   offDayCount: number;
 }
 
-/** Spec 6.4. [CONFIRM: 25 locations] */
+/** Spec 6.4. */
 export const MAX_LOCATIONS = 25;
 
 const nameSchema = z.string().trim().min(1).max(80);

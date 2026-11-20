@@ -91,8 +91,7 @@ export function weekRange(start: string, bounds: MonthBounds): DateRange {
  * the grid) lie inside it, so switching views reads nothing. Past it, the grid of the month that holds the view's first
  * day, or else its last (D64): the scrolling week moves a day at a time, and a grid keeps the reads still over a run of
  * stops rather than reading again at each. One of the two always holds the 7 days (a Monday-first grid runs at least 5
- * weeks past its month's 1st); the week's own days only where neither month is one of the 25. [CONFIRM: the week view
- * reading the grid of the month that holds its first or last day in view once it leaves the selected month's grid]
+ * weeks past its month's 1st); the week's own days only where neither month is one of the 25.
  */
 export function readRangeFor(view: 'month' | 'week', month: string, weekStart: string, bounds: MonthBounds): DateRange {
   const grid = gridRange(month, bounds);
@@ -141,8 +140,7 @@ export function gridHeight(width: number): number {
 }
 
 // The selected day (D64): its weekday column is 1.3 times as wide as the others in every row and the weekday head, so
-// it stands out and the grid's height never changes. [CONFIRM: the selected day in the month grid outlined in `mint`
-// 2px over the `state` fill with its weekday column 1.3 times as wide, easing over 150ms]
+// it stands out and the grid's height never changes.
 
 /** How much wider the selected day's column is than the others. */
 export const SELECTED_GROW = 1.3;

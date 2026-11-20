@@ -32,7 +32,6 @@ export const MAX_EVENTS = 2_000;
 export const WINDOW_DAYS = 400;
 /**
  * A calendar file, imported once and never re-read, keeps events from this many days before the town's today (D58).
- * [CONFIRM: a calendar file keeps 3 years of past events and its upcoming events first, at most 2,000]
  */
 export const FILE_HISTORY_DAYS = 1_096;
 /** A title is cut to this many characters. */
@@ -153,7 +152,7 @@ export function titleOf(text: string | undefined): string {
   return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 
-/** An event that ends by this time the next morning is its start day's late night, not two days. [CONFIRM: 06:00 cutoff] */
+/** An event that ends by this time the next morning is its start day's late night, not two days. */
 const LATE_NIGHT_END = '06:00';
 
 /** An event's dates and, by the rules above, its hours; with no end it is its start's day. */
@@ -253,7 +252,6 @@ function byStart(a: IcsEvent, b: IcsEvent): number {
  * (a stable sort, so events that start together keep their order), at most 2,000: the first by start; or, with
  * `aheadFirst` (a Google calendar's, and an imported file's), the first 2,000 by start of those that end on or after
  * `today`, then as many of the earlier ones as still fit, the latest of them first.
- * [CONFIRM: a Google calendar keeps its next 2,000 events first, then earlier ones]
  */
 export function keepWindow(events: readonly IcsEvent[], today: string, options?: KeepOptions): IcsEvent[] {
   const first = plusDays(today, -(options?.historyDays ?? WINDOW_DAYS));

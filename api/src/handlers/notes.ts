@@ -12,6 +12,7 @@ import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+import { TOWNWISE_AI_AUTHOR } from '../agent/apply.ts';
 import { wantRefitFor } from '../agent/refit.ts';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
@@ -42,7 +43,7 @@ export interface NoteView extends NoteContent {
   fromEvent: NoteLinkView | null;
 }
 
-/** Spec 6.7. [CONFIRM: 1,000 notes] */
+/** Spec 6.7. */
 export const MAX_NOTES = 1000;
 /** An end date at most 366 days after the start. */
 const MAX_SPAN_DAYS = 366;
@@ -146,7 +147,7 @@ function sharedContentOf(body: SharedBody): Omit<RuleSchedule, 'endDate'> {
 function validDays(content: RuleSchedule, today: string): boolean {
   const { startTime, endTime, endDate } = content;
   const season = content.season ?? null;
-  // 'HH:MM' strings order as the times do. [CONFIRM: an event with hours ends by midnight on its own day]
+  // 'HH:MM' strings order as the times do.
   const validHours = startTime === null || endTime === null
     ? startTime === endTime
     : startTime < endTime && content.kind !== 'closure';
@@ -240,8 +241,9 @@ export function noteContent(raw: unknown, today: string, opts: NoteReadOptions =
   return content;
 }
 
+/** The author or an org admin; and any member for a note TownwiseAI wrote as itself, as its Undo allows (item 16). */
 function canEdit(caller: MemberPrincipal, note: NoteRecord): boolean {
-  return caller.role === 'org_admin' || note.createdBy === caller.userId;
+  return caller.role === 'org_admin' || note.createdBy === caller.userId || note.createdBy === TOWNWISE_AI_AUTHOR;
 }
 
 /** `refs` holds the Your data ref of each source file, by its id (sourceRefs); a note whose file has none answers null. */

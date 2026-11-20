@@ -28,7 +28,7 @@ The read's actions SHALL store each kept pattern as an open suggestion in `tw_ag
 - rule words Townwise writes from the schedule;
 - a planned id, looked up before any cap so a retried read stores each once.
 
-A `closure` event the read may not write as a note only because it spans over 14 days, and that ends on or after today, SHALL become such a suggestion. Buyouts and events refused by the 31-closed-days total SHALL stay skipped. A read SHALL store at most 5 suggestions from patterns, and none while the location has 10 open file suggestions. [CONFIRM: a closure over 14 days that a file read may not write as a note becomes a suggested rule] [CONFIRM: 5 suggested rules a file read, 10 open per location from files]
+A `closure` event the read may not write as a note only because it spans over 14 days, and that ends on or after today, SHALL become such a suggestion. Buyouts and events refused by the 31-closed-days total SHALL stay skipped. A read SHALL store at most 5 suggestions from patterns, and none while the location has 10 open file suggestions.
 
 #### Scenario: Posted hours
 - **WHEN** a member lets TownwiseAI read a menu whose opening hours read "Tuesday to Sunday, 11 to 9"
@@ -64,7 +64,7 @@ A day SHALL count as the weekday question counted it, and a day with guests or n
 
 These reads SHALL write nothing. The suggestion SHALL be listed as `sales_weekday_{d}` while no suggestion has its closure key, and under its stored id while that one is open. The weekday question SHALL no longer be asked. A weekday whose earlier weekday question was answered `open`, `not_sure` or `other` SHALL not be suggested.
 
-Deciding a `sales_weekday_{d}` id SHALL recompute its evidence (404 when it no longer holds) and store the suggestion once per closure key before the decision. Deleting a location's sales data SHALL delete its sales suggestions that are not accepted. [CONFIRM: the sales history suggests standing closed weekdays, replacing the weekday question, at 60% of at least 4 days with the last 4 without sales]
+Deciding a `sales_weekday_{d}` id SHALL recompute its evidence (404 when it no longer holds) and store the suggestion once per closure key before the decision. Deleting a location's sales data SHALL delete its sales suggestions that are not accepted.
 
 #### Scenario: Closed Mondays in the history
 - **WHEN** a location had no sales on 9 of its 11 counted Mondays, the last 4 among them, and last had sales on a Monday on Sep 7
@@ -112,8 +112,6 @@ A file or sales suggestion SHALL change no forecast and no rule until it is acce
 
 **Limits and expiry.** 409 `rule_limit` or `rule_exists` SHALL leave the suggestion open. Open suggestions SHALL not count toward the location's 30 rules. A file or sales suggestion SHALL stay open while its end is null or not before today in the town, and the weekly pass's expiry SHALL not expire it before then.
 
-[CONFIRM: any member confirms, edits or dismisses a suggested closure rule; weekly suggestions stay with org admins] [CONFIRM: suggested rules don't count toward a location's 30 until confirmed]
-
 #### Scenario: The forecast waits for Confirm
 - **WHEN** a location with a published forecast has an open suggestion "Closed on Mondays"
 - **THEN** next Monday's forecast is open, and after a member confirms it that Monday reads as closed
@@ -149,7 +147,7 @@ Undoing a file read SHALL treat its open suggestions one at a time:
 - every other open one SHALL be deleted;
 - accepted and dismissed ones SHALL be kept.
 
-A read that made only suggestions SHALL be undoable. `file.ai_undone` SHALL count the suggestions removed. [CONFIRM: undoing a read removes its suggested rules still waiting and keeps rules already confirmed]
+A read that made only suggestions SHALL be undoable. `file.ai_undone` SHALL count the suggestions removed.
 
 #### Scenario: Undo after one was confirmed
 - **WHEN** a read made two suggestions, a member confirmed one, and the read is undone
@@ -176,7 +174,7 @@ Before today its closure SHALL hold only as any rule closure does. A season SHAL
 - its schedule has an end date;
 - it is on a note.
 
-`scheduleSummary` SHALL word it ("Closed Jan 1 to Mar 31 every year, from Nov 17, 2026"), and TownwiseAI's `business_rules` block SHALL carry those words. P29's rule form SHALL offer "Every year" on web and native, taking the season from Starts and Ends. [CONFIRM: a yearly rule runs every year from its start until it is deleted; Feb 29 can't start or end a season; a season is shorter than a year]
+`scheduleSummary` SHALL word it ("Closed Jan 1 to Mar 31 every year, from Nov 17, 2026"), and TownwiseAI's `business_rules` block SHALL carry those words. P29's rule form SHALL offer "Every year" on web and native, taking the season from Starts and Ends.
 
 #### Scenario: A winter closure
 - **WHEN** a location has the rule "Closed Jan 1 to Mar 31 every year" from 2026-11-17
