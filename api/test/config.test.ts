@@ -175,11 +175,11 @@ describe('config', () => {
       }
     });
 
-    it('production turns research on with web fetch off (the live eval, task 10.3) and keeps Google names away from Anthropic until the owner decides; the example keeps the code defaults', () => {
+    it('production turns research on with web fetch off (the live eval, task 10.3) and lets Google names go to Anthropic (the owner, 2026-11-19); the example keeps the code defaults', () => {
       const env = readFileSync(new URL('../production.env', import.meta.url), 'utf8');
       expect(env).toMatch(/^TOWNWISE_RESEARCH=true$/m);
       expect(env).toMatch(/^TOWNWISE_RESEARCH_WEB_FETCH=false$/m);
-      expect(env).toMatch(/^TOWNWISE_RESEARCH_PLACES_TO_AI=false$/m);
+      expect(env).toMatch(/^TOWNWISE_RESEARCH_PLACES_TO_AI=true$/m);
       const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
       for (const line of [
         /^TOWNWISE_RESEARCH=true$/m, /^TOWNWISE_RESEARCH_TOWN_MONTHLY_USD=40$/m, /^TOWNWISE_RESEARCH_ORG_MONTHLY_USD=6$/m,

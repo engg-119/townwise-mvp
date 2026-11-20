@@ -26,7 +26,8 @@
 //
 // It reads the research stores for the prompts' base values only, never a revision (test/isolation.test.ts): a member's
 // edit never reaches Anthropic. Google is asked (the restaurant's profile, its competitors: research/places.ts) only
-// while TOWNWISE_RESEARCH_PLACES_TO_AI lets Google's names go to Anthropic; with it off the restaurant is named by the
+// while TOWNWISE_RESEARCH_PLACES_TO_AI lets Google's names go to Anthropic (production since the owner's go of
+// 2026-11-19); with it off (the code default) the restaurant is named by the
 // location's own typed name and competitors are found on the web, and nothing Google answered is sent (decision 10).
 // With it on and no profile (Places off, Google failing, a place it doesn't know), the restaurant's two threads end
 // `empty` with `places_off` and no call, since the typed name is not sent then; with a profile and no competitors list,

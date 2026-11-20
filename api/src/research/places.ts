@@ -1,9 +1,10 @@
 // What the research runner asks Google (D66, design decision 10), as two ports main.ts builds when Places is on: the
 // restaurant's profile (its Google name and address) and its competitors (Nearby Search around its point). The runner
-// asks them for a request only while TOWNWISE_RESEARCH_PLACES_TO_AI allows Google's names to go to Anthropic; with it
+// asks them for a request only while TOWNWISE_RESEARCH_PLACES_TO_AI allows Google's names to go to Anthropic (true in
+// api/production.env since the owner's go of 2026-11-19, false by default); with it
 // off, research asks Google only the profile, at a location merge whose competitors thread found something, to compare
 // Google's name with the businesses found (never stored or sent; as fixed in UI review). The point comes from the 29-day Valkey cache Settings' map keeps (handlers/locations-map.ts
-// `pointOf`), so nothing Google answers is written to Mongo. A Google failure answers null, logged by code: the thread
+// `pointOf`), so nothing Google answers is written to Mongo but the competitors' place ids (which Google lets us keep). A Google failure answers null, logged by code: the thread
 // then ends `places_off` (no profile) or searches the web for competitors (no list), and next week's run asks again.
 import type { Logger } from '@ckeith26/server-core';
 

@@ -14,7 +14,8 @@
 // its letter when the event stored the competitor's place id or its business entity's name key equals the live display
 // name's (research/competitors.ts matchCompetitor; the match is computed here and stored and sent nowhere). Competitor
 // events matching no live competitor are listed under "Competing events found on the web", by the business's name, so
-// the card works with Google's names kept from Anthropic (the shipped config) and with Places off. It logs counts only.
+// the card works with Google's names kept from Anthropic (an environment that leaves TOWNWISE_RESEARCH_PLACES_TO_AI
+// unset) and with Places off. It logs counts only.
 //
 // POST /api/org/locations/:locationId/research/run (`org.research.run`, org admin, `1kb`, the `research` limiter, never
 // open as admin): Research now. A run of the location's own threads, due at once, that never queues the town's run.

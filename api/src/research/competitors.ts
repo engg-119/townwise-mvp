@@ -9,7 +9,8 @@
 // and places of the location's own family come first. [CONFIRM: competitors are the 8 nearest restaurants, bars and
 // cafes within 1,500 m, the location's own type first]
 //
-// The name match: with Google's names kept from Anthropic (the shipped config), the competitors thread finds businesses
+// The name match: with Google's names kept from Anthropic (TOWNWISE_RESEARCH_PLACES_TO_AI off, the code default; also
+// with it on when the run had no competitor list), the competitors thread finds businesses
 // on the web and stores each as a `business` entity; the Competition card puts an entity's events under a competitor's
 // letter when the entity's `nameKey` equals the `nameKey` of that competitor's live display name. The comparison runs on
 // the server for each view, and its result is stored and sent nowhere.

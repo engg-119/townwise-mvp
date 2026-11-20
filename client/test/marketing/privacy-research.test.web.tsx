@@ -41,12 +41,14 @@ function pageText(): string {
   return screen.getByRole('main').textContent;
 }
 
-test('the Town research item says what research sends, including the restaurant’s name and town, and what it never sends', () => {
+test('the Town research item says what research sends, including Google’s name and address for the restaurant and up to 8 nearby places, and what it never sends', () => {
   const text = pageText();
   expect(text).toContain('Town research. Unless an org admin turns it off for your organization on a location’s Town tab, TownwiseAI researches each location’s town, and the restaurant and the places near it, on the web: once a week, with nobody using TownwiseAI,');
   expect(text).toContain('For the town, Anthropic receives the town’s name, state and time zone, today’s date, the public calendar Townwise already has for it (titles, dates and official calendar links) and what earlier research found there.');
-  expect(text).toContain('To research the restaurant and its competition, Anthropic also receives the location’s name as it appears in Townwise (which can be the name Google gave the place you picked, until you change it), with its town,');
-  expect(text).toContain('when that name is only a town’s, such as Hanover, it receives your organization’s name before it instead. Research never sends your organization’s name otherwise, the address or anything else Google sends about your place or the places near it, your sales or other figures, notes, business rules, calendars, files, TownwiseAI conversations, changes your team made to researched events, or anyone’s name or email address.');
+  // TOWNWISE_RESEARCH_PLACES_TO_AI=true in api/production.env (decided 2026-11-19 by the owner: allowed).
+  expect(text).toContain('To research the restaurant and its competition, Anthropic also receives the name and address of the place you picked for the location, as Google’s listing gives them, the names, kinds and websites Google gives for up to 8 restaurants, bars and cafes within 1,500 meters of it, and what earlier research found for that location;');
+  expect(text).toContain('when Google has no listing for the place or doesn’t answer, research skips the restaurant and its competition that time. Research never sends your organization’s name, the name you gave the location in Townwise, your sales or other figures, notes, business rules, calendars or their events’ titles, files, TownwiseAI conversations, changes your team made to researched events, or anyone’s name or email address.');
+  expect(text).not.toContain('anything else Google sends about your place');
   expect(text).toContain('It is told never to research or report a private person.');
 });
 
@@ -62,6 +64,7 @@ test('the Town research item says what is kept, who can change it, what reads it
   expect(text).toContain('for that location only: it never changes another location’s or another organization’s calendar.');
   expect(text).toContain('but a suggestion that rests on one always waits for someone on your team to accept it.');
   expect(text).toContain('Research of a location uses your organization’s monthly TownwiseAI budget; research of a town is Townwise’s own cost.');
+  expect(text).toContain('taken from those pages; for an event of one of the nearby places Google listed, it also keeps Google’s id for that place.');
   expect(text).toContain('Events are kept until 400 days after they end');
   expect(text).toContain('Our logs and audit record hold only counts and codes, never a search, a web address, a title or a name.');
 });
@@ -70,6 +73,7 @@ test('the Anthropic item lists research among what runs with nobody using Townwi
   const text = pageText();
   expect(text).toContain('Apart from TownwiseAI’s weekly suggestions, town research (which runs every week with nobody using TownwiseAI; see Town research, under Your organization and team) and, where it works on its own,');
   expect(text).toContain('its calendar, the events town research found, as your team edited them, and who is likely in town');
+  expect(text).toContain('For town research, Anthropic receives the town’s public calendar and, for each location, its restaurant’s name and address as Google’s listing gives them and the names, kinds and websites Google gives for up to 8 restaurants, bars and cafes near it; never your sales, notes, your calendars’ event titles or anyone’s name.');
 });
 
 test('the weekly suggestions wording no longer says the location’s name is never sent, since researched events can name the restaurant', () => {
@@ -79,11 +83,11 @@ test('the weekly suggestions wording no longer says the location’s name is nev
   expect(text).toContain('That calendar includes up to 60 events town research found that Townwise rates as likely, as your team edited them, never the ones it hid; a suggestion that rests on one always waits for someone on your team, even where TownwiseAI works on its own (see Town research).');
 });
 
-test('the Google item names Nearby Search around the location’s place for the Competition card, with nothing it answers kept or sent', () => {
+test('the Google item names Nearby Search for the Competition card and for each location’s research, what goes to Anthropic, and only place ids kept', () => {
   const text = pageText();
   expect(text).toContain('When someone opens a location’s Competition card on the Town tab, our server asks Google for the restaurants, bars and cafes within 1,500 meters of the location’s picked place (Google’s Nearby Search)');
-  expect(text).toContain('Townwise keeps nothing Google answers about those places and sends none of it to Anthropic.');
-  expect(text).toContain('When research finds nearby businesses’ events, our server also asks Google for the name of the location’s picked place, once a run, only to tell the restaurant’s own events from its competitors’; it keeps none of it and sends none of it to Anthropic.');
+  expect(text).toContain('Each time a location is researched (see Town research), our server also asks Google for the name and address of the location’s picked place and for the restaurants, bars and cafes within 1,500 meters of it with their websites, and sends Anthropic the place’s name and address and the names, kinds and websites of up to 8 of them. Townwise keeps nothing Google answers about those places apart from Google’s ids for those places.');
+  expect(text).not.toContain('sends none of it to Anthropic');
 });
 
 test('TownwiseAI’s changes cover correcting a researched event, and a web page still never changes the forecast', () => {

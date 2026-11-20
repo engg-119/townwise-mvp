@@ -4,9 +4,10 @@
 // a member's typed edit never reaches a prompt. No input here takes a note, a rule, a sales figure, an owner calendar
 // title, an email or a person's name, so none can be sent; the organization's name goes only as described below.
 //
-// The restaurant: while Google's names may go to Anthropic (TOWNWISE_RESEARCH_PLACES_TO_AI), its Google profile name
-// and address, and never the owner's typed name; while they may not (the shipped config), the location's own typed name
-// alone, with the town already in `town`, and the system prompt says it may differ from the public listing.
+// The restaurant: while Google's names may go to Anthropic (TOWNWISE_RESEARCH_PLACES_TO_AI, true in api/production.env
+// since the owner allowed it on 2026-11-19), its Google profile name and address, and never the owner's typed name;
+// while they may not (the code default), the location's own typed name alone, with the town already in `town`, and the
+// system prompt says it may differ from the public listing.
 // [CONFIRM: the location's own name sent to Anthropic for restaurant research]
 // As fixed in UI review: a location typed with only a town's name ("Hanover") names no restaurant, so its research
 // searched the town and filed the restaurant's own events as a competitor's; such a location is sent as

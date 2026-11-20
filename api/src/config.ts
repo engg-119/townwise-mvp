@@ -137,9 +137,8 @@ export const configSchema = z.object({
   TOWNWISE_RESEARCH_WEB_FETCH: z.stringbool().default(false),
   /**
    * D66 decision 10: whether Google Places names, types, websites and addresses may go to Anthropic in a research
-   * prompt. Off by default (fails closed while the terms question is open); api/production.env says false too, and the
-   * default turns on only once the decision is recorded.
-   * [DECISION NEEDED: whether Google Maps Platform's terms allow sending Places names, types and websites to Anthropic]
+   * prompt. Off by default, so an environment that leaves it unset fails closed; api/production.env sets true, since
+   * the terms question was decided 2026-11-19 by the owner: allowed ("yes that is allowed").
    */
   TOWNWISE_RESEARCH_PLACES_TO_AI: z.stringbool().default(false),
   /**

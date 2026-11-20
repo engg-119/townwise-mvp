@@ -2,7 +2,7 @@
 // design decisions 10 and 13): the location's competitors live from Nearby Search (food and drink only, its own place
 // left out, its own type family first), lettered on a map fitted around it, each with its upcoming researched events
 // matched by the stored place id or by the business's name key against the live display name, and the other competitor
-// events in the web list by the business's name. With Google's names kept from Anthropic (the shipped config) the name
+// events in the web list by the business's name. With Google's names kept from Anthropic (the code default) the name
 // match still letters them; with Places off or failing, or no place picked, the web list carries every one. Nothing is
 // written to Mongo, and the log holds counts only. Google is a fake fetch; places and businesses are made up.
 import { randomUUID } from 'node:crypto';
