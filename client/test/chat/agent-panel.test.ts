@@ -54,7 +54,7 @@ test('D66: research runs and TownwiseAI’s corrections read as the API sends th
   const town = { ...done, subject: 'town', status: 'budget', found: 0, added: 0, competitors: null, threadsFailed: 3, threadsBudget: 3 };
   const corrected = {
     at: '2026-06-01T08:30:00.000Z', kind: 'agent_change', changeId: '0000000000000000000000e9', action: 'event.correct', sourceKind: 'chat',
-    status: 'applied', startDate: null, endDate: null, noteKind: null, weekdays: null, count: null, undoable: true,
+    status: 'applied', startDate: null, endDate: null, noteKind: null, weekdays: null, count: null, undoable: true, sourcePasted: false,
   };
   const api = fakeChatApi();
   api.panel = {
