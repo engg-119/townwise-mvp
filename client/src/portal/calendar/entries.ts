@@ -23,7 +23,7 @@ export function filterOf(event: Pick<TownEvent, 'kind'>): FilterKey {
 
 /** A note in a cell's chip: “Private event, 70”, “Private buyout”, “Closure”, “Guest count marked wrong”. */
 export function noteChip(note: Pick<Note, 'kind' | 'effect' | 'expectedGuests'>): string {
-  // D67: the effect says what the note is. [CONFIRM: the words "Guest count marked wrong"]
+  // D67: the effect says what the note is.
   if (note.effect === 'wrong_guest_count') return EFFECT_LABEL.wrong_guest_count;
   const kind = note.kind === 'private_event' && note.effect === 'closed' ? 'Private buyout' : KIND_LABEL[note.kind];
   return note.expectedGuests === null ? kind : `${kind}, ${formatCount(note.expectedGuests)}`;

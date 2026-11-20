@@ -82,7 +82,7 @@ export function federalHolidays(year: number): TownEvent[] {
   }));
 }
 
-// [CONFIRM: the Library of Congress's Halloween page as Halloween's source; no law sets the day (D68)]
+// The Library of Congress's Halloween page is Halloween's source: no law sets the day (D68; owner, 2026-11-19).
 const LOC_HALLOWEEN: TownEventSource = { label: 'Library of Congress', url: 'https://blogs.loc.gov/folklife/category/halloween/' };
 
 const FRIDAY = 5;

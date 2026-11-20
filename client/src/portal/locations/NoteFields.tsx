@@ -29,7 +29,7 @@ const EFFECT_HELP = 'Set from the kind. Change it if you expect something else.'
 
 const KIND_OPTIONS = NOTE_KINDS.map((kind) => ({ value: kind, label: KIND_LABEL[kind] }));
 const EFFECT_OPTIONS: readonly { value: NoteEffect; label: string }[] = SHARED_EFFECTS.map((effect) => ({ value: effect, label: EFFECT_LABEL[effect] }));
-/** D67, on an Other note only. [CONFIRM: the words "The guest count was wrong (sales were right)"] */
+/** D67, on an Other note only. */
 const MARK_OPTIONS: readonly { value: NoteEffect; label: string }[] = [
   ...EFFECT_OPTIONS, { value: 'wrong_guest_count', label: 'The guest count was wrong (sales were right)' },
 ];

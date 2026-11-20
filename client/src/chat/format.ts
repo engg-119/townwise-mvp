@@ -25,7 +25,6 @@ export const EFFECT_LABEL: Record<NoteEffect, string> = {
   more_guests: 'More guests than usual',
   fewer_guests: 'Fewer guests than usual',
   unknown: 'Not sure',
-  // [CONFIRM: the words "The guest count was wrong (sales were right)", "Your note: guest count marked wrong" and "Guest count marked wrong"]
   wrong_guest_count: 'Guest count marked wrong',
 };
 

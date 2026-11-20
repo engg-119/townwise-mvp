@@ -25,7 +25,7 @@ Alternatives: (a) a boolean field on any note (old clients parse it, since zod o
 
 ### 2. Valid only on an Other note, strictly in the past, with nothing else
 
-`readNoteContent(raw, today, { townToday })` accepts `wrong_guest_count` only when `townToday` is given and: kind is `other`; `endDate` is before `townToday`; `expectedGuests` is null; `startTime` and `endTime` are null. The other-needs-words rule does not apply to it. Weekdays are allowed (a counter broken every Friday in a month). Anything else is 400 `invalid_request`. The create and edit handlers pass the location's town date (`localDay(now, timeZoneOf(location.town).timeZone)`), so they load the location before validating. Callers that pass no `townToday` (the chat's `propose_note`, the D53 follow-up) refuse the effect, so TownwiseAI can never save it. [CONFIRM: the guest-count mark is an Other note, on days before the town's today only, with no guests, no hours, and no title or detail required]
+`readNoteContent(raw, today, { townToday })` accepts `wrong_guest_count` only when `townToday` is given and: kind is `other`; `endDate` is before `townToday`; `expectedGuests` is null; `startTime` and `endTime` are null. The other-needs-words rule does not apply to it. Weekdays are allowed (a counter broken every Friday in a month). Anything else is 400 `invalid_request`. The create and edit handlers pass the location's town date (`localDay(now, timeZoneOf(location.town).timeZone)`), so they load the location before validating. Callers that pass no `townToday` (the chat's `propose_note`, the D53 follow-up) refuse the effect, so TownwiseAI can never save it.
 
 Strictly before today, not on or before: today's upload may be partial, as D32 already holds, and with every covered date before today the forecast read gives the note `past_day` on every day it covers, now and later, so no new `NoteOutcome` exists and the mark can never touch an upcoming day. The alternative, "valid any day, inert after `dataThrough`", lets a note sit on future days doing nothing, which the person would read as broken.
 
@@ -41,7 +41,7 @@ export function isWrongGuestCount(entry: Pick<NoteContent, 'effect'>): boolean;
 export function trustedGuestDays<D extends { date: string; guests: number | null }>(days: readonly D[], notes: readonly CoverNote[]): D[];
 ```
 
-It is applied once, where each consumer reads stored days, before anything else reads them. A marked day then behaves exactly as a day whose upload had sales and no guest count behaves today: never likely closed, never feeding a neighbor's typical guests, never in a mean or comparison, never an actual. `closureOf`, `saysOpen`, `notesDecide` and `isAllZero` do not change. The predicate is not in `saysOpen` or `notesDecide`: the mark decides nothing about open, closed or booked, so it never sets aside a rule's closure or buyout (D31), a TownwiseAI note (D59 `ownerBeatsAgent`), and `decisionOf` returns null for it (no D59 conflict). [CONFIRM: a day whose guest count is marked wrong reads as a day with sales and no guest count wherever Townwise trains, compares or analyzes; its sales stand, and Your data, the sales page and monthly totals still show the stored count]
+It is applied once, where each consumer reads stored days, before anything else reads them. A marked day then behaves exactly as a day whose upload had sales and no guest count behaves today: never likely closed, never feeding a neighbor's typical guests, never in a mean or comparison, never an actual. `closureOf`, `saysOpen`, `notesDecide` and `isAllZero` do not change. The predicate is not in `saysOpen` or `notesDecide`: the mark decides nothing about open, closed or booked, so it never sets aside a rule's closure or buyout (D31), a TownwiseAI note (D59 `ownerBeatsAgent`), and `decisionOf` returns null for it (no D59 conflict).
 
 A consequence: before today a D31 rule's closure holds on a marked day (as on any day with no guest count), so a marked Monday under "closed Mondays" reads closed. The person who means it was open adds an opening note, as today. Not special-casing keeps the client mirror and the fixture to one masking step.
 
@@ -62,11 +62,11 @@ The covers check is a local one in `closed-days.ts`, as `people-in-town/history.
 - Calendar chip and compact words (`noteChip`, used when the note has no title): "Guest count marked wrong".
 - `chat/format.ts` `EFFECT_LABEL`: "Guest count marked wrong", so a note listed in chat or the agent panel reads the same.
 
-[CONFIRM: the words "The guest count was wrong (sales were right)", "Your note: guest count marked wrong" and "Guest count marked wrong"]
+
 
 ### 7. TownwiseAI reads the mark and never makes it
 
-`get_sales_days` and `get_day` send a marked day's guests as null with `guestCountMarkedWrong: true` and read typical guests and likely closed from trusted days. Their descriptions gain one clause: "A day with guestCountMarkedWrong true had its guest count marked wrong by the restaurant: its guests are null, its sales stand, and it is left out of typical guests." That is a frozen-prefix change (one cache miss per conversation, once), as D49's was. Visual charts read trusted days. `get_notes` already sends each note's effect. `propose_note`'s input enum, Read with TownwiseAI's vocabulary, the weekly suggestions' zod enum and `stores/agent-suggestions.ts` stay without the value. [CONFIRM: TownwiseAI never proposes or saves a guest-count mark; its day reads send the marked day's guests as null with guestCountMarkedWrong true]
+`get_sales_days` and `get_day` send a marked day's guests as null with `guestCountMarkedWrong: true` and read typical guests and likely closed from trusted days. Their descriptions gain one clause: "A day with guestCountMarkedWrong true had its guest count marked wrong by the restaurant: its guests are null, its sales stand, and it is left out of typical guests." That is a frozen-prefix change (one cache miss per conversation, once), as D49's was. Visual charts read trusted days. `get_notes` already sends each note's effect. `propose_note`'s input enum, Read with TownwiseAI's vocabulary, the weekly suggestions' zod enum and `stores/agent-suggestions.ts` stay without the value.
 
 ### 8. D53 links
 
@@ -82,7 +82,7 @@ The web export and the API deploy together. A native build from before this rele
 
 ## Risks / Trade-offs
 
-- **The lab's closed-holiday and closed-weekday rules** (`forecast.py` `closed_holidays`, `closed_weekdays`, `served`) read a null count as no guests. Marking Thanksgiving, Jan 1, Jul 4, Dec 24 or Dec 25 makes that holiday's next occurrence forecast closed when the marked one was its latest; marking all of a weekday's last 8 counted dates closes the weekday. This is today's behavior for a day with no guest count. [CONFIRM: a marked closing holiday or weekday reads to the lab as a day with no guest count] The form's helper does not warn; the spec says so.
+- **The lab's closed-holiday and closed-weekday rules** (`forecast.py` `closed_holidays`, `closed_weekdays`, `served`) read a null count as no guests. Marking Thanksgiving, Jan 1, Jul 4, Dec 24 or Dec 25 makes that holiday's next occurrence forecast closed when the marked one was its latest; marking all of a weekday's last 8 counted dates closes the weekday. This is today's behavior for a day with no guest count. The form's helper does not warn; the spec says so.
 - **Fewer Halloween observations.** The lab's `hol_halloween` effect is shrunk toward zero by n / (n + lambda); dropping 2025 leaves 2023 and 2024. That is the intent (the owner chose to drop wrong counts, not to impute them), and task 7.2 measures it offline.
 - **Weekly totals in the lab's folds** sum the remaining days of a week with a marked day on both the actual and the forecast side (`metrics.weekly_totals` has no full-week rule), so they stay comparable.
 - **Champion comparison** (`compare.py`) skips a week whose open day is not a training row, so a marked day removes one comparison week, as a likely-closed day does.
