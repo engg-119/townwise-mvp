@@ -24,4 +24,6 @@
 # only for it; and private events, counted parties (the input's new party, townwise.lab-input/4) and bookings count as
 # neither served nor unserved when closed weekdays are judged (forecast.set_aside), so a party every Friday never closes
 # Fridays.
-MODEL_VERSION = "v13"
+# v14 (D72, 2026-11-20): the result carries backtestDays, the backtest's day-by-day predictions for the Calendar's past
+# days (pipeline._backtest_days); forecasts, scorecard and run file unchanged.
+MODEL_VERSION = "v14"

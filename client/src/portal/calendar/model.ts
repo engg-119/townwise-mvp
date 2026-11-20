@@ -3,7 +3,7 @@ import type { ResearchedEvent, TownEvent } from '../analytics/api';
 import { mondayOf, weekDates } from '../analytics/cells';
 import { closureOf, likelyClosedWords, markedGuestsWords, noteCovers, typicalGuests } from '../analytics/days';
 import { metricText, MONTH_NAMES, shortDate, type Metric } from '../analytics/words';
-import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason, type ForecastWindow, type ReasonEffect } from '../estimates/api';
+import { appliedOf, guestsFromWords, yoursDid, type BacktestDay, type ForecastDay, type ForecastReason, type ForecastWindow, type ReasonEffect } from '../estimates/api';
 import type { Note, SalesDay } from '../locations/api';
 import { addDays, isCalendarDate, monthRange } from '../locations/dates';
 import { FOUND_LABEL, foundEntryLabel } from '../research/copy';
@@ -37,6 +37,10 @@ export { filterOf, noteChip };
 // last sales) shows its middle figure marked "Outlook", says "Outlook about ..." in its label and tooltip, heads its
 // panel part "Outlook" and never claims 8 in 10, since no location's outlook has had that measured; a key line under the grid says what an
 // outlook is whenever a shown day is one (outlookKey).
+// A backtest day (D72, the Calendar only: `backtest` in the input): a past date no published run covers, with the lab's
+// backtest figure for it, forecast out of sample from sales through an earlier day. It reads like a past forecast but is
+// named "backtest" wherever it shows (the cell's caption and label, the tooltip, the panel, the chart's key), the panel
+// says it was not a forecast made at the time, and it never counts in the month line or any accuracy.
 
 /**
  * The filter chips, in toolbar order. `imported` ("Your calendar") shows only when the location has a calendar, and
@@ -90,6 +94,8 @@ export interface CalendarInput {
   /** The range's events town research found (D66); Home leaves them out until it reads them (task 7.4). */
   found?: readonly ResearchedEvent[] | null | undefined;
   filters: Filters;
+  /** D72: show the forecast read's backtest days on past dates no run covers (the Calendar); Home leaves them out. */
+  backtest?: boolean;
 }
 
 
@@ -105,6 +111,15 @@ function rulesOn(date: string, input: CalendarInput): Rule[] {
 
 function forecastDayOf(date: string, input: CalendarInput): ForecastDay | null {
   return input.forecast?.days.find((day) => day.date === date) ?? null;
+}
+
+/**
+ * D72: the backtest's day for a date before today that the read gives no forecast day, when the input shows backtest
+ * days; null otherwise. A real forecast day always wins.
+ */
+export function backtestDayOf(date: string, input: CalendarInput): BacktestDay | null {
+  if (input.backtest !== true || date >= input.today || forecastDayOf(date, input) !== null) return null;
+  return input.forecast?.backtest?.find((day) => day.date === date) ?? null;
 }
 
 function storedGuests(date: string, input: CalendarInput): number | null {
@@ -158,9 +173,10 @@ export interface CellFigure {
   value: number;
   /**
    * forecast: the published day's middle figure; actual: stored guests; booked: a buyout's party; past_forecast: a day
-   * before today with no stored guests, the run's middle figure for it.
+   * before today with no stored guests, the run's middle figure for it; backtest: a day before today with neither stored
+   * guests nor a run's day, the backtest's middle figure for it (D72).
    */
-  kind: 'forecast' | 'actual' | 'booked' | 'past_forecast';
+  kind: 'forecast' | 'actual' | 'booked' | 'past_forecast' | 'backtest';
 }
 
 export interface CalendarCell {
@@ -209,7 +225,10 @@ const NO_FIGURE: FigureOf = { status: null, figure: null, noteGuests: 0, words: 
 
 export type FigureSource = 'actual' | 'forecast';
 
-/** Stored data is the actual; a published day's figure, a past day's run figure and a buyout's expected party are forecasts. */
+/**
+ * Stored data is the actual; a published day's figure, a past day's run figure, a backtest's figure (D72, captioned as
+ * one) and a buyout's expected party are forecasts.
+ */
 export function figureSource(figure: Pick<CellFigure, 'kind'>): FigureSource {
   return figure.kind === 'actual' ? 'actual' : 'forecast';
 }
@@ -227,11 +246,28 @@ export function figureTone(figure: Pick<CellFigure, 'kind'>): 'white' | 'text2' 
 /** The word a surface prints beside a forecast's figure where it has room; an actual has none. */
 export const FORECAST_TAG = 'forecast';
 
+/** The word beside a backtest's figure (D72), in place of FORECAST_TAG. */
+export const BACKTEST_TAG = 'backtest';
+
+/**
+ * D72: a backtest's figure is underlined with dots wherever a cell shows it, as the chart draws a backtest dotted, so on
+ * a phone, where no caption fits, its “~” never passes for a forecast's. The key names it (showsBacktest).
+ */
+export function dottedFigure(figure: Pick<CellFigure, 'kind'>): boolean {
+  return figure.kind === 'backtest';
+}
+
+/** Whether a shown cell's figure is a backtest's (D72): the key under the grid then names the dotted figure. */
+export function showsBacktest(cells: readonly Pick<CalendarCell, 'figure'>[]): boolean {
+  return cells.some((cell) => cell.figure !== null && dottedFigure(cell.figure));
+}
+
 /** Each grid's key: its two entries, shown with a sample figure each (“94”, “~82”). */
 export const FIGURE_KEY = { actual: 'Actual guests', forecast: 'Forecast' } as const;
 
 /** What a screen reader hears for a figure, and the tooltip's words: “82 guests, forecast”, “94 guests, actual”. */
 export function figureLabel(value: number, figure: Pick<CellFigure, 'kind'>, metric: Metric = 'guests'): string {
+  if (figure.kind === 'backtest') return `${plural(value, 'guest', 'guests')}, ${BACKTEST_TAG}`;
   if (figureSource(figure) === 'forecast') return `${plural(value, 'guest', 'guests')}, forecast`;
   return metric === 'guests' ? `${metricText(value, metric)}, actual` : `${metricText(value, metric)} in net sales, actual`;
 }
@@ -255,7 +291,16 @@ export function figureOf(date: string, input: CalendarInput, metric: Metric = 'g
     if (stored !== null) return { ...NO_FIGURE, figure: { value: stored, kind: 'actual' }, words: `${figureLabel(stored, { kind: 'actual' }, metric)}.` };
     const gap = gapWords(date, input);
     const gapStatus = markedGuests(date, input) === null ? 'no_data' : 'marked_wrong';
-    if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: gapStatus, words: `${gap}.` };
+    if (day === null) {
+      if (input.forecast === null) return NO_FIGURE;
+      // D72: with no run's day, the backtest's figure, named as one.
+      const backtest = backtestDayOf(date, input);
+      if (backtest === null) return { ...NO_FIGURE, status: gapStatus, words: `${gap}.` };
+      return {
+        ...NO_FIGURE, figure: { value: Math.round(backtest.mid), kind: 'backtest' },
+        words: `${gap}. ${figureLabel(Math.round(backtest.mid), { kind: 'backtest' })}, likely ${rangeWords(backtest.low, backtest.high)}.`,
+      };
+    }
     if (day.status === 'closed') return { ...NO_FIGURE, status: 'closed', words: `${gap}. Forecast closed.` };
     if (day.status === 'booked') return { ...NO_FIGURE, status: 'booked', words: `${gap}. ${bookedWords(day)}.` };
     if (day.mid === null || day.low === null || day.high === null) return { ...NO_FIGURE, status: gapStatus, words: `${gap}.` };
@@ -335,9 +380,13 @@ export function calendarMonth(month: string, input: CalendarInput): (CalendarCel
   return rows;
 }
 
-/** The word beside a figure: “forecast” for every forecast, past or future, booked or open; none for an actual (decision 10). */
+/**
+ * The word beside a figure: “forecast” for every forecast, past or future, booked or open, “backtest” for a backtest's
+ * (D72); none for an actual (decision 10).
+ */
 export function captionOf(cell: Pick<CalendarCell, 'figure'>): string | null {
-  return cell.figure === null || figureSource(cell.figure) === 'actual' ? null : FORECAST_TAG;
+  if (cell.figure === null || figureSource(cell.figure) === 'actual') return null;
+  return cell.figure.kind === 'backtest' ? BACKTEST_TAG : FORECAST_TAG;
 }
 
 export function statusWord(status: CalendarCell['status']): string | null {
@@ -404,6 +453,8 @@ export type ForecastPart =
     markedGuests?: number;
     /** How the forecast did (forecastCheck); null otherwise. */
     check: ForecastCheck | null;
+    /** D72: the backtest's figure for a day no run covers (backtestCheck); null otherwise. */
+    backtest: BacktestCheck | null;
     /** The run may have read a note or rule written on or after the day, so it isn't compared with it (D49 as amended). */
     laterNote: boolean;
   }
@@ -472,6 +523,7 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
       kind: 'past', actual: storedGuests(date, input) ?? day?.actual ?? null, likelyClosed: likelyClosedGuests(date, input) !== null, model,
       ...(marked === null ? {} : { markedGuests: marked }),
       modelClosed: day?.model.status === 'closed', check: forecastCheck(day, input.today, input.forecast?.runs), laterNote: day?.laterNote === true,
+      backtest: backtestCheck(backtestDayOf(date, input)),
     };
   }
   if (input.forecast === null) return { kind: 'none', why: 'unavailable' };
@@ -738,12 +790,16 @@ export interface ForecastWords {
 /** An outlook day's sentence in place of the 8 in 10 one (D52). */
 export const OUTLOOK_RANGE = 'This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.';
 
+/** The Forecast part's heading on a past day with no stored guests whose figure is a backtest's (D72). */
+export const BACKTEST_LABEL = 'Backtest';
+
 /**
- * The Forecast part's heading: “Actual guests” for a past day with stored guests (UI review S2), “Outlook” for an
- * outlook day (D52), “Forecast” otherwise.
+ * The Forecast part's heading: “Actual guests” for a past day with stored guests (UI review S2), “Backtest” for a past
+ * day without them whose figure is a backtest's (D72), “Outlook” for an outlook day (D52), “Forecast” otherwise.
  */
-export function forecastLabel(part: ForecastPart): 'Forecast' | 'Outlook' | typeof FIGURE_KEY.actual {
+export function forecastLabel(part: ForecastPart): 'Forecast' | 'Outlook' | typeof BACKTEST_LABEL | typeof FIGURE_KEY.actual {
   if (part.kind === 'past' && part.actual !== null) return FIGURE_KEY.actual;
+  if (part.kind === 'past' && part.backtest !== null) return BACKTEST_LABEL;
   return part.kind === 'open' && part.outlook ? 'Outlook' : 'Forecast';
 }
 
@@ -782,10 +838,13 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
       if (part.likelyClosed && part.actual !== null) {
         const lines = [`${likelyClosedWords(plural(part.actual, 'guest', 'guests'))}.`];
         if (part.model !== null) lines.push(`Townwise’s model forecast ${rangeWords(part.model.low, part.model.high)}.`);
+        // D72: a backtest isn't compared with a likely closed day, as a run's forecast isn't.
+        else if (part.backtest !== null) lines.push(`${backtestWords({ ...part.backtest, actual: null, verdict: null })}.`, backtestNote(part.backtest));
         return { figure: null, lines };
       }
-      // With no stored guests the run's figure shows as a forecast, as the cell shows it (figureOf).
-      const runMid = part.model?.mid ?? null;
+      // With no stored guests the run's figure shows as a forecast, as the cell shows it (figureOf), or with no run's day
+      // the backtest's (D72).
+      const runMid = part.model?.mid ?? part.backtest?.mid ?? null;
       const figure = part.actual !== null ? { before: '', value: whole(part.actual), after: part.actual === 1 ? 'guest' : 'guests', source: 'actual' as const }
         : runMid !== null && !part.modelClosed ? { before: 'About', value: whole(runMid), after: Math.round(runMid) === 1 ? 'guest' : 'guests', source: 'forecast' as const }
           : null;
@@ -798,7 +857,7 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
         lines.push(part.laterNote && part.actual !== null
           ? `Townwise’s model forecast ${range}, but it may have used a note or rule written on or after this day, so it isn’t scored.`
           : `Townwise’s model forecast ${range}.`);
-      }
+      } else if (part.backtest !== null) lines.push(`${backtestWords(part.backtest)}.`, backtestNote(part.backtest));
       return { figure, lines };
     }
     case 'none': {
@@ -844,11 +903,17 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
     else if (guests !== null) {
       lines.push(figureLabel(guests, { kind: 'actual' }));
       const check = forecastCheck(day, input.today, input.forecast?.runs);
+      const backtest = backtestCheck(backtestDayOf(date, input));
       if (check !== null) lines.push(checkWords(check));
+      else if (backtest !== null) lines.push(backtestWords(backtest));
     }
-    // No stored guests: the forecast made for the day, as the cell shows it (figureOf), after “No data” or the mark (D67).
+    // No stored guests: the forecast made for the day, as the cell shows it (figureOf), after “No data” or the mark (D67);
+    // with no run's day, the backtest's (D72).
     else if (day === null) {
-      if (input.forecast !== null) lines.push(gapWords(date, input));
+      const backtest = backtestDayOf(date, input);
+      if (backtest !== null) {
+        lines.push(`${gapWords(date, input)}. ${figureLabel(Math.round(backtest.mid), { kind: 'backtest' })} (likely ${rangeWords(backtest.low, backtest.high)})`);
+      } else if (input.forecast !== null) lines.push(gapWords(date, input));
     } else if (day.status === 'closed') lines.push(`${gapWords(date, input)}. Forecast closed`);
     else if (day.status === 'booked') lines.push(`${gapWords(date, input)}. ${bookedWords(day)}`);
     else if (day.mid !== null && day.low !== null && day.high !== null) {
@@ -913,13 +978,53 @@ export function forecastCheck(
   return { mid, low, high, actual: day.actual, verdict, dataThrough };
 }
 
+/** A figure after its lead, its range, and with an actual and a verdict, how it did. */
+function aboutWords(lead: string, check: Pick<ForecastCheck, 'mid' | 'low' | 'high'> & { actual: number | null; verdict: ForecastCheck['verdict'] | null }): string {
+  const came = check.actual === null || check.verdict === null ? '' : `; ${plural(check.actual, 'guest', 'guests')} came: ${check.verdict} the range`;
+  return `${lead} ${whole(check.mid)} (likely ${rangeWords(check.low, check.high)})${came}`;
+}
+
 /**
  * “Forecast was about 82 (likely 70 to 95); 94 guests came: inside the range”, or for a run made after the day
  * “Forecast from sales through Oct 21, 2026: about 82 (likely 70 to 95); 94 guests came: inside the range”.
  */
 export function checkWords(check: ForecastCheck): string {
-  const forecast = check.dataThrough === null ? 'Forecast was about' : `Forecast from sales through ${formatDate(check.dataThrough)}: about`;
-  return `${forecast} ${whole(check.mid)} (likely ${rangeWords(check.low, check.high)}); ${plural(check.actual, 'guest', 'guests')} came: ${check.verdict} the range`;
+  return aboutWords(check.dataThrough === null ? 'Forecast was about' : `Forecast from sales through ${formatDate(check.dataThrough)}: about`, check);
+}
+
+/**
+ * D72: a backtest's figure for a day no run covers, and with stored guests how it did. Never a ForecastCheck, so it
+ * never counts where those do (monthCheckLine, accuracy).
+ */
+export interface BacktestCheck {
+  /** Townwise's model, or its baseline (which fills the days before the model's backtest). */
+  engine: 'model' | 'baseline';
+  /** The last day of sales the fit that forecast the day saw. */
+  dataThrough: string;
+  mid: number; low: number; high: number;
+  actual: number | null;
+  verdict: ForecastCheck['verdict'] | null;
+}
+
+/** A backtest day's figure and verdict (inside from the API's inRange, else above or below its high); null with none. */
+export function backtestCheck(day: BacktestDay | null): BacktestCheck | null {
+  if (day === null) return null;
+  const verdict = day.actual === null || day.inRange === null ? null : day.inRange ? 'inside' : day.actual > day.high ? 'above' : 'below';
+  return {
+    engine: day.engine === 'baseline' ? 'baseline' : 'model', dataThrough: day.dataThrough, mid: day.mid, low: day.low, high: day.high,
+    actual: day.actual, verdict,
+  };
+}
+
+/** “Backtest from sales through Jun 30, 2026: about 82 (likely 70 to 95); 94 guests came: inside the range” (D72). */
+export function backtestWords(check: BacktestCheck): string {
+  return aboutWords(`Backtest from sales through ${formatDate(check.dataThrough)}: about`, check);
+}
+
+/** The panel's plain line under a backtest's words (D72): it was not a forecast made at the time. */
+export function backtestNote(check: Pick<BacktestCheck, 'engine' | 'dataThrough'>): string {
+  const whose = check.engine === 'baseline' ? 'its baseline' : 'its model';
+  return `Townwise had no forecast for this day yet. This is what ${whose} would have said, trained only on sales through ${formatDate(check.dataThrough)}.`;
 }
 
 /** The words after a count of days in range, on the month line, the model card and Last week. */
@@ -934,6 +1039,7 @@ export function insideWords(inside: number, days: number): string {
  * The month's line: how many of its passed days with a comparison (forecastCheck) landed inside the forecast range.
  * “So far this month: …” for today's month, “In October: …” for an earlier one; for a month that has begun with none,
  * that none can be compared yet. Null for a later month, and while the read loads, failed or has nothing published.
+ * It reads the runs' days only, so a backtest day (D72) never counts.
  */
 export function monthCheckLine(month: string, input: CalendarInput): string | null {
   const thisMonth = input.today.slice(0, 7);

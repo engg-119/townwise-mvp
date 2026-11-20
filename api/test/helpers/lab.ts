@@ -168,7 +168,9 @@ export function runDays(dataThrough: string, days: number): Pick<LabSuccess['run
  * The lab's answer to `input`: a draft run for the 14 days after its last day, compared with its champion if it has one,
  * its widening the forecast tier's entries and the outlook anchors its scorecard's horizonOutlook reports (D52).
  */
-export function labResultFor(input: LabInput, overrides?: { scorecard?: LabScorecard; run?: Partial<LabSuccess['run']> }): LabSuccess {
+export function labResultFor(
+  input: LabInput, overrides?: { scorecard?: LabScorecard; run?: Partial<LabSuccess['run']>; backtestDays?: LabSuccess['backtestDays'] },
+): LabSuccess {
   const firstDate = input.days[0]?.date ?? '';
   const scorecard = overrides?.scorecard ?? scorecardWith({
     history: { firstDate, lastDate: input.dataThrough, spanDays: daysBetween(firstDate, input.dataThrough) },
@@ -206,6 +208,7 @@ export function labResultFor(input: LabInput, overrides?: { scorecard?: LabScore
       ...runDays(input.dataThrough, 14),
       ...overrides?.run,
     },
+    backtestDays: overrides?.backtestDays ?? [],
   };
 }
 

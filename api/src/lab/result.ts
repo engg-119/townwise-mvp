@@ -33,6 +33,22 @@ const wideningSchema = z.array(z.strictObject({ fromLead: int, ratio: num, horiz
 export const OUTLOOK_DAYS = 365;
 export const OUTLOOK_CAP_DAYS = 400;
 
+/** D72: at most this many backtest days (the lab sends at most one a day from its data cutoff less 400 days to the cutoff). */
+export const MAX_BACKTEST_DAYS = 450;
+
+/**
+ * D72: one day the backtest forecast, from a fit trained on sales through `dataThrough` only, in whole guests. Ordered
+ * and checked against the run in checkLabResult (backtestIssues).
+ */
+const backtestDaySchema = z.strictObject({
+  date: isoDate,
+  engine: z.enum(['model', 'baseline']),
+  dataThrough: isoDate,
+  low: int.min(0),
+  mid: int.min(0),
+  high: int.min(0),
+});
+
 /** The model's LabParams. */
 const modelParamsSchema = z.strictObject({
   target: z.literal('guests'),
@@ -84,6 +100,8 @@ export const labResultSchema = z.discriminatedUnion('ok', [
     params: labParamsSchema,
     scorecard: labScorecardSchema,
     run: labRunFileSchema,
+    // D72: optional, so a result from a lab before v14 still parses during a rolling deploy.
+    backtestDays: z.array(backtestDaySchema).max(MAX_BACKTEST_DAYS).default([]),
   }),
   z.strictObject({
     schema: z.literal(LAB_RESULT_SCHEMA),
@@ -136,6 +154,25 @@ function outlookIssues(result: LabSuccess, termsThrough: string | null): FileIss
 }
 
 /**
+ * D72: the backtest days in strictly ascending date order, so no date twice (dates_out_of_order), each forecast from data
+ * that ended before it (not_after_data), none after the run's own last day of data (after_data_through), and
+ * low <= mid <= high (below_low, below_mid), as the run file's days.
+ */
+function backtestIssues(result: LabSuccess): FileIssue[] {
+  const issues: FileIssue[] = [];
+  result.backtestDays.forEach((day, i) => {
+    const at = `backtestDays[${String(i)}]`;
+    const before = result.backtestDays[i - 1];
+    if (before !== undefined && before.date >= day.date) issues.push({ path: `${at}.date`, code: 'dates_out_of_order' });
+    if (day.dataThrough >= day.date) issues.push({ path: `${at}.date`, code: 'not_after_data' });
+    if (day.date > result.run.dataThrough) issues.push({ path: `${at}.date`, code: 'after_data_through' });
+    if (day.mid < day.low) issues.push({ path: `${at}.mid`, code: 'below_low' });
+    if (day.high < day.mid) issues.push({ path: `${at}.high`, code: 'below_mid' });
+  });
+  return issues;
+}
+
+/**
  * The result for `calibration`, checked against today (UTC): its shape, the run file's own rules (checkLabRunFile),
  * the calibration's id, the last day of the input it was given, the current forecast it was compared with, and that
  * every scorecard week starts on or before that last day: those weeks reach TownwiseAI (lab/components.ts), and a later
@@ -177,6 +214,7 @@ export function checkLabResult(
       if (learning != null && learning.to > through) issues.push({ path: 'scorecard.learning.to', code: 'after_data_through' });
     }
     issues.push(...outlookIssues(result, calibration.termsThrough));
+    issues.push(...backtestIssues(result));
   }
   return issues.length > 0 ? { ok: false, issues: issues.slice(0, MAX_ISSUES) } : { ok: true, result };
 }

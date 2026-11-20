@@ -8,7 +8,8 @@ significant week by week (switch_p_value, D69), and it passes the gate's coverag
 checks (choose_engine, passes); with no current run the baseline is returned unless the model wins the same way. The returned engine's backtest, six-month folds and
 comparison with the current published run make the scorecard, with each engine's own figures beside them, and its run
 reaches today plus 91 days (its forecast tier, D42) and, when that tier is backed, on to today plus 365 (its outlook,
-D52; forecast.run_end), with the outlook's ranges by outlook_ratios. Nothing here logs or prints.
+D52; forecast.run_end), with the outlook's ranges by outlook_ratios. The result also carries backtestDays (D72), the
+backtest's out-of-sample day-by-day predictions for the Calendar's past days. Nothing here logs or prints.
 """
 
 import re
@@ -43,6 +44,8 @@ COVERAGE_MIN, COVERAGE_MAX = 0.65, 0.95  # GATE.coverageMin and GATE.coverageMax
 BASELINE_BIAS_MAX = 0.05  # GATE.baselineBiasMax
 WEEKDAY_BIAS_ALLOWANCE = 0.02  # GATE.weekdayBiasAllowance: a model's weekday bias over the current run's recorded one
 MEDIAN_MARGIN = 0.005  # GATE.wapeMargin: the model's backtest weekly WAPE must be this far under its weekday median's
+BACKTEST_DAYS_BACK = 400  # D72: backtestDays reach this far before the data cutoff, as far back as the forecast route
+# reads
 CODE_VERSION = re.compile(r"[0-9a-f]{40}")
 
 
@@ -233,6 +236,21 @@ def _backtest(preds: pd.DataFrame, origins: list[pd.Timestamp], through: pd.Time
             "median_wape": metrics.weekly_wape(metrics.weekly_totals(days28, value="weekday_median"))}
 
 
+def _backtest_days(days28: pd.DataFrame, engine: str, fill: pd.DataFrame, through: pd.Timestamp) -> list[dict]:
+    """D72: the backtest's day-by-day predictions, for the Calendar's past days with no forecast. The returned engine's
+    horizon-28 days (`days28`), then the baseline's (`fill`, its horizon-28 days over its own whole window) on dates
+    the engine has none, from `through` less BACKTEST_DAYS_BACK on, by date. Each day is out of sample: its
+    dataThrough is the refit it was forecast from, which trained on no later day. Whole guests, low <= mid <= high."""
+    picks = pd.concat([days28.assign(engine=engine), fill[~fill.date.isin(days28.date)].assign(engine="baseline")])
+    picks = picks[picks.date >= through - pd.Timedelta(days=BACKTEST_DAYS_BACK)].sort_values("date")
+    out = []
+    for row in picks.itertuples():
+        mid = max(int(round(row.mid)), 0)
+        out.append({"date": iso(row.date), "engine": row.engine, "dataThrough": iso(row.refit),
+                    "low": max(min(int(round(row.lo)), mid), 0), "mid": mid, "high": max(int(round(row.hi)), mid)})
+    return out
+
+
 def _summary(bt: dict) -> dict:
     """An engine's figures in the scorecard's `engines`."""
     return {"weeks": len(bt["weeks28"]), "weeklyWape": bt["scores"]["weeklyWape"], "weeklyBias": bt["bias"],
@@ -419,6 +437,10 @@ def calibrate(inp: dict, code_version: str) -> dict:
                            model_significant=significant["model"], baseline_significant=significant["baseline"])
     bt, preds = (model_bt, model_preds) if engine == "model" else (base_bt, base_preds)
     days28, weeks28, log_err, scores, window = bt["days28"], bt["weeks28"], bt["log_err"], bt["scores"], bt["window"]
+    # D72: the Calendar's past days, the baseline filling in before the model's window when the model is returned
+    backtest_days = _backtest_days(days28, engine, backtest.pick(
+        base_preds, HORIZON, *backtest.score_window([baseline.first_cutoff(history.first_day)], through, HORIZON)),
+        through)
 
     # The run's ranges from every backtest day and week (section 9e). A weekly range that leaves out the forecast
     # itself would break the run file's low <= mid <= high, so it always holds zero. Past 28 days of lead they widen by
@@ -505,7 +527,7 @@ def calibrate(inp: dict, code_version: str) -> dict:
                                 daily_log_range=daily_log_range, weekly_log_range=log_range, widening=widening,
                                 trained_from=first, made_at=inp["today"], code_version=code_version,
                                 backtest_block=run_backtest, outlook=outlook)
-        return _success(calibration_id, code_version, params, scorecard, run)
+        return _success(calibration_id, code_version, params, scorecard, run, backtest_days)
 
     # The model the run forecasts with: every history day, the level as of the cutoff, the regime where it has data
     fitted = features.limit_weekday_regime(features.add_recent_level(frame, through), hist.index)
@@ -525,9 +547,10 @@ def calibrate(inp: dict, code_version: str) -> dict:
                             backtest_block=run_backtest, outlook=outlook)
     # Only a model run carries how its trees learned: the baseline is a rule, with nothing fitted round by round
     scorecard["learning"] = _learning(frame, hist, through, base_cols, event_cols)
-    return _success(calibration_id, code_version, params, scorecard, run)
+    return _success(calibration_id, code_version, params, scorecard, run, backtest_days)
 
 
-def _success(calibration_id: str | None, code_version: str, params: dict, scorecard: dict, run: dict) -> dict:
+def _success(calibration_id: str | None, code_version: str, params: dict, scorecard: dict, run: dict,
+             backtest_days: list[dict]) -> dict:
     return {"schema": schema.RESULT_SCHEMA, "calibrationId": calibration_id, "ok": True, "codeVersion": code_version,
-            "params": params, "scorecard": scorecard, "run": run}
+            "params": params, "scorecard": scorecard, "run": run, "backtestDays": backtest_days}

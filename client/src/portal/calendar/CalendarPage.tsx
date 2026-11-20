@@ -48,7 +48,7 @@ import { MonthChart } from './MonthChart';
 import { followSelection, stepView, stripDates, stripFor, VIEW_DAYS } from './strip';
 import { CalendarFilters, Toolbar, type CalendarView } from './Toolbar';
 import {
-  ALL_FILTERS, dayView, monthBounds, monthCheckLine, monthLabel, outlookKey, savedNotice, selectedDay, stepMonth, tooltipLines,
+  ALL_FILTERS, dayView, monthBounds, monthCheckLine, monthLabel, outlookKey, savedNotice, selectedDay, showsBacktest, stepMonth, tooltipLines,
   type CalendarInput, type FilterKey, type Filters, type ImportedEvent,
 } from './model';
 import { YourCalendars } from './YourCalendars';
@@ -347,13 +347,18 @@ function CalendarView(): React.JSX.Element {
     today, covered: shown.range, forecast: forecastWindow, salesDays: trustedGuestDays(shown.days, notes.data.list), events: shown.calendar.events,
     notes: notes.data.list,
     rules: notes.data.rules, imported: hasCalendars ? shown.stored : [], found: shown.calendar.found, filters,
+    // D72: past dates no run covers show the backtest's figure (Home leaves it out).
+    backtest: true,
   }), [today, shown, forecastWindow, notes.data, hasCalendars, filters]);
   const rows = useMemo(() => (input === null || view === 'week' ? [] : buildGrid(month, input, bounds)), [input, view, month, bounds]);
   const stripDays = useMemo(() => stripDates(strip), [strip]);
   const week = useMemo(() => (input === null || view !== 'week' ? [] : buildDays(stripDays, input, bounds)), [input, view, stripDays, bounds]);
   // The key line under the grid while a shown day is an outlook day (D52): in the week view, the 7 days in view.
-  const outlook = useMemo(() => outlookKey((view === 'week' ? week.filter((slot) => followSelection(slot.date, weekStart) === slot.date) : rows.flat())
-    .flatMap((slot) => (slot.kind === 'day' && !slot.pending && !slot.outside ? [slot] : []))), [view, week, rows, weekStart]);
+  const shownCells = useMemo(() => (view === 'week' ? week.filter((slot) => followSelection(slot.date, weekStart) === slot.date) : rows.flat())
+    .flatMap((slot) => (slot.kind === 'day' && !slot.pending && !slot.outside ? [slot] : [])), [view, week, rows, weekStart]);
+  const outlook = useMemo(() => outlookKey(shownCells), [shownCells]);
+  // D72: the key names a backtest's dotted figure while a shown cell has one.
+  const backtestShown = useMemo(() => showsBacktest(shownCells), [shownCells]);
   // The forecast chart (D64): the grid month's days above the grid, or the strip's days atop the week's; none while
   // the chip hides it or it has nothing to draw.
   const storedLastYear = monthData.data?.lastYear ?? null;
@@ -749,7 +754,7 @@ function CalendarView(): React.JSX.Element {
               />
             )}
           </View>
-          <FigureKey />
+          <FigureKey backtest={backtestShown} />
           {monthLine === null ? null : <Small>{monthLine}</Small>}
           {outlook === null ? null : <Small>{outlook}</Small>}
         </View>

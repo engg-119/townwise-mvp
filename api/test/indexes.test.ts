@@ -35,8 +35,8 @@ describe('indexes', () => {
       'tw_welcomes',
       // The display name for TownwiseAI's greeting (account-level).
       'tw_profiles',
-      // U13B, forecast runs.
-      'tw_forecast_runs', 'tw_forecasts',
+      // U13B, forecast runs, and (D72) a lab run's backtest days.
+      'tw_forecast_runs', 'tw_forecasts', 'tw_forecast_backtest_days',
       // The forecast lab.
       'tw_calibrations',
       // D42, the weekly refresh.
@@ -76,6 +76,15 @@ describe('indexes', () => {
     expect(keys).toEqual([{ orgId: 1, day: 1 }, { day: 1 }, { userId: 1 }]);
     expect(connection.models.TwActivityDay?.schema.get('strict')).toBe('throw');
     expect(connection.models.TwActivityDay?.schema.get('versionKey')).toBe(false);
+  });
+
+  it('keeps one backtest day per run and date, strict, and deletes a run’s by its id (D72)', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwForecastBacktestDay')).toEqual([
+      [{ orgId: 1, locationId: 1, runId: 1, date: 1 }, expect.objectContaining({ unique: true })],
+      [{ orgId: 1, runId: 1 }, expect.anything()],
+    ]);
+    expect(connection.models.TwForecastBacktestDay?.schema.get('strict')).toBe('throw');
   });
 
   it('keeps one weekly refresh row per location per week (D42)', () => {

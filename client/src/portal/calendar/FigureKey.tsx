@@ -1,12 +1,13 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
-import { FIGURE_KEY, markedFigure } from './model';
+import { BACKTEST_LABEL, FIGURE_KEY, markedFigure } from './model';
 
 // The key's two figure entries (D49, design decision 10), on web and native: a sample actual, solid, named “Actual
 // guests”, and a sample forecast, lighter after its “~”, named “Forecast”. Home's month key (home/MonthKey.tsx) holds
 // these entries beside its marks; the Calendar shows them under its month and week views. Hidden from screen readers:
-// each day's label says “actual” or “forecast” after its figure.
+// each day's label says “actual” or “forecast” after its figure. The Calendar adds a third, a sample backtest dotted
+// underneath, named “Backtest”, while a shown cell's figure is one (D72, model.ts showsBacktest).
 
 /** The two entries, laid out by the key that holds them. `metric` names Home's net-sales actual. */
 export function FigureKeyItems(props: { metric?: 'guests' | 'netSales' }): React.JSX.Element {
@@ -24,11 +25,17 @@ export function FigureKeyItems(props: { metric?: 'guests' | 'netSales' }): React
   );
 }
 
-/** The Calendar's key: the two figure entries alone. */
-export function FigureKey(): React.JSX.Element {
+/** The Calendar's key: the two figure entries, and a backtest's while a shown cell's figure is one (D72). */
+export function FigureKey(props: { backtest?: boolean }): React.JSX.Element {
   return (
     <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden testID="figure-key" style={styles.key}>
       <FigureKeyItems />
+      {props.backtest === true ? (
+        <View style={styles.item}>
+          <Text style={[styles.sample, styles.forecast, styles.dotted]}>{markedFigure('82', { kind: 'backtest' })}</Text>
+          <Text style={styles.text}>{BACKTEST_LABEL}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -41,5 +48,6 @@ const styles = StyleSheet.create({
   sample: { ...theme.type.mono, fontWeight: '500', fontVariant: ['tabular-nums'] },
   actual: { color: c.white },
   forecast: { color: c.text2 },
+  dotted: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
   text: { ...theme.type.mono, color: c.text2 },
 });

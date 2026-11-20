@@ -7,7 +7,7 @@ import { MARK } from '../home/MonthKey';
 import type { CalendarGridProps } from './CalendarGrid';
 import { anchorOf, DayTooltip, type TooltipAnchor } from './DayTooltip.web';
 import { CELL_GAP, cellSize, columnTemplate, entryLines, gridMove, selectedColumn, slotOf, WEEKDAY_ROW, type DayCell } from './grid';
-import { figureTone, markedFigure, statusTakesFigure, statusWord, topRightOf } from './model';
+import { dottedFigure, figureTone, markedFigure, statusTakesFigure, statusWord, topRightOf } from './model';
 
 // The Calendar's month grid on web (P28, spec 16.3): DOM, as Home's month grid is, because each day
 // takes focus. The grid is role="grid" named by its month and one tab stop (roving tabIndex on the selected day).
@@ -42,6 +42,7 @@ const small = { fontFamily: theme.font.mono, fontSize: 10, lineHeight: '14px' } 
 const square = { position: 'absolute', width: MARK, height: MARK, pointerEvents: 'none' } as const;
 const line = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
 const block = { display: 'block' } as const;
+const dotted = { textDecorationLine: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3 } as const;
 
 function dateOf(target: EventTarget | null): string | null {
   const element = target instanceof Element ? target.closest('[data-date]') : null;
@@ -105,7 +106,14 @@ function Day(props: { cell: DayCell; selected: boolean; width: number }): React.
         <span aria-hidden="true" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, flexShrink: 0, ...(size.lines > 0 ? { height: 26 } : {}) }}>
           {statusInFigure ? <StatusWords words={status} size={phone ? 9 : 10} color={muted ? C.text3 : C.text2} /> : cell.figure === null ? null : (
             <>
-              <span data-figure={figureTone(cell.figure) === 'white' ? 'actual' : 'forecast'} style={{ ...mono, fontSize: size.figure, lineHeight: `${String(size.figure + 4)}px`, fontWeight: 500, color: muted ? C.text3 : C[figureTone(cell.figure)] }}>
+              <span
+                data-figure={dottedFigure(cell.figure) ? 'backtest' : figureTone(cell.figure) === 'white' ? 'actual' : 'forecast'}
+                style={{
+                  ...mono, fontSize: size.figure, lineHeight: `${String(size.figure + 4)}px`, fontWeight: 500, color: muted ? C.text3 : C[figureTone(cell.figure)],
+                  // D72: a backtest's figure is dotted underneath at every width (model.ts dottedFigure).
+                  ...(dottedFigure(cell.figure) ? dotted : {}),
+                }}
+              >
                 {markedFigure(String(cell.figure.value), cell.figure)}
               </span>
               {cell.noteGuests > 0 && !phone ? <span style={{ ...mono, color: C.mint }}>{`+${String(cell.noteGuests)}`}</span> : null}

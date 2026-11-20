@@ -7,7 +7,7 @@ import { WEEK_ORDER, WEEKDAY_NAMES } from '../analytics/words';
 import { useBreakpoint } from '../hooks';
 import { MARK } from '../home/MonthKey';
 import { CELL_GAP, cellSize, columnGrow, entryLines, selectedColumn, slotOf, WEEKDAY_ROW, type DayCell, type GridSlot, type MonthBounds } from './grid';
-import { figureTone, markedFigure, statusTakesFigure, statusWord, topRightOf, type CalendarCell, type TooltipLines } from './model';
+import { dottedFigure, figureTone, markedFigure, statusTakesFigure, statusWord, topRightOf, type CalendarCell, type TooltipLines } from './model';
 
 // The Calendar's month grid on native (P28, spec 16.3): always 42 days in 6 rows, Monday first, a Pressable per day.
 // Every cell is a fixed height by width (grid.ts cellSize: 104, 64 or 52px), whatever it holds. A cell shows its day
@@ -108,7 +108,7 @@ function Day(props: { cell: DayCell; selected: boolean; width: number; onSelect:
             <Text style={[styles.status, styles.centered, phone ? styles.statusPhone : null, muted ? styles.muted : null]}>{status.split(' ').join('\n')}</Text>
           ) : cell.figure === null ? null : (
             <>
-              <Text style={[styles.figure, { fontSize: size.figure, lineHeight: size.figure + 4 }, figureTone(cell.figure) === 'text2' ? styles.forecast : null, muted ? styles.muted : null]}>
+              <Text style={[styles.figure, { fontSize: size.figure, lineHeight: size.figure + 4 }, figureTone(cell.figure) === 'text2' ? styles.forecast : null, dottedFigure(cell.figure) ? styles.dotted : null, muted ? styles.muted : null]}>
                 {markedFigure(String(cell.figure.value), cell.figure)}
               </Text>
               {cell.noteGuests > 0 && !phone ? <Text style={styles.added}>{`+${String(cell.noteGuests)}`}</Text> : null}
@@ -198,6 +198,8 @@ const styles = StyleSheet.create({
   middleWide: { height: 26 },
   figure: { ...theme.type.monoValue, color: c.white, fontVariant: ['tabular-nums'] },
   forecast: { color: c.text2 },
+  // D72: a backtest's figure, dotted underneath (model.ts dottedFigure).
+  dotted: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
   added: { ...theme.type.mono, color: c.mint, fontVariant: ['tabular-nums'] },
   caption: { ...theme.type.mono, fontSize: 10, lineHeight: 14, color: c.text3 },
   entries: { gap: 2, height: 46 },

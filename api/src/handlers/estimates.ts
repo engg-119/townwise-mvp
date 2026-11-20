@@ -54,12 +54,17 @@ function forecastQuery(earliest: string, latest: string) {
     && range.from <= range.to && daysBetween(range.from, range.to) < MAX_FORECAST_RANGE_DAYS && range.to <= latest);
 }
 
-/** U13B: GET /api/org/locations/:locationId/forecast?from=&to=: 200 ForecastWindow, published runs only. */
+/**
+ * U13B: GET /api/org/locations/:locationId/forecast?from=&to=: 200 ForecastWindow, published runs only, with (D72) the
+ * backtest days of the past dates no run covers.
+ */
 export async function getForecast(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = memberOf(principal);
   const now = ctx.now();
   const range = parseInput(forecastQuery(utcDay(now, -MAX_FORECAST_DAYS_BACK), utcDay(now, MAX_DAYS_AHEAD)), req.query);
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  // Today is the town's, as for the model card and TownwiseAI: a day counts as past only once it has ended there.
-  res.status(200).json(await ctx.ports.forecasts.window(scope, location, range, localDay(now, timeZoneOf(location.town).timeZone)));
+  // Today is the town's, as for the model card and TownwiseAI: a day counts as past only once it has ended there. D72:
+  // only this read asks for the backtest days of past dates no run covers.
+  const today = localDay(now, timeZoneOf(location.town).timeZone);
+  res.status(200).json(await ctx.ports.forecasts.window(scope, location, range, today, { backtest: true }));
 }

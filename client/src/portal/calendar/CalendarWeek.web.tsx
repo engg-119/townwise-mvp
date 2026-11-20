@@ -9,7 +9,7 @@ import { chartDrawn, chartWindows, type ChartWindow } from './chart';
 import type { CalendarWeekProps } from './CalendarWeek';
 import { anchorBeside, anchorOf, DayTooltip, type TooltipAnchor } from './DayTooltip.web';
 import { CARD_MARK, CELL_GAP, gridHeight, gridMove, headLine, periodCard, weekHead, type InertCell, type WeekCard, type WeekDay, type WeekSlot } from './grid';
-import { figureTone, markedFigure, statusWord } from './model';
+import { dottedFigure, figureTone, markedFigure, statusWord } from './model';
 import { ChartKey } from './MonthChart';
 import { nearestDay, stripStep, STRIP_GROW_DAYS, VIEW_DAYS } from './strip';
 
@@ -66,6 +66,8 @@ const CSS = [
 
 const mono = { fontFamily: theme.font.mono, fontSize: 12, lineHeight: '16px', fontVariantNumeric: 'tabular-nums' } as const;
 const small = { fontFamily: theme.font.mono, fontSize: 10, lineHeight: '14px' } as const;
+/** D72: a backtest's figure, dotted underneath (model.ts dottedFigure). */
+const dotted = { textDecorationLine: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3 } as const;
 const sans = { fontFamily: theme.font.sans, fontSize: 12, lineHeight: '16px' } as const;
 
 /** How long a pointer may rest over no head before the tooltip clears, as the month grid's. */
@@ -151,7 +153,10 @@ function Head(props: { day: WeekDay; agenda: boolean }): React.JSX.Element {
           {status === null ? null : <span style={{ ...small, color: C.text2, textTransform: 'uppercase' }}>{status}</span>}
           {day.figure === null ? null : (
             <span style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-              <span data-figure={figureTone(day.figure) === 'white' ? 'actual' : 'forecast'} style={{ ...mono, fontSize: 22, lineHeight: '26px', fontWeight: 500, color: C[figureTone(day.figure)] }}>
+              <span
+                data-figure={dottedFigure(day.figure) ? 'backtest' : figureTone(day.figure) === 'white' ? 'actual' : 'forecast'}
+                style={{ ...mono, fontSize: 22, lineHeight: '26px', fontWeight: 500, color: C[figureTone(day.figure)], ...(dottedFigure(day.figure) ? dotted : {}) }}
+              >
                 {markedFigure(String(day.figure.value), day.figure)}
               </span>
               {day.noteGuests > 0 ? <span style={{ ...mono, color: C.mint }}>{`+${String(day.noteGuests)}`}</span> : null}
@@ -257,7 +262,7 @@ const StripDay = memo(function StripDay(props: { day: WeekSlot; selected: boolea
       )}
       <span style={{ ...small, color: !inert && day.isToday ? C.white : C.text3, fontWeight: !inert && day.isToday ? 600 : 400 }}>{weekHead(day.date)}</span>
       {figure === null ? null : (
-        <span style={{ ...mono, fontWeight: 500, color: C[figureTone(figure)] }}>{markedFigure(String(figure.value), figure)}</span>
+        <span style={{ ...mono, fontWeight: 500, color: C[figureTone(figure)], ...(dottedFigure(figure) ? dotted : {}) }}>{markedFigure(String(figure.value), figure)}</span>
       )}
       {figure !== null || status === null ? null : <span style={{ ...small, fontSize: 9, color: C.text2, textTransform: 'uppercase', textAlign: 'center' }}>{status}</span>}
     </div>

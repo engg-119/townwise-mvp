@@ -10,7 +10,7 @@ import { addDays, daysBetween } from '../locations/dates';
 import { AgendaCard } from './AgendaCard';
 import { chartDrawn, chartWindows, type CalendarChart, type ChartWindow } from './chart';
 import { cardWords, CELL_GAP, headLine, weekHead, type InertCell, type MonthBounds, type WeekDay, type WeekSlot } from './grid';
-import { figureTone, markedFigure, statusWord, type TooltipLines } from './model';
+import { dottedFigure, figureTone, markedFigure, statusWord, type TooltipLines } from './model';
 import { ChartKey } from './MonthChart';
 import { nearestDay, snapOffsets, stripStep, STRIP_GROW_DAYS, VIEW_DAYS } from './strip';
 
@@ -76,7 +76,7 @@ function Head(props: { day: WeekDay }): React.JSX.Element {
       {day.isToday ? <Text style={styles.tag}>Today</Text> : null}
       {day.pending || status === null ? null : <Text style={styles.status}>{status}</Text>}
       {day.pending || day.figure === null ? null : (
-        <Text style={[styles.figure, figureTone(day.figure) === 'text2' ? styles.forecast : null]}>{markedFigure(String(day.figure.value), day.figure)}</Text>
+        <Text style={[styles.figure, figureTone(day.figure) === 'text2' ? styles.forecast : null, dottedFigure(day.figure) ? styles.dotted : null]}>{markedFigure(String(day.figure.value), day.figure)}</Text>
       )}
       {day.pending || day.noteGuests === 0 ? null : <Text style={styles.added}>{`+${String(day.noteGuests)}`}</Text>}
       {day.pending || last === null ? null : <Text style={styles.line}>{last}</Text>}
@@ -149,7 +149,7 @@ const StripDay = memo(function StripDay(props: {
       )}
       <Text style={[styles.stripHead, !inert && day.isToday ? styles.today : null]}>{weekHead(day.date)}</Text>
       {figure === null ? null : (
-        <Text style={[styles.stripFigure, figureTone(figure) === 'text2' ? styles.forecast : null]}>{markedFigure(String(figure.value), figure)}</Text>
+        <Text style={[styles.stripFigure, figureTone(figure) === 'text2' ? styles.forecast : null, dottedFigure(figure) ? styles.dotted : null]}>{markedFigure(String(figure.value), figure)}</Text>
       )}
       {figure !== null || status === null ? null : <Text style={styles.stripStatus}>{status}</Text>}
     </Pressable>
@@ -251,6 +251,8 @@ const styles = StyleSheet.create({
   status: { ...theme.type.mono, fontSize: 10, lineHeight: 14, color: c.text2, textTransform: 'uppercase' },
   figure: { ...theme.type.monoValue, fontSize: 22, lineHeight: 26, color: c.white, fontVariant: ['tabular-nums'] },
   forecast: { color: c.text2 },
+  // D72: a backtest's figure, dotted underneath (model.ts dottedFigure).
+  dotted: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
   added: { ...theme.type.mono, color: c.mint, fontVariant: ['tabular-nums'] },
   line: { ...theme.type.mono, fontSize: 11, lineHeight: 14, color: c.text3 },
   stripGap: { marginRight: CELL_GAP },

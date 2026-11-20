@@ -4,7 +4,7 @@ import type { PlotDay, PlotDrawn } from '../chart/ForecastPlot';
 import { addDays } from '../locations/dates';
 import type { SalesDay } from '../locations/api';
 import type { DateRange } from './grid';
-import { figureOf, statusWord, type CalendarInput } from './model';
+import { backtestDayOf, figureOf, statusWord, type CalendarInput } from './model';
 
 // The Calendar's forecast chart as data (P28, D64), pure: for each date, what chart/ForecastPlot.tsx draws, in guests.
 // The point is the forecast read's own day (its low, middle and high) on an open day, past days included, so a past
@@ -12,11 +12,15 @@ import { figureOf, statusWord, type CalendarInput } from './model';
 // words in a point's place are the cell's status word (Closed, Booked, Likely closed, No data, No forecast), as figureOf
 // decides it, so they wait for the forecast read as the cells' words do. The same weekday last year is the stored
 // guests 364 days earlier (analytics/week.ts YEAR_DAYS), from the page's own read of them (lastYearRange). A day the
-// reads don't cover yet draws nothing. Nothing here estimates, sums or adjusts a figure.
+// reads don't cover yet draws nothing. Nothing here estimates, sums or adjusts a figure. A past date no run covers draws
+// the backtest's figure for it when the input shows them (D72, model.ts backtestDayOf), marked `backtest` so the plot
+// draws it apart from a real forecast and the key names it.
 
 export interface CalendarChartDay extends PlotDay {
   isToday: boolean;
   outlook: boolean;
+  /** D72: the point is the backtest's, on a past date no run covers. */
+  backtest: boolean;
   /** The status word drawn in the day's place: none on an open or outlook day, or while the forecast reads. */
   status: string | null;
   /** The reads don't cover the day yet. */
@@ -50,17 +54,19 @@ export function calendarChart(dates: readonly string[], input: CalendarInput, la
   const days = dates.map((date): CalendarChartDay => {
     const isToday = date === input.today;
     if (date < input.covered.from || date > input.covered.to) {
-      return { date, isToday, pending: true, point: null, outlook: false, actual: null, lastYear: null, status: null };
+      return { date, isToday, pending: true, point: null, outlook: false, backtest: false, actual: null, lastYear: null, status: null };
     }
     const found = figureOf(date, input);
     const read = input.forecast?.days.find((day) => day.date === date) ?? null;
     const open = found.status === null || found.status === 'outlook';
+    const backtest = open && read === null ? backtestDayOf(date, input) : null;
     const point = open && read !== null && read.status === 'open' && read.low !== null && read.mid !== null && read.high !== null
-      ? { low: read.low, mid: read.mid, high: read.high } : null;
+      ? { low: read.low, mid: read.mid, high: read.high }
+      : backtest === null ? null : { low: backtest.low, mid: backtest.mid, high: backtest.high };
     const actual = date < input.today ? input.salesDays.find((day) => day.date === date)?.guests ?? null : null;
     const before = lastYear?.find((day) => day.date === addDays(date, -YEAR_DAYS))?.guests ?? null;
     return {
-      date, isToday, pending: false, point, outlook: point !== null && read?.outlook === true, actual, lastYear: before,
+      date, isToday, pending: false, point, outlook: point !== null && read?.outlook === true, backtest: backtest !== null, actual, lastYear: before,
       status: open ? null : statusWord(found.status),
     };
   });
@@ -71,25 +77,32 @@ export function calendarChart(dates: readonly string[], input: CalendarInput, la
 /** Which series `days` draw, for the key: the week view's key names those of the 7 days in view. */
 export function chartDrawn(days: readonly CalendarChartDay[]): Required<PlotDrawn> {
   return {
-    forecast: days.some((day) => day.point !== null),
+    forecast: days.some((day) => day.point !== null && !day.backtest),
     actual: days.some((day) => day.actual !== null),
     lastYear: days.some((day) => day.lastYear !== null),
     outlook: days.some((day) => day.outlook),
+    backtest: days.some((day) => day.point !== null && day.backtest),
   };
 }
 
 /** Whether the chart draws anything: with nothing to draw it is left out. */
 export function chartDraws(chart: CalendarChart): boolean {
-  return chart.drawn.forecast || chart.drawn.actual || chart.drawn.lastYear;
+  return chart.drawn.forecast || chart.drawn.backtest || chart.drawn.actual || chart.drawn.lastYear;
+}
+
+/** Whether the chart draws a forecast or a backtest (D72) somewhere. */
+export function drawsForecast(chart: Pick<CalendarChart, 'drawn'>): boolean {
+  return chart.drawn.forecast || chart.drawn.backtest;
 }
 
 /**
- * The month chart's upright words: each day's status word while the chart draws a forecast somewhere, else none, since
- * a month with no forecast would be a column of words per day that the grid already says; the chart says it once
- * under the plot instead (MonthChart.tsx), in one line, “No forecast for these days.” (owner decision, 2026-11-19).
+ * The month chart's upright words: each day's status word while the chart draws a forecast or a backtest somewhere,
+ * else none, since a month with neither would be a column of words per day that the grid already says; the chart says
+ * it once under the plot instead (MonthChart.tsx), in one line, “No forecast for these days.” (owner decision,
+ * 2026-11-19).
  */
 export function chartWords(chart: CalendarChart): (string | null)[] {
-  return chart.days.map((day) => (chart.drawn.forecast ? day.status : null));
+  return chart.days.map((day) => (drawsForecast(chart) ? day.status : null));
 }
 
 /** A day's slice of the chart in the week view: the day with its neighbors either side, and where it is among them. */

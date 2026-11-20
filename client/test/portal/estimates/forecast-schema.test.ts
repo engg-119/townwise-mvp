@@ -128,6 +128,19 @@ describe('forecastWindowSchema', () => {
     expect(forecastRunSchema.parse(RUN).engine).toBeUndefined();
   });
 
+  test('a window’s backtest days (D72), and none from an API before them', () => {
+    const day = {
+      date: '2026-04-20', weekday: 'Mon', engine: 'baseline', dataThrough: '2026-01-31', low: 70, mid: 90, high: 110, runId: 'r1', actual: 95, inRange: true,
+    };
+    const parsed = forecastWindowSchema.parse({ ...WINDOW, backtest: [day, { ...day, date: '2026-04-21', engine: 'model', actual: null, inRange: null }] });
+    expect(parsed.backtest).toEqual([
+      { date: '2026-04-20', engine: 'baseline', dataThrough: '2026-01-31', low: 70, mid: 90, high: 110, runId: 'r1', actual: 95, inRange: true },
+      { date: '2026-04-21', engine: 'model', dataThrough: '2026-01-31', low: 70, mid: 90, high: 110, runId: 'r1', actual: null, inRange: null },
+    ]);
+    // An API before D72 sends none: the window still parses, with no backtest days.
+    expect(forecastWindowSchema.parse(WINDOW).backtest).toBeUndefined();
+  });
+
   test('no published forecast', () => {
     const none = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [{ from: '2026-05-01', to: '2026-05-31' }] };
     expect(forecastWindowSchema.parse(none)).toEqual({ available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [] });

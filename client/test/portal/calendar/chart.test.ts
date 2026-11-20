@@ -1,6 +1,6 @@
-import { calendarChart, chartDrawn, chartDraws, chartWindows, chartWords, lastYearRange } from '../../../src/portal/calendar/chart';
+import { calendarChart, chartDrawn, chartDraws, chartWindows, chartWords, drawsForecast, lastYearRange } from '../../../src/portal/calendar/chart';
 import { ALL_FILTERS, type CalendarInput } from '../../../src/portal/calendar/model';
-import type { ForecastWindow } from '../../../src/portal/estimates/api';
+import type { BacktestDay, ForecastWindow } from '../../../src/portal/estimates/api';
 import type { SalesDay } from '../../../src/portal/locations/api';
 import { forecastDay, forecastOf } from './fakes';
 
@@ -35,7 +35,7 @@ test('an open day draws its middle and range; an outlook day draws its wider ran
   expect(chart.days.map((day) => day.point)).toEqual([{ low: 180, mid: 212, high: 240 }, { low: 150, mid: 212, high: 290 }]);
   expect(chart.days.map((day) => day.outlook)).toEqual([false, true]);
   expect(chart.days.map((day) => day.status)).toEqual([null, null]);
-  expect(chart.drawn).toEqual({ forecast: true, actual: false, lastYear: false, outlook: true });
+  expect(chart.drawn).toEqual({ forecast: true, actual: false, lastYear: false, outlook: true, backtest: false });
   expect(chart.top).toBe(500);
 });
 
@@ -135,7 +135,54 @@ test('what a run of days draws, for the week view’s key over the days in view'
   const chart = calendarChart(['2026-11-12', '2026-11-13'], input({
     forecast: windowOf([forecastDay({ date: '2026-11-12' }), forecastDay({ date: '2026-11-13', outlook: true })]),
   }), null);
-  expect(chartDrawn(chart.days.slice(0, 1))).toEqual({ forecast: true, actual: false, lastYear: false, outlook: false });
+  expect(chartDrawn(chart.days.slice(0, 1))).toEqual({ forecast: true, actual: false, lastYear: false, outlook: false, backtest: false });
   expect(chartDrawn(chart.days)).toEqual(chart.drawn);
-  expect(chartDrawn([])).toEqual({ forecast: false, actual: false, lastYear: false, outlook: false });
+  expect(chartDrawn([])).toEqual({ forecast: false, actual: false, lastYear: false, outlook: false, backtest: false });
+});
+
+describe('backtest days (D72)', () => {
+  // Nov 2 and 3 have no run's day and a backtest's; Nov 9 has a run's day and a backtest entry, which it ignores.
+  const backtest = (date: string, fields: Partial<BacktestDay> = {}): BacktestDay => ({
+    date, engine: 'model', dataThrough: '2026-06-30', low: 100, mid: 125, high: 150, runId: 'r0', actual: 131, inRange: true, ...fields,
+  });
+  const reads = (fields: Partial<CalendarInput> = {}): CalendarInput => input({
+    backtest: true,
+    forecast: { ...windowOf([forecastDay({ date: '2026-11-09', low: 100, mid: 120, high: 140 })]), backtest: [backtest('2026-11-02'), backtest('2026-11-03'), backtest('2026-11-09', { mid: 999 })] },
+    salesDays: [stored('2026-11-02', 131), stored('2026-11-09', 131)],
+    ...fields,
+  });
+  const dates = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-09'];
+
+  test('a past date no run covers draws the backtest’s point, flagged; a run’s day keeps its own', () => {
+    const chart = calendarChart(dates, reads(), null);
+    expect(chart.days.map((day) => [day.point, day.backtest])).toEqual([
+      [{ low: 100, mid: 125, high: 150 }, true],
+      [{ low: 100, mid: 125, high: 150 }, true],
+      [null, false],
+      [{ low: 100, mid: 120, high: 140 }, false],
+    ]);
+    // Nov 2's stored guests sit beside its backtest; Nov 3 has none and Nov 4 neither a backtest nor guests.
+    expect(chart.days.map((day) => day.actual)).toEqual([131, null, null, 131]);
+    expect(chart.days.map((day) => day.status)).toEqual([null, null, 'No data', null]);
+    expect(chart.drawn).toMatchObject({ forecast: true, backtest: true });
+  });
+
+  test('a month with only backtest days draws them, says each day’s word, and never says No forecast for these days', () => {
+    const only = calendarChart(dates.slice(0, 3), reads(), null);
+    expect(only.drawn).toMatchObject({ forecast: false, backtest: true });
+    expect(chartDraws(only)).toBe(true);
+    expect(drawsForecast(only)).toBe(true);
+    expect(chartWords(only)).toEqual([null, null, 'No data']);
+    // With neither a forecast nor a backtest, the month says it once (MonthChart.tsx), with no words per day.
+    const neither = calendarChart(['2026-11-04', '2026-11-05'], reads(), null);
+    expect(drawsForecast(neither)).toBe(false);
+    expect(chartWords(neither)).toEqual([null, null]);
+  });
+
+  test('without the input’s backtest flag (Home), backtest days draw nothing', () => {
+    const chart = calendarChart(dates, reads({ backtest: false }), null);
+    expect(chart.days.map((day) => day.backtest)).toEqual([false, false, false, false]);
+    expect(chart.days[1]).toMatchObject({ point: null, status: 'No data' });
+    expect(chart.drawn.backtest).toBe(false);
+  });
 });

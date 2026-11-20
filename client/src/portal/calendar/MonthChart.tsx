@@ -5,14 +5,15 @@ import { useReducedMotion } from '../../motion';
 import { theme } from '../../theme';
 import { formatCount } from '../format';
 import { ForecastPlot, PlotKey, wordedLastYear, type PlotDrawn } from '../chart/ForecastPlot';
-import { chartWords, type CalendarChart } from './chart';
+import { chartWords, drawsForecast, type CalendarChart } from './chart';
 import { FIGURE_KEY } from './model';
 
 // The month view's forecast chart (P28, D64), on web and native (react-native-svg through chart/ForecastPlot.tsx):
 // above the grid, one column per day of the grid's month (calendar/chart.ts), with the forecast's middle and range, an
-// outlook day's range dashed, a past day's stored guests, the same weekday last year, and a status word standing
-// upright in a column with no point while the month has a forecast somewhere; a month with none draws no words and
-// says “No forecast for these days.” once under the plot (chart.ts chartWords). Today's column is shaded and its
+// outlook day's range dashed, a backtest's figure on a past day no run covers drawn apart and named in the key (D72), a
+// past day's stored guests, the same weekday last year, and a status word standing upright in a column with no point
+// while the month has a forecast or a backtest somewhere; a month with neither draws no words and says “No forecast for
+// these days.” once under the plot (chart.ts chartWords). Today's column is shaded and its
 // date `white` and bold; the selected day's column is tinted `mint` with `mint` edges and a `mint` mark under its date,
 // so it never reads as today's; a mouse or pen over another column (web, never touch) lights that one `white` as well,
 // and the selected column keeps its tint. A column is at least 24px wide, so a month that doesn't fit (a phone) scrolls
@@ -138,7 +139,7 @@ export function MonthChart(props: {
           </View>
         </ScrollView>
       </View>
-      {chart.drawn.forecast ? null : <Text style={styles.scale}>No forecast for these days.</Text>}
+      {drawsForecast(chart) ? null : <Text style={styles.scale}>No forecast for these days.</Text>}
       <ChartKey drawn={drawn} top={chart.top} testID="calendar-month-chart-key" />
     </View>
   );

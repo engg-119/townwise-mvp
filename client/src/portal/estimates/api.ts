@@ -203,6 +203,18 @@ const forecastDaySchema = z.object({
 export type ForecastDay = z.infer<typeof forecastDaySchema>;
 
 /**
+ * D72: a past day no published run covers, as the lab's backtest forecast it out of sample: from a fit trained only on
+ * sales through `dataThrough`, often months before the day. Never a forecast made at the time, and never in any
+ * accuracy. `engine` is the model's or the baseline's (which fills the days before the model's backtest); `actual` is
+ * the stored guests (null with none) and `inRange` whether they landed in [low, high] (null without them).
+ */
+const backtestDaySchema = z.object({
+  date: z.string(), engine: z.string(), dataThrough: z.string(), low: z.number(), mid: z.number(), high: z.number(), runId: z.string(),
+  actual: z.number().nullable(), inRange: z.boolean().nullable(),
+});
+export type BacktestDay = z.infer<typeof backtestDaySchema>;
+
+/**
  * GET .../forecast (spec 10.13, 14.5). `available` is false when no published run covers any day of the range. A week a
  * note changed the status of is left out; another week's figures include `noteGuests` (0 from an API before notes).
  */
@@ -225,6 +237,8 @@ export const forecastWindowSchema = z.object({
     /** Any of its days is an outlook day (D52); false from an API before it. */
     outlook: z.boolean().default(false),
   })),
+  /** D72: the backtest's days for the range's past dates no run covers, from one run; missing from an API before it (none). */
+  backtest: z.array(backtestDaySchema).optional(),
 });
 export type ForecastWindow = z.infer<typeof forecastWindowSchema>;
 
