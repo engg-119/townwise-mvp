@@ -45,8 +45,11 @@ function round6(value: number): number {
   return Math.round(value * 1e6) / 1e6;
 }
 
-/** The view that shows every point on a width by height image. Throws on an empty list. */
-export function fitView(points: readonly LatLng[], width: number, height: number): MapView {
+/**
+ * The view that shows every point on a width by height image, at most `maxZoom` (the single-place map's 15 unless
+ * given). Throws on an empty list.
+ */
+export function fitView(points: readonly LatLng[], width: number, height: number, maxZoom = MAX_VIEW_ZOOM): MapView {
   if (points.length === 0) throw new Error('fitView needs at least one point');
   const worlds = points.map(worldOf);
   const xs = worlds.map((w) => w.x);
@@ -57,7 +60,7 @@ export function fitView(points: readonly LatLng[], width: number, height: number
   const maxY = Math.max(...ys);
   const roomX = width - 2 * VIEW_PADDING.side;
   const roomY = height - VIEW_PADDING.top - VIEW_PADDING.bottom;
-  let zoom = MAX_VIEW_ZOOM;
+  let zoom = maxZoom;
   while (zoom > 0 && ((maxX - minX) * 2 ** zoom > roomX || (maxY - minY) * 2 ** zoom > roomY)) zoom -= 1;
   // The middle of the pins, nudged down by half the difference between the top and bottom margins, so the pin heads
   // above the highest point stay inside.
@@ -74,4 +77,53 @@ export function fitView(points: readonly LatLng[], width: number, height: number
       y: (height / 2 + (w.y - c.y) * scale) / height,
     })),
   };
+}
+
+/** The golden angle, in radians: pins at one spot fan out in different directions by their order. */
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+/**
+ * Positions (fractions of a width by height image) moved apart until every two are at least `minPx` logical pixels
+ * apart, each kept inside the view's margins, so pins at one spot (a block of neighbors) show each letter. Pure and
+ * deterministic: points at the same spot fan out by their order. Positions already far enough apart are unchanged.
+ */
+export function spreadPositions(
+  positions: readonly { x: number; y: number }[], width: number, height: number, minPx: number,
+): { x: number; y: number }[] {
+  const at = positions.map((p) => ({ x: p.x * width, y: p.y * height }));
+  const clamp = (p: { x: number; y: number }) => {
+    p.x = Math.max(VIEW_PADDING.side, Math.min(width - VIEW_PADDING.side, p.x));
+    p.y = Math.max(VIEW_PADDING.top, Math.min(height - VIEW_PADDING.bottom, p.y));
+  };
+  for (let round = 0; round < 100; round += 1) {
+    let moved = false;
+    for (let i = 0; i < at.length; i += 1) {
+      for (let j = i + 1; j < at.length; j += 1) {
+        const a = at[i];
+        const b = at[j];
+        if (a === undefined || b === undefined) continue;
+        const d = Math.hypot(b.x - a.x, b.y - a.y);
+        if (d >= minPx - 1e-6) continue;
+        moved = true;
+        const angle = d < 1e-6 ? j * GOLDEN_ANGLE : Math.atan2(b.y - a.y, b.x - a.x);
+        const push = (minPx - d) / 2 + 0.01;
+        a.x -= Math.cos(angle) * push;
+        a.y -= Math.sin(angle) * push;
+        b.x += Math.cos(angle) * push;
+        b.y += Math.sin(angle) * push;
+        clamp(a);
+        clamp(b);
+      }
+    }
+    if (!moved) break;
+  }
+  return at.map((p) => ({ x: p.x / width, y: p.y / height }));
+}
+
+/** The point drawn at `position` (fractions of a width by height image) on `view`: where to put a spread pin. */
+export function latLngAt(view: { center: LatLng; zoom: number }, position: { x: number; y: number }, width: number, height: number): LatLng {
+  const c = worldOf(view.center);
+  const scale = 2 ** view.zoom;
+  const point = latLngOf({ x: c.x + (position.x * width - width / 2) / scale, y: c.y + (position.y * height - height / 2) / scale });
+  return { lat: round6(point.lat), lng: round6(point.lng) };
 }

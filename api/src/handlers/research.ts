@@ -43,7 +43,7 @@ import type { Principal } from '../access/policy.ts';
 import { isoDate } from '../dates.ts';
 import { PlacesUnavailableError } from '../places/google.ts';
 import { mapThemeSchema, pinLabel, STATIC_MAP_HEIGHT, STATIC_MAP_WIDTH, type PlaceMap } from '../places/static-map.ts';
-import { fitView, type LatLng } from '../places/view.ts';
+import { fitView, latLngAt, spreadPositions, type LatLng } from '../places/view.ts';
 import { COMPETITOR_RADIUS_M, matchCompetitor, pickCompetitors, type Competitor } from '../research/competitors.ts';
 import { isTownId, nextWeeklyRunDay, queuePressRun, researchRuns } from '../research/plan.ts';
 import { parseResearchedId, readResearchedViews, researchedEventsFor, type ResearchedEventView } from '../research/read.ts';
@@ -223,6 +223,11 @@ async function liveCompetitors(ctx: TownwiseContext, placeId: string | null): Pr
   }
 }
 
+/** The Competition map's closest zoom: street level, so competitors a block apart stand apart. */
+export const COMPETITION_MAX_ZOOM = 18;
+/** The least distance between two pins on the Competition map, in logical pixels: about a pin head's width and a gap. */
+export const MIN_PIN_SPACING_PX = 26;
+
 export async function getCompetition(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = memberOf(principal);
   const { theme } = parseInput(competitionQuery, req.query);
@@ -248,9 +253,14 @@ export async function getCompetition(ctx: TownwiseContext, req: Request, res: Re
   if (ctx.placesMap !== null && live.center !== null && lettered.length > 0) {
     // The location's own point is in the fit, so the map shows its block; only the competitors carry a letter.
     const at = (competitor: Competitor): LatLng => live.points.get(competitor.placeId) ?? live.center ?? { lat: 0, lng: 0 };
-    const view = fitView([live.center, ...lettered.map(({ competitor }) => at(competitor))], STATIC_MAP_WIDTH, STATIC_MAP_HEIGHT);
-    map = ctx.placesMap.mapOfView(view, lettered.map(({ competitor, letter }) => ({ at: at(competitor), letter })), theme);
-    positions = view.positions.slice(1);
+    // Competitors are often a block away: the zoom fits their spread (up to street level), and pins closer than a pin
+    // head are moved apart on the image so each letter shows.
+    const view = fitView([live.center, ...lettered.map(({ competitor }) => at(competitor))], STATIC_MAP_WIDTH, STATIC_MAP_HEIGHT, COMPETITION_MAX_ZOOM);
+    const spread = spreadPositions(view.positions.slice(1), STATIC_MAP_WIDTH, STATIC_MAP_HEIGHT, MIN_PIN_SPACING_PX);
+    map = ctx.placesMap.mapOfView(view, lettered.map(({ letter }, index) => ({
+      at: latLngAt(view, spread[index] ?? { x: 0.5, y: 0.5 }, STATIC_MAP_WIDTH, STATIC_MAP_HEIGHT), letter,
+    })), theme);
+    positions = spread;
   }
   const competitors: CompetitorView[] = lettered.map(({ competitor, letter }, index) => ({
     letter, placeId: competitor.placeId, name: competitor.name, type: competitor.primaryType, distanceM: Math.round(competitor.distanceM),

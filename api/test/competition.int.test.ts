@@ -147,6 +147,10 @@ describe('GET /api/org/locations/:locationId/competition', () => {
       expect(competitor.x).toBeGreaterThan(0);
       expect(competitor.y).toBeGreaterThan(0);
     }
+    // Competitors within a block: the zoom fits them (not the single-place map's 15), and the pins stand apart.
+    expect(Number(new URL(body?.map?.url ?? 'https://x.test').searchParams.get('zoom'))).toBeGreaterThan(15);
+    const [first, second] = body?.competitors ?? [];
+    expect(Math.hypot(((first?.x ?? 0) - (second?.x ?? 0)) * 640, ((first?.y ?? 0) - (second?.y ?? 0)) * 320)).toBeGreaterThanOrEqual(26);
     expect(body?.web.map(({ name, events }) => ({ name, events: events.map((e) => e.id) }))).toEqual([{ name: 'Far Field Bistro', events: [`l-${web.id}`] }]);
     // One Nearby call, no website asked for.
     expect(fake.calls.map((each) => each.headers['x-goog-fieldmask'])).toEqual(['places.id,places.displayName,places.primaryType,places.location']);
