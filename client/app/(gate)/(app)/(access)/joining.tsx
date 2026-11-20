@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { declineInvite, joinInvite } from '../../../../src/portal/api';
@@ -17,12 +17,11 @@ import { Eyebrow, Heading, Lead, Mono } from '../../../../src/portal/ui/text';
 import { theme } from '../../../../src/theme';
 
 // P6. Joining (spec 16.2, F1, F2b; the Joining board), for `invited`.
-// - One invitation and no pending request, as the page opens: join at once (POST /api/me/join), showing
-//   “Joining {org}…”, then Locations with the one-time notice naming who added them (lead default, D3).
-// - With a pending request (F2b), or two or more invitations, nothing joins until a press: Join on one, or
-//   Not my team (POST /api/me/decline) on any. Join withdraws the pending request; Not my team keeps it.
-// - 409 no_invite or already_in_org re-read the access and route. Under view-as, Join and Not my team are disabled
-//   and nothing joins on its own.
+// - Nothing joins until a press (L3, D3): neither GET /api/me nor the page opening joins. One invitation shows
+//   “Join {org}?” with Join (POST /api/me/join) and Not my team (POST /api/me/decline); two or more list each.
+//   A join opens Locations with the one-time notice naming who added them.
+// - With a pending request (F2b), Join withdraws it; Not my team keeps it.
+// - 409 no_invite or already_in_org re-read the access and route. Under view-as, Join and Not my team are disabled.
 
 const CLIENT_PATHS = /^\/(dashboard|locations\/)/;
 
@@ -57,13 +56,10 @@ export default function JoiningPage(): React.JSX.Element {
   const [declined, setDeclined] = useState<string | null>(null);
   const [last, setLast] = useState<Last | null>(null);
   const access = me.access.state === 'invited' ? me.access : null;
-  // Decided once, as the page opens: after a Not my team here, or a changed invitation, what is left waits for a press.
-  const [auto, setAuto] = useState(() => access !== null && access.invitations.length === 1 && access.pendingRequest === null && !readOnly);
   const email = personEmail(me);
 
   const afterConflict = useCallback(async (error: unknown): Promise<void> => {
     if (hasCode(error, 409, 'no_invite') || hasCode(error, 409, 'already_in_org')) {
-      setAuto(false);
       await refreshMe();
       return;
     }
@@ -91,14 +87,7 @@ export default function JoiningPage(): React.JSX.Element {
     applyMe(answer);
   }, [api, applyMe, afterConflict, showNotice]));
 
-  const started = useRef(false);
   const first = access?.invitations[0];
-  const run = act.run;
-  useEffect(() => {
-    if (!auto || started.current || first === undefined) return;
-    started.current = true;
-    run({ kind: 'join', invitation: first });
-  }, [auto, first, run]);
 
   if (access === null) return <View />;
   const { invitations, pendingRequest } = access;
@@ -109,14 +98,6 @@ export default function JoiningPage(): React.JSX.Element {
     <ErrorNotice error={act.error} {...(last === null ? {} : { onRetry: () => { act.run(last); } })} />
   );
   const notice = declined === null ? null : <Notice text={declined} style={styles.notice} />;
-
-  if (auto && first !== undefined) {
-    return (
-      <Page gate eyebrow="Your team" title={`Joining ${first.orgName}…`} lead={`${inviterOf(first)} added ${email}.`}>
-        {error}
-      </Page>
-    );
-  }
 
   if (invitations.length === 1 && first !== undefined) {
     const org = first.orgName;

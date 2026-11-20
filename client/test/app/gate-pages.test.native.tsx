@@ -342,13 +342,20 @@ describe('P5 No access', () => {
 });
 
 describe('P6 Joining', () => {
-  test('one invitation and no pending request: joins at once and opens Locations with the notice naming who added them', async () => {
+  test('one invitation and no pending request: nothing joins on load; Join opens Locations with the notice naming who added them', async () => {
     const api = fakePortalApi({ me: meOf(ACCESS.invited), org: ONE_LOCATION });
     const answer = deferred<unknown>();
     api.answers['/api/me/join'] = () => answer.promise;
     const { router } = await renderApp('/joining', api);
-    expect(await screen.findByRole('heading', { name: 'Joining Sample Restaurant Group…' })).toBeTruthy();
-    expect(screen.getByText(`owner@example.com added ${EMAIL}.`)).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Join Sample Restaurant Group?' })).toBeTruthy();
+    expect(screen.getByText(`owner@example.com added ${EMAIL} to Sample Restaurant Group.`)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Not my team' })).toBeTruthy();
+    // GET /api/me read the invitation; neither it nor the page opening joins (L3). Only a press does.
+    expect(api.calls.some((call) => call.method === 'GET' && call.path === '/api/me')).toBe(true);
+    // renderRouter runs fake timers: let effects and timers settle.
+    await act(async () => { await jest.advanceTimersByTimeAsync(100); });
+    expect(writes(api)).toEqual([]);
+    await fireEvent.press(screen.getByRole('button', { name: 'Join Sample Restaurant Group' }));
     expect(writes(api)).toEqual([{ method: 'POST', path: '/api/me/join', body: { inviteId: 'i1' } }]);
     await act(async () => { answer.resolve(meOf(ACCESS.member)); await answer.promise; });
     // One location: Locations opens its Forecast tab and keeps the notice.
@@ -362,6 +369,15 @@ describe('P6 Joining', () => {
     await waitFor(() => { expect(router.getPathname()).toBe('/locations/l1'); });
     expect(screen.getAllByText(/You joined Test Group/)).toHaveLength(1);
     expect(screen.getAllByTestId('toast')).toHaveLength(1);
+  });
+
+  test('one invitation and no pending request: Not my team removes it and joins nothing', async () => {
+    const api = fakePortalApi({ me: meOf(ACCESS.invited) });
+    api.answers['/api/me/decline'] = () => meOf(ACCESS.noOrg);
+    const { router } = await renderApp('/joining', api);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Not my team' }));
+    await waitFor(() => { expect(router.getPathname()).toBe('/request-access'); });
+    expect(writes(api)).toEqual([{ method: 'POST', path: '/api/me/decline', body: { inviteId: 'i1' } }]);
   });
 
   test('with a pending request, nothing joins until Join; Not my team keeps the request and returns to Waiting', async () => {
@@ -434,6 +450,7 @@ describe('P6 Joining', () => {
       return refusal(409, 'no_invite');
     };
     const { router } = await renderApp('/joining', api);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Join Sample Restaurant Group' }));
     await waitFor(() => { expect(router.getPathname()).toBe('/request-access'); });
   });
 
@@ -441,6 +458,7 @@ describe('P6 Joining', () => {
     const api = fakePortalApi({ me: meOf(ACCESS.invited), org: orgOf('member') });
     api.answers['/api/me/join'] = () => offline();
     const { router } = await renderApp('/joining', api);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Join Sample Restaurant Group' }));
     expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
     api.answers['/api/me/join'] = () => meOf(ACCESS.member);
     await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
@@ -458,7 +476,7 @@ describe('P6 Joining', () => {
     expect(screen.getByText('Added by Townwise staff')).toBeTruthy();
   });
 
-  test('view-as: nothing joins on its own, and Join and Not my team are disabled', async () => {
+  test('view-as: Join and Not my team are disabled', async () => {
     const api = fakePortalApi({ me: viewAsMe(ACCESS.invited) });
     await renderApp('/joining', api);
     expect(await screen.findByRole('heading', { name: 'Join Sample Restaurant Group?' })).toBeTruthy();
