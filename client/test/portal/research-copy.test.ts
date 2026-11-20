@@ -104,7 +104,7 @@ describe('TownwiseAI, Home and the dashboard (task 7.4)', () => {
     expect(correctionProposedLine('hide')).toBe('TownwiseAI suggests hiding an event town research found.');
     expect(correctionProposedLine('restore')).toBe('TownwiseAI suggests restoring an event town research found.');
     expect(correctionFieldLines({ title: 'Quiz night', start: '2026-12-10', end: '2026-12-10', weekdays: [4], startTime: '19:30', where: 'Example Hall' }))
-      .toEqual(['Title: Quiz night', 'Dates: Dec 10, 2026', 'Thursdays only', 'From 7:30 pm', 'Where: Example Hall']);
+      .toEqual(['Title: Quiz night', 'Dates: Dec 10, 2026', 'Thursdays only', 'Time: 7:30 pm', 'Where: Example Hall']);
     expect(correctionFieldLines({ start: '2026-12-10' })).toEqual(['Starts Dec 10, 2026']);
     expect(correctionFieldLines({ end: '2026-12-12', weekdays: null, startTime: null, where: null }))
       .toEqual(['Ends Dec 12, 2026', 'Every day of its dates', 'No start time', 'No place']);

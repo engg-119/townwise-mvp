@@ -179,7 +179,10 @@ export function correctionProposedLine(change: CorrectionChange): string {
   return `TownwiseAI suggests ${what} an event town research found.`;
 }
 
-/** The proposed change's lines: “Title: Trivia night”, “Dates: Dec 3, 2026”, “Thursdays only”, “From 7 pm”, “Where: Example Hall”. */
+/**
+ * The proposed change's lines: “Title: Trivia night”, “Dates: Dec 3, 2026”, “Thursdays only”, “Time: 7 pm”, “Where:
+ * Example Hall”. The time is labeled as the edit sheet's Time field (UI review: “From 7 pm” read as the value it changes from).
+ */
 export function correctionFieldLines(fields: CorrectionFields | null): string[] {
   if (fields === null) return [];
   const lines: string[] = [];
@@ -188,7 +191,7 @@ export function correctionFieldLines(fields: CorrectionFields | null): string[] 
   else if (fields.start !== undefined) lines.push(`Starts ${datesLine({ startDate: fields.start, endDate: fields.start })}`);
   else if (fields.end !== undefined) lines.push(`Ends ${datesLine({ startDate: fields.end, endDate: fields.end })}`);
   if (fields.weekdays !== undefined) lines.push(weekdaysLine(fields.weekdays) ?? 'Every day of its dates');
-  if (fields.startTime !== undefined) lines.push(fields.startTime === null ? 'No start time' : `From ${clockWords(fields.startTime)}`);
+  if (fields.startTime !== undefined) lines.push(fields.startTime === null ? 'No start time' : `Time: ${clockWords(fields.startTime)}`);
   if (fields.where !== undefined) lines.push(fields.where === null ? 'No place' : `Where: ${fields.where}`);
   return lines;
 }

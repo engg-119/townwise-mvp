@@ -19,8 +19,10 @@
 // The view keeps the call as the existing `tool` part (no new part type, no stream event): its result view is
 // `{ applied, code, eventId, changeId, proposed, fields }`, from which the client draws the card; `fields` the edit's
 // fields a made correction applied (null for hide, restore and anything not applied), so its card says what changed as
-// a proposal's does (UI review). Logs carry ids and the
-// outcome only, never a title, a place or the why.
+// a proposal's does (UI review). As fixed in the second UI review: an applied or proposed result also carries
+// `readsNow`, the event's shown values as read before this change (never sent to the client view), and the description
+// says the owner may have undone an earlier change, since after an Undo on a card the model went on from the change it
+// had made. Logs carry ids and the outcome only, never a title, a place or the why.
 import { z } from 'zod';
 
 import { applyChange, eventCorrectionCandidate } from '../../agent/apply.ts';
@@ -97,7 +99,7 @@ const WORDS: Readonly<Record<Exclude<CorrectionCode, 'needs_tap'>, string>> = {
 const NEEDS_TAP = 'This conversation read a web page or a file, so nothing was changed: the owner sees the change as a card and applies it with one tap if it’s right.';
 /** D66: the corrections past the first in a reply that read researched events (their titles came from web pages). */
 const NEEDS_TAP_FOUND = 'This reply read events research found on the web, and only one correction applies on its own after that, so nothing was changed: the owner sees the change as a card and applies it with one tap if it’s right.';
-const APPLIED = 'Changed on this location’s calendar only. The owner can undo it from TownwiseAI’s activity.';
+const APPLIED = 'Changed on this location’s calendar only. The owner can undo it on its card or from TownwiseAI’s activity, so read the calendar again before saying how it reads later.';
 
 function json(value: Readonly<Record<string, JsonValue>>): { content: string } {
   return { content: JSON.stringify(value) };
@@ -137,6 +139,14 @@ export function checkEdit(view: ResearchedEventView, edit: EditInput, window: { 
   };
 }
 
+/** The event as it reads now, before this call's change: what the model should go on from, not an earlier reply. */
+function readsNowJson(view: ResearchedEventView): JsonValue {
+  return {
+    title: view.title, start: view.start, end: view.end, weekdays: view.weekdays === null ? null : [...view.weekdays],
+    startTime: view.startTime, where: view.where, hidden: view.hidden,
+  };
+}
+
 function fieldsJson(fields: RevisionFields | null): JsonValue {
   if (fields === null) return null;
   return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, Array.isArray(value) ? [...value as number[]] : value as JsonValue]));
@@ -167,7 +177,8 @@ async function correct(tc: ToolContext, request: CorrectionInput, callId: string
   if (tc.turn.readUntrusted || capped || callId === undefined) {
     ctx.logger.info({ orgId: scope.orgId, locationId: location.id, conversationId: tc.conversationId, eventId, outcome: 'needs_tap' }, 'townwise.chat_event_corrected');
     return json({
-      applied: false, code: 'needs_tap', eventId, changeId: null, proposed: { change: request.change, fields: fieldsJson(fields) }, message: tc.turn.readUntrusted || !capped ? NEEDS_TAP : NEEDS_TAP_FOUND,
+      applied: false, code: 'needs_tap', eventId, changeId: null, proposed: { change: request.change, fields: fieldsJson(fields) }, readsNow: readsNowJson(view),
+      message: tc.turn.readUntrusted || !capped ? NEEDS_TAP : NEEDS_TAP_FOUND,
     });
   }
   tc.turn.directCorrections = direct + 1;
@@ -177,7 +188,7 @@ async function correct(tc: ToolContext, request: CorrectionInput, callId: string
   }));
   ctx.logger.info({ orgId: scope.orgId, locationId: location.id, conversationId: tc.conversationId, eventId, outcome }, 'townwise.chat_event_corrected');
   if (outcome === 'applied' && change !== null) {
-    return json({ applied: true, code: null, eventId, changeId: change.id, proposed: null, fields: fieldsJson(fields), message: APPLIED });
+    return json({ applied: true, code: null, eventId, changeId: change.id, proposed: null, fields: fieldsJson(fields), readsNow: readsNowJson(view), message: APPLIED });
   }
   return refused(eventId, outcome === 'conflict' ? 'changed_since' : outcome === 'duplicate' ? 'duplicate' : 'invalid');
 }
@@ -192,7 +203,7 @@ const resultSchema = z.object({
 export const correctCalendarEventTool: ChatTool<CorrectionInput> = {
   definition: {
     name: 'correct_calendar_event',
-    description: 'Corrects an event town research found, on this location’s calendar only, when the person asks you to: edit its title, dates, weekdays, start time or place, hide it, or restore it. Only an event in `found` from get_town_calendar or get_day (an id starting t- or l-); the curated town calendar and holidays can’t be changed. For edit, send only the fields that change. why says in a few words what the person told you. Townwise saves it with Undo; in a conversation that read a web page or a file it only shows the owner the change to apply with one tap, and the result says which happened. At most five a reply.',
+    description: 'Corrects an event town research found, on this location’s calendar only, when the person asks you to: edit its title, dates, weekdays, start time or place, hide it, or restore it. Only an event in `found` from get_town_calendar or get_day (an id starting t- or l-); the curated town calendar and holidays can’t be changed. For edit, send only the fields that change. why says in a few words what the person told you. Townwise saves it with Undo; in a conversation that read a web page or a file it only shows the owner the change to apply with one tap, and the result says which happened. The owner can undo or apply a change on its card at any time, so an earlier reply is not how the event reads now: the result’s readsNow is (before this change), as get_town_calendar and get_day are. At most five a reply.',
     input_schema: {
       type: 'object',
       properties: {

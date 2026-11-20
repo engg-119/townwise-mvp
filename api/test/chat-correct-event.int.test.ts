@@ -155,6 +155,10 @@ describe('correct_calendar_event in a clean turn', () => {
     expect((await call(server, `/api/org/locations/${t.locationId}/agent/changes/${changeId}/undo`, { session: t.member, method: 'POST' })).status).toBe(200);
     expect(await shown(t, eventId)).toMatchObject({ hidden: false });
     expect((await revisions(t)).map((each) => each.op)).toEqual(['hide', 'revert']);
+    // After the Undo, the next correction tells the model how the event reads now, not as its earlier change left it.
+    const now = await shown(t, eventId);
+    await turn(t, correcting({ eventId, change: 'edit', startTime: '20:00', why }), { conversationId: id, content: 'Make it 8 pm' });
+    expect(results()[0]).toMatchObject({ applied: true, readsNow: { title: now?.title, startTime: now?.startTime ?? null, hidden: false } });
     expect((await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(t.locationId) }))?.refit).toBeUndefined();
     expect(server.logs.join('\n')).not.toContain(SENTINEL);
     expect(server.logs.join('\n')).not.toContain(why);
