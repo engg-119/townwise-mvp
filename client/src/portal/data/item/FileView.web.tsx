@@ -8,7 +8,7 @@ import { EmptyState, ErrorNotice, LoadingLine } from '../../ui/feedback';
 import { Stack } from '../../ui/layout';
 import { ViewerError } from '../../viewer/errors';
 import { delimiterFor } from '../../viewer/kinds';
-import type { DataItem } from '../api';
+import { isCalendarFile, type DataItem } from '../api';
 import { dataError, shownName } from '../copy';
 import {
   cantShowLine, fetchingLine, ITEM, openingLine, tooLargeLine, VIEWER_ERROR, withDownload,
@@ -55,7 +55,8 @@ function blockedLine(blocked: Blocked, item: DataItem, canDownload: boolean): st
     case 'files_off': return ITEM.filesOff;
     case 'uploading': return ITEM.uploading;
     case 'raw_gone': return ITEM.rawGone;
-    case 'kind': return withDownload(cantShowLine(blocked.kind, item.name), canDownload);
+    // UI review 2026-11-19: a calendar file is shown as its calendar, never called a kind Townwise can't show.
+    case 'kind': return withDownload(isCalendarFile(item) ? ITEM.calendarFileView : cantShowLine(blocked.kind, item.name), canDownload);
     case 'not_allowed': return ITEM.notAllowed;
     case 'too_large': return withDownload(tooLargeLine(blocked.sizeBytes), canDownload);
   }

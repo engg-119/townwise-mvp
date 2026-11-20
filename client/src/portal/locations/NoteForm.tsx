@@ -10,7 +10,7 @@ import { Panel, Stack } from '../ui/layout';
 import { Eyebrow, Heading, Small } from '../ui/text';
 import type { Note, NoteInput } from './api';
 import { NoteFields } from './NoteFields';
-import { checkNote, MAX_DETAIL, NOTE_COPY, type NoteDraft, type NoteMessages } from './noteRules';
+import { checkNote, marksGuestCount, MAX_DETAIL, NOTE_COPY, type NoteDraft, type NoteMessages } from './noteRules';
 
 // C6, the note form (spec P14, 12): the fields a note shares with a business rule's schedule (NoteFields: Kind, the
 // dates, the hours, the days, Effect and Expected guests), then Details (required for Other). It checks the API's
@@ -44,6 +44,8 @@ export function NoteForm(props: {
   fromAiFile?: boolean;
   /** Inside a popover that heads it: no Panel, eyebrow or heading, and Cancel disabled while the save runs. */
   bare?: boolean;
+  /** Whether an Other note may mark guest counts wrong (D67): yes unless false (a TownwiseAI proposal edited first). */
+  marks?: boolean;
 }): React.JSX.Element {
   const { save, onSaved } = props;
   const [draft, setDraft] = useState<NoteDraft>(props.initial);
@@ -68,9 +70,11 @@ export function NoteForm(props: {
   const bare = props.bare === true;
   const fields = (
     <Stack gap={20}>
-      <NoteFields draft={draft} set={set} messages={messages} idPrefix="note" endHelper="Leave it empty for one day." noun="note" />
+      <NoteFields
+        draft={draft} set={set} messages={messages} idPrefix="note" endHelper="Leave it empty for one day." noun="note" marks={props.marks !== false}
+      />
       <FormField
-        label={draft.kind === 'other' && draft.title.trim() === '' ? 'Details' : 'Details (optional)'}
+        label={draft.kind === 'other' && !marksGuestCount(draft) && draft.title.trim() === '' ? 'Details' : 'Details (optional)'}
         helper={NOTE_COPY.detailHelp}
         value={draft.detail}
         onChangeText={(detail) => { set({ detail }); }}

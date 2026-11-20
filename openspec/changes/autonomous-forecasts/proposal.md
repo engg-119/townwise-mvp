@@ -23,7 +23,7 @@ This change keeps every location's forecast current every week, for any organiza
   - The baseline must pass coverage and bias checks and beat the weekday median.
   - A draft whose next 28 days move more than 25% from the current run's is held for staff.
   - A model run is never replaced by a baseline because the model could not run.
-- **History minimums.** Scheduled calibrations may start from a 230-day span (the baseline's minimum). Calibrations a person starts keep the owner's 595 days, and the model engine always needs 595.
+- **History minimums.** Scheduled calibrations may start from a 230-day span (the baseline's minimum). Calibrations a person starts also take 230 days since 2026-11-19 (595 while the current forecast is from the model), running the baseline alone under 595; the model engine always needs 595.
 - **Horizon.** Runs reach today plus 91 days, capped at 182 days after the last day of sales. The gate keeps judging 28 days ahead; error at 91 days (and further when sales lag) is reported, and ranges widen by it. The forecast route and `get_forecast` accept up to 92 days a read, and the reader reads by range so 52 weekly runs a year stay fast.
 - **Home's Last week card** (P11) shows the published forecast's error on days with a guest count, and the published forecast, labeled "Forecast, no guest count uploaded yet", on days without one. With nothing published it is unchanged. "Never a guess" becomes "never an unpublished guess"; every other honesty rule stays.
 - **Public and privacy copy ships in this branch**, because organizations publish by default. The privacy page's forecasts paragraph is redrafted with its "Last updated" date bumped. Every public statement that would become false ("not built yet", "the app shows no forecasts") is rewritten honestly. All of it is marked for the owner's approval before push.
@@ -64,7 +64,7 @@ None. No capability of an unarchived change (notably `refine-calendar-and-home`'
 
 Every `[CONFIRM]` this change adds, most consequential first (each also goes into D42):
 
-1. Forecasts are on by default for every organization, existing and new (an organization with no `forecasts` field reads as on). This reverses the team's G1, "nothing is published until staff switch it on". Staff can still switch one off, recorded with when and by whom.
+1. Forecasts are on by default for every organization, existing and new (an organization with no `forecasts` field reads as on). This reverses the team's G1, "nothing is published until staff switch it on". Staff can still switch one off, recorded with when and by whom. Approved by the owner on 2026-11-19.
 2. A same-engine draft is compared with the current lab run's recorded backtest, not held-out weeks after its cutoff. An engine switch is decided by the lab on the same backtest weeks with a 0.5-point margin, and a tie keeps the current engine. This changes how G2 is scored.
 3. A same-engine refit publishes when it passes its absolute checks and is no more than 0.5 points worse than the best recorded backtest in the current streak. A tie publishes, the one exception to G2's "ties do not publish".
 4. Scheduled calibrations may start from a 230-day span. This supersedes the owner's 2026-11-10 decision of 595 days for the baseline engine on scheduled calibrations only; a calibration a person starts and the model engine keep 595.

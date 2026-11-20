@@ -13,7 +13,7 @@ import { fakeAuth } from '../helpers/fakes';
 // with no press and which it never does, what it may add, that it never changes or deletes what exists, that each change
 // has Undo and a log, and that Anthropic receives the files it reads on its own; the old “never unless you ask” line is
 // gone; (slice 3) what the weekly suggestions and the sales history save on its own, and a calendar change bringing the
-// weekly reading forward. Marked [CONFIRM] until the owner approves it.
+// weekly reading forward. Approved by the owner on 2026-11-19.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }

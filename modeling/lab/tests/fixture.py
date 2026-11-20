@@ -46,8 +46,13 @@ EFFECT = {"festival": 1.5, "football": 1.6, "private_event": 1.3, "comedy": 1.15
 
 
 def _notebook_holidays(dates: pd.Series) -> pd.DataFrame:
-    # The notebook's holiday rules (section 1, cell 6), copied here so the lab's holiday_flags is checked against them;
-    # read a day past the last date, as the lab does, since the frame (400 days after the cutoff) ends on Thanksgiving Eve
+    # The notebook's holiday rules (section 1, cell 6), copied here so the lab's holiday_flags is checked against them,
+    # except Halloween: the notebook flagged Oct 31 alone, the lab (v11) the weekend too, as written out below; read a
+    # day past the last date, as the lab does, since the frame (400 days after the cutoff) ends on Thanksgiving Eve
+    friday = dates - pd.to_timedelta((dates.dt.day_of_week == 5).astype(int), unit="D")
+    md = friday.dt.month * 100 + friday.dt.day
+    halloween = ((dates.dt.month == 10) & (dates.dt.day == 31)) | (
+        dates.dt.day_of_week.isin([4, 5]) & (md.between(1027, 1031) | md.between(1101, 1102)))
     federal = USFederalHolidayCalendar().holidays(dates.min(), dates.max() + pd.Timedelta(days=1), return_name=True)
     thanksgiving = federal[federal == "Thanksgiving Day"].index
     years = range(dates.min().year, dates.max().year + 1)
@@ -56,7 +61,7 @@ def _notebook_holidays(dates: pd.Series) -> pd.DataFrame:
                                    for m, d in ((1, 1), (7, 4), (12, 24), (12, 25))]
     return pd.DataFrame({
         "hol_big_night": dates.isin(big_night).astype(int),
-        "hol_halloween": ((dates.dt.month == 10) & (dates.dt.day == 31)).astype(int),
+        "hol_halloween": halloween.astype(int),
         "hol_closed": dates.isin(closed).astype(int),
         "federal_holiday": dates.isin(federal.index).astype(int),
     }, index=dates.index)

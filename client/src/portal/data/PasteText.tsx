@@ -20,7 +20,6 @@ import { DATA, TEXT_MAX, TITLE_MAX } from './copy';
 // D59 slice 4 (openspec change auto-apply-agent-reads): while TownwiseAI works on its own here (`auto`, from the list Your
 // data last read), a box under the text starts checked, and a save with it checked sends `aiAuto: true`, so the server
 // has TownwiseAI read the text as it reads a file added here. Unchecked, or with `auto` off, the text is only kept.
-// [CONFIRM: the words for pasted text TownwiseAI reads and a note it saves from your message]
 
 export function PasteText(props: {
   locationId: string;

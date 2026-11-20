@@ -85,7 +85,7 @@ import { answerFromCalendars } from '../calendar/answers.ts';
 import type { ChatModel } from '../chat/model.ts';
 import { ceilingCostMicroUsd, costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from '../chat/pricing.ts';
 import { CHAT_MODEL } from '../chat/turn.ts';
-import { closureOf, isClosure, typicalByDate } from '../closed-days.ts';
+import { closureOf, isClosure, trustedGuestDays, typicalByDate } from '../closed-days.ts';
 import { utcDay } from '../dates.ts';
 import { effectHistory, reasonEffects } from '../forecasts/effects.ts';
 import { eachDay } from '../forecasts/file.ts';
@@ -117,16 +117,16 @@ export const SUGGESTIONS_TIME_MS = 120_000;
  * sized to the request's own ceiling (suggestionsReserveMicroUsd), so a long one never takes the month past its budget.
  */
 export const SUGGESTIONS_MAX_NOTES = 200;
-/** At most this many owner-calendar events are sent (soonest first). [CONFIRM: at most 150 owner-calendar events a weekly call, soonest first] */
+/** At most this many owner-calendar events are sent (soonest first). */
 export const SUGGESTIONS_MAX_OWNER_EVENTS = 150;
-/** A pass keeps at most this many spotted events, read apart from its notes and rules. [CONFIRM] */
+/** A pass keeps at most this many spotted events, read apart from its notes and rules. */
 export const MAX_EVENT_SUGGESTIONS = 5;
-/** D59 slice 3: at most this many rules TownwiseAI adds on its own a week (7 days) per location. [CONFIRM: at most 2 rules applied a week per location] */
+/** D59 slice 3: at most this many rules TownwiseAI adds on its own a week (7 days) per location. */
 export const MAX_RULES_APPLIED_A_WEEK = 2;
 const WEEK_MS = 7 * 24 * 60 * 60_000;
 /**
  * Generic event and food words that never mark a note or rule as repeating a sent title (design decision 7), so only a
- * distinctive word (a name, a company) does. [CONFIRM]
+ * distinctive word (a name, a company) does.
  */
 export const GENERIC_TITLE_WORDS: ReadonlySet<string> = new Set([
   'party', 'dinner', 'lunch', 'brunch', 'private', 'event', 'events', 'birthday', 'wedding', 'rehearsal', 'reception', 'meeting',
@@ -134,7 +134,7 @@ export const GENERIC_TITLE_WORDS: ReadonlySet<string> = new Set([
 ]);
 /**
  * Words of 3 or more letters that nearly every sentence holds and no name is, so a why like "closed for it last year"
- * is not dropped because an owner title also says "for". They never mark a leak on their own. [CONFIRM]
+ * is not dropped because an owner title also says "for". They never mark a leak on their own.
  */
 export const COMMON_WORDS: ReadonlySet<string> = new Set([
   'the', 'and', 'for', 'with', 'from', 'into', 'onto', 'our', 'you', 'your', 'are', 'was', 'were', 'has', 'had', 'have', 'its', 'not',
@@ -669,8 +669,7 @@ export function closedRunOf(sure: SureChange): number {
  * rated `high`: a note as it is; a rule only when it is a closure (with or without hours), D59's `rule.add`; a spotted
  * event only when the model chose its effect, as a private-event note with that effect (alongside regular service only
  * with the guest count its title states), checked again by the note rules. Never a follow-up, and never one closing more
- * than 14 days in a row (closedRunOf). Pure. [CONFIRM: TownwiseAI saves a weekly suggestion it rated high on its own: a
- * note, a closure rule, or a spotted private event whose effect it chose]
+ * than 14 days in a row (closedRunOf). Pure.
  */
 export function sureChangeOf(kept: KeptSuggestion, today: string): SureChange | null {
   const sure = sureOf(kept, today);
@@ -887,14 +886,17 @@ export async function suggestionsInput(
   const to = at(SUGGESTIONS_DAYS);
   const { townId } = location.town;
   const history = effectHistory(today);
-  const [notes, allNotes, rules, stored, coverage] = await Promise.all([
+  // The history's notes from its typical guests' lookback, so a guest count marked wrong there (D67) is read too.
+  const [notes, allNotes, rules, storedRows, coverage] = await Promise.all([
     stores.notes.overlapping(scope, location.id, { from, to }),
-    stores.notes.overlapping(scope, location.id, { from: history.from, to: history.to }),
+    stores.notes.overlapping(scope, location.id, { from: history.readFrom, to: history.to }),
     stores.businessRules.list(scope, location.id),
     stores.salesDays.days(scope, location.id, { from: history.readFrom, to: history.to }),
     stores.salesDays.coverage(scope, location.id),
   ]);
   const scheduled = rules.flatMap((rule) => (rule.schedule === null ? [] : [{ text: rule.text, schedule: rule.schedule }]));
+  // D67: a marked day has sales and no guest count: open in pastDays, and in no effect or typical guests.
+  const stored = trustedGuestDays(storedRows, allNotes);
   const covering = (date: string) => ({
     notes: allNotes.filter((note) => noteCovers(note, date)),
     rules: scheduled.filter((rule) => noteCovers(rule.schedule, date)).map((rule) => rule.schedule),

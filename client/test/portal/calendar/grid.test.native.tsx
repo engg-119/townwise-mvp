@@ -1,9 +1,10 @@
-import { Dimensions, StyleSheet } from 'react-native';
-import { render, screen, within } from '@testing-library/react-native';
+import { AccessibilityInfo, Animated, Dimensions, StyleSheet } from 'react-native';
+import { act, render, screen, within } from '@testing-library/react-native';
 
 import { CalendarGrid } from '../../../src/portal/calendar/CalendarGrid';
 import { buildGrid, gridRange } from '../../../src/portal/calendar/grid';
 import { ALL_FILTERS, monthBounds, monthLabel, type CalendarInput } from '../../../src/portal/calendar/model';
+import { theme } from '../../../src/theme';
 import { note, townEvent } from '../analytics/fakes';
 
 // The Calendar's month grid on native (P28, spec 16.3), rendered from buildGrid: a Pressable per day, 42 of them, each
@@ -106,4 +107,63 @@ test('a forecast’s figure is lighter after a “~” with “forecast”, ahea
   expect(within(screen.getByLabelText(/^Sat, Nov 21, 2026\. 282 guests, forecast/)).getByText('forecast')).toBeTruthy();
   expect(within(screen.getByLabelText(/^Tue, Nov 3, 2026\. No data\. 90 guests, forecast/)).getByText('forecast')).toBeTruthy();
   expect(within(screen.getByLabelText(/^Mon, Nov 2, 2026\. 140 guests, actual/)).queryByText('forecast')).toBeNull();
+});
+
+function styleOf(element: { props: { style?: unknown } }): Record<string, unknown> {
+  return (StyleSheet.flatten(element.props.style as never) as Record<string, unknown> | undefined) ?? {};
+}
+
+test('the selected day stands out (D64): a 2px mint border over the state fill, its weekday column wider in every row', async () => {
+  widthOf(1280);
+  await renderGrid(input(), '2026-11-21');
+  const saturday = screen.getByLabelText(NOV_21);
+  expect(saturday.props.accessibilityState).toMatchObject({ selected: true });
+  expect(styleOf(saturday)).toMatchObject({ borderColor: theme.color.mint, borderWidth: 2, padding: 3, backgroundColor: theme.color.state });
+  // Saturday's column grows in every row, the weekday head's too; Friday's stays at 1.
+  expect(styleOf(screen.getByTestId('calendar-column-2026-11-21')).flexGrow).toBe(1.3);
+  expect(styleOf(screen.getByTestId('calendar-column-2026-11-28')).flexGrow).toBe(1.3);
+  expect(styleOf(screen.getByTestId('calendar-column-Sat', { includeHiddenElements: true })).flexGrow).toBe(1.3);
+  expect(styleOf(screen.getByTestId('calendar-column-2026-11-20')).flexGrow).toBe(1);
+  // Today keeps its own number and no selected fill.
+  const today = screen.getByLabelText(/^Wed, Nov 11, 2026\. Today\./);
+  expect(today.props.accessibilityState).toMatchObject({ selected: false });
+  expect(styleOf(today).backgroundColor).toBe(theme.color.raised);
+  expect(styleOf(within(today).getByText('11')).fontWeight).toBe('600');
+});
+
+describe('a new selection eases the wider column over (D64)', () => {
+  function grid(selected: string): React.JSX.Element {
+    return (
+      <CalendarGrid
+        rows={buildGrid('2026-11', input(), BOUNDS)}
+        selected={selected}
+        month="2026-11"
+        bounds={BOUNDS}
+        onSelect={() => undefined}
+        busy={false}
+        label={monthLabel('2026-11')}
+        tooltip={() => null}
+      />
+    );
+  }
+
+  test.each([false, true])('over 150ms, or at once under Reduce Motion (reduce motion %s)', async (reduced) => {
+    widthOf(1280);
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(reduced);
+    const timing = jest.spyOn(Animated, 'timing');
+    const view = await render(grid('2026-11-21'));
+    await act(async () => { await Promise.resolve(); });
+    expect(timing).not.toHaveBeenCalled();
+    // Saturday to Wednesday: Wednesday's column (the third) grows to 1.3, Saturday's (the sixth) back to 1.
+    await view.rerender(grid('2026-11-18'));
+    if (reduced) {
+      expect(timing).not.toHaveBeenCalled();
+      expect(styleOf(screen.getByTestId('calendar-column-2026-11-18')).flexGrow).toBe(1.3);
+      expect(styleOf(screen.getByTestId('calendar-column-2026-11-21')).flexGrow).toBe(1);
+    } else {
+      expect(timing).toHaveBeenCalledTimes(7);
+      expect(timing.mock.calls[2]?.[1]).toMatchObject({ toValue: 1.3, duration: theme.motion.select });
+      expect(timing.mock.calls[5]?.[1]).toMatchObject({ toValue: 1 });
+    }
+  });
 });

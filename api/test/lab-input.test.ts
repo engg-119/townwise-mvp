@@ -377,6 +377,8 @@ describe('labInputOf', () => {
     // 2025's after Jan 2 (ten), 2026's eleven and 2027's through Jul 5, its Independence Day observed (six).
     expect(input?.calendar).toHaveLength(27);
     expect(input?.calendar.every((entry) => entry.kind === 'holiday' && entry.id.startsWith('us:'))).toBe(true);
+    // The calendar's Halloween (D68) stays out: the lab's own hol_halloween is its only Halloween effect.
+    expect(input?.calendar.some((entry) => entry.group === 'us:halloween')).toBe(false);
   });
 
   it('includes the current champion run rows, its engine from the run’s model family, its recorded weekday bias, and null without one', () => {
@@ -515,8 +517,74 @@ describe('labInputFingerprint (D42, the weekly refresh’s “changed since its 
       { ...base, regimeStart: '2026-01-05' },
     ];
     for (const input of changed) expect(labInputFingerprint(input)).not.toBe(fingerprint);
-    expect(labInputFingerprint(base, 'v11')).not.toBe(fingerprint);
+    expect(labInputFingerprint(base, 'v12')).not.toBe(fingerprint);
     expect(labInputFingerprint(base, LAB_MODEL_VERSION)).toBe(fingerprint);
+  });
+});
+
+describe('a guest count marked wrong (D67)', () => {
+  const days = history('2025-01-02', '2026-05-31');
+  const mark = (startDate: string, endDate = startDate): NoteRecord =>
+    note({ kind: 'other', startDate, endDate, effect: 'wrong_guest_count', detail: null });
+
+  it('sends Halloween weekend with no guest count and not closed, and leaves every other day as it was', () => {
+    const marked = inputOf(days, [mark('2025-10-31', '2025-11-01')]);
+    for (const date of ['2025-10-31', '2025-11-01']) {
+      expect(dayOf(marked, date)).toMatchObject({ guests: null, closed: false, privateEvent: false, booked: false });
+    }
+    const plain = inputOf(days);
+    expect(marked.days.filter((each) => each.date !== '2025-10-31' && each.date !== '2025-11-01')).toEqual(
+      plain.days.filter((each) => each.date !== '2025-10-31' && each.date !== '2025-11-01'),
+    );
+    expect(marked.dataThrough).toBe(plain.dataThrough);
+  });
+
+  it('keeps a TownwiseAI party note beside the mark: the day still sets privateEvent', () => {
+    const at = new Date('2026-01-01T00:00:00Z');
+    const theirs = note({
+      kind: 'private_event', startDate: '2025-10-31', effect: 'more_guests', createdBy: 'townwise_ai', agent: { changeId: 'c'.repeat(24), at },
+      createdAt: at, updatedAt: at,
+    });
+    expect(dayOf(inputOf(days, [mark('2025-10-31'), theirs]), '2025-10-31')).toMatchObject({ guests: null, closed: false, privateEvent: true });
+  });
+
+  it('a marked last day stays dataThrough, its guests null', () => {
+    const input = inputOf(days, [mark('2026-05-31')]);
+    expect(input.dataThrough).toBe('2026-05-31');
+    expect(dayOf(input, '2026-05-31')).toMatchObject({ guests: null, closed: false });
+  });
+
+  it('a marked day with sales under a closing rule goes out open with no guest count; with no sales the rule still closes it', () => {
+    const closedMondays: ScheduledRule = {
+      id: '6'.repeat(24),
+      schedule: { kind: 'closure', startDate: '2026-04-06', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    };
+    // Apr 27 and May 4 are Mondays with guests and sales; May 4's stored sales are none.
+    const sales = days.map((each) => (each.date === '2026-05-04' ? day(each.date, 43, null) : each));
+    const input = inputOf(sales, [mark('2026-04-27'), mark('2026-05-04')], null, [closedMondays]);
+    expect(dayOf(input, '2026-04-27')).toMatchObject({ guests: null, closed: false });
+    expect(dayOf(input, '2026-05-04')).toMatchObject({ guests: null, closed: true });
+  });
+
+  it('a later Friday’s typical guests and likely-closed test leave the marked Friday out', () => {
+    // The 8 Fridays before 2026-05-29: five with no guests (but sales), three with 40, one of them marked.
+    const empty = ['2026-04-03', '2026-04-10', '2026-04-17', '2026-04-24', '2026-05-01'];
+    const near = days.map((each) => {
+      if (empty.includes(each.date)) return day(each.date, 0);
+      if (['2026-05-08', '2026-05-15', '2026-05-22'].includes(each.date)) return day(each.date, 40);
+      return each.date === '2026-05-29' ? day(each.date, 3) : each;
+    });
+    // Unmarked, three open Fridays make a typical 40, and 3 guests is under a tenth of it.
+    expect(dayOf(inputOf(near), '2026-05-29')).toMatchObject({ guests: null, closed: true });
+    // Marked, two are too few for a typical count, so the day keeps its guests.
+    expect(dayOf(inputOf(near, [mark('2026-05-22')]), '2026-05-29')).toMatchObject({ guests: 3, closed: false });
+  });
+
+  it('changes the fingerprint when it covers a stored count, and not when it covers none', () => {
+    const fingerprint = labInputFingerprint(inputOf(days));
+    expect(labInputFingerprint(inputOf(days, [mark('2025-10-31', '2025-11-01')]))).not.toBe(fingerprint);
+    const gap = days.filter((each) => each.date !== '2026-03-14');
+    expect(labInputFingerprint(inputOf(gap, [mark('2026-03-14')]))).toBe(labInputFingerprint(inputOf(gap)));
   });
 });
 

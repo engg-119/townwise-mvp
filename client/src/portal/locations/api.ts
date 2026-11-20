@@ -54,7 +54,10 @@ const salesDaysSchema = z.object({ days: z.array(salesDaySchema) });
 const deletedSalesSchema = z.object({ deletedDays: z.number(), deletedUploads: z.number() });
 
 export const NOTE_KINDS = ['closure', 'private_event', 'opening', 'other'] as const;
-export const NOTE_EFFECTS = ['closed', 'more_guests', 'fewer_guests', 'unknown'] as const;
+/** The effects a note, a business rule's schedule and TownwiseAI's suggestions share. */
+export const SHARED_EFFECTS = ['closed', 'more_guests', 'fewer_guests', 'unknown'] as const;
+/** A note's effects: the shared ones, and a past day's guest count marked wrong (D67), which only a person's note takes. */
+export const NOTE_EFFECTS = [...SHARED_EFFECTS, 'wrong_guest_count'] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
 export type NoteEffect = (typeof NOTE_EFFECTS)[number];
 

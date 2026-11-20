@@ -27,7 +27,9 @@ import { localDay, localMinutes, timeZoneOf, weekdayOf } from '../src/time-zones
 import { runWeeklyForecastsWorker } from '../src/workers/weekly-forecasts.ts';
 import { addLocation, addSalesDay, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { seedHistory } from './helpers/lab.ts';
-import { call, refresh, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
+import {
+  call, refresh, signIn, startTownwiseServer, testDatabase, type TestSession, type TownwiseTestServer,
+} from './helpers/server.ts';
 
 const LAB_DIR = fileURLToPath(new URL('../../modeling/lab', import.meta.url));
 const HAS_UV = spawnSync('uv', ['--version'], { stdio: 'ignore' }).status === 0;
@@ -91,7 +93,7 @@ function guestsOn(date: string, through: string): number {
 /** The test server's database, which the worker connects to on its own. */
 function mongoUri(): string {
   const url = new URL(inject('mongoUri'));
-  url.pathname = '/townwise-test';
+  url.pathname = `/${testDatabase()}`;
   url.searchParams.set('directConnection', 'true');
   return url.toString();
 }

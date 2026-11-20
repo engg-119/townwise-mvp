@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { TownEvent } from '../../../src/portal/analytics/api';
-import { classOf, dayContext, dayFlags, noteCovers, ruleSchedules, typicalGuests, type DayClass, type RuleScheduleLike } from '../../../src/portal/analytics/days';
+import {
+  classOf, dayContext, dayFlags, noteCovers, ruleSchedules, trustedGuestDays, typicalGuests, type DayClass, type RuleScheduleLike,
+} from '../../../src/portal/analytics/days';
 import type { Note } from '../../../src/portal/locations/api';
 import { day, note, townEvent } from './fakes';
 
@@ -36,10 +38,12 @@ test('the fixture covers every class, and likely closed', () => {
 test.each(cases)('$name: $class', (each) => {
   const notes = each.notes.map((fields) => note(fields));
   const events = each.events.map((fields, index) => townEvent({ ...fields, title: `Case event ${String(index)}` }));
-  const guests = new Map((each.history ?? []).map((other) => [other.date, other.guests]));
-  const record = each.day === null
+  // A guest count marked wrong (D67) is read first, on the day and its history, as decodeHistory reads it.
+  const guests = new Map(trustedGuestDays(each.history ?? [], each.notes).map((other) => [other.date, other.guests]));
+  const stored = each.day === null ? undefined : trustedGuestDays([{ date: each.date, ...each.day }], each.notes)[0];
+  const record = stored === undefined
     ? undefined
-    : { ...day(each.date, each.day.guests, each.day.netSalesCents), typicalGuests: typicalGuests(each.date, (date) => guests.get(date)) };
+    : { ...day(each.date, stored.guests, stored.netSalesCents), typicalGuests: typicalGuests(each.date, (date) => guests.get(date)) };
   const context = dayContext(notes, events, each.rules ?? [], each.today);
   expect(classOf(each.date, record, context)).toBe(each.class);
   expect(dayFlags(each.date, record, context).likelyClosed).toBe(each.likelyClosed === true);
@@ -51,7 +55,7 @@ describe('rule schedules', () => {
   const history = [{ date: '2026-09-19', guests: 200 }, { date: '2026-09-26', guests: 200 }, { date: '2026-10-03', guests: 200 }];
   const guests = new Map(history.map((other) => [other.date, other.guests]));
   const near = { ...day('2026-10-10', 2), typicalGuests: typicalGuests('2026-10-10', (date) => guests.get(date)) };
-  const rule = (effect: Note['effect'], endDate: string | null = null, weekdays: number[] | null = null): RuleScheduleLike =>
+  const rule = (effect: RuleScheduleLike['effect'], endDate: string | null = null, weekdays: number[] | null = null): RuleScheduleLike =>
     ({ kind: 'other', startDate: '2026-10-01', endDate, weekdays, effect });
   const flags = (...rules: RuleScheduleLike[]) => dayFlags('2026-10-10', near, dayContext([], [], rules));
 

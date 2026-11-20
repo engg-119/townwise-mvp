@@ -40,10 +40,9 @@ export const AI = {
   forecastKept: 'The forecast update it started keeps running.',
   optIn: 'Let TownwiseAI read these files and use what it finds',
   optInHelp: 'Each file you add is sent whole to Anthropic’s Claude to read. You can undo what TownwiseAI adds from a file on its page.',
-  // D59: while TownwiseAI works on its own the box starts checked. [CONFIRM: privacy wording for TownwiseAI working on its own]
+  // D59: while TownwiseAI works on its own the box starts checked.
   optInHelpAuto: 'TownwiseAI reads each file you add on its own: the whole file is sent to Anthropic’s Claude, a sales export too, and TownwiseAI saves what it’s sure of, each change with Undo in TownwiseAI’s activity. Uncheck this to keep these files from it.',
-  // D59 slice 4: the box under Paste text, shown only while TownwiseAI works on its own. [CONFIRM: the words for pasted
-  // text TownwiseAI reads and a note it saves from your message]
+  // D59 slice 4: the box under Paste text, shown only while TownwiseAI works on its own.
   pasteOptIn: 'Let TownwiseAI read this text and use what it finds',
   pasteOptInHelp: 'TownwiseAI reads it on its own once you save it: the text is sent to Anthropic’s Claude, and TownwiseAI saves what it’s sure of, each change with Undo in TownwiseAI’s activity. Uncheck this to keep it from TownwiseAI.',
 } as const;

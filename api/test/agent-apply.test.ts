@@ -100,6 +100,12 @@ describe('conflictsWith', () => {
     expect(conflictsWith(closure, { notes: [pressed], rules: [] })).toBe(false);
   });
 
+  it('a person’s guest-count mark (D67) decides nothing, so it never conflicts', () => {
+    const mark = record({ kind: 'other', effect: 'wrong_guest_count', expectedGuests: null, title: null });
+    expect(conflictsWith(closure, { notes: [mark], rules: [] })).toBe(false);
+    expect(conflictsWith(content({ kind: 'private_event', effect: 'more_guests', expectedGuests: 40 }), { notes: [mark], rules: [] })).toBe(false);
+  });
+
   it('a person’s rule that closes the day conflicts with an opening, and one saying more guests with a closure', () => {
     // 2026-06-15 is a Monday.
     const opening = content({ kind: 'opening', effect: 'more_guests', startDate: '2026-06-15', endDate: '2026-06-15', expectedGuests: null });

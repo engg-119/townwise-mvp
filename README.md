@@ -1,6 +1,6 @@
 # Townwise
 
-Townwise forecasts daily guests and sales for restaurants and bars in small towns, 7 and 28 days ahead, from the town's own calendar instead of the region's.
+Townwise forecasts daily guests for restaurants and bars in small towns, three months ahead with a rougher outlook to a year, from the town's own calendar instead of the region's.
 
 It is our course project for ENGG 119, AI in the Real World, at Dartmouth's Thayer School of Engineering. We are testing it in Hanover, NH, with a partner restaurant. It is not an official Dartmouth product. The public site is [townwise.tech](https://townwise.tech).
 
@@ -13,7 +13,7 @@ Townwise starts from the town and then tunes to the restaurant:
 1. **Research the town.** An agent finds the events and seasons that move demand in a town, each with a date and a public source.
 2. **Build the forecast.** Models turn that town profile into daily forecasts, each day with a range and a reason (for example "Commencement weekend").
 3. **Calibrate to the restaurant.** The owner uploads sales history from their point-of-sale system, and the town model is tuned to their business.
-4. **Tune by talking.** TownwiseAI, a chat assistant, lets the owner say what the model cannot see ("we're closed for a private event on the 14th") and proposes it as a note on the forecast, which the owner saves. Standing facts ("Closed Mondays") become business rules.
+4. **Tune by talking.** TownwiseAI, a chat assistant, lets the owner say what the model cannot see ("we're closed for a private event on the 14th") and saves it as a note on the forecast, with Undo, when the owner said it plainly, and otherwise proposes it for the owner to save. Standing facts ("Closed Mondays") become business rules.
 5. **Order from the forecast.** For a bar, Townwise turns item sales, counts and the forecast into the next order for each supplier, each line with a quantity and the reason for it. The owner decides; nothing is sent to a distributor.
 
 The questions we are trying to answer:
@@ -33,13 +33,13 @@ This is an MVP in active development. Townwise does not charge for early access.
 | Access: request access (with a Google Places search when it is on), invitations from an org admin, approval by staff, and Townwise's access emails (request received, you're in) | Built |
 | Portal for a location: Home, TownwiseAI, Calendar, Orders, Analytics, Notes, Rules, Town and Your data, plus Team and Settings | Built (`client/`), on web, iOS and Android. Light and dark mode on web; native is dark only. |
 | Sales history: a daily-totals upload read in the browser, or stored files that Townwise reads on the server, all listed in Your data, where a stored file can be opened and viewed in the browser | Built. The daily-totals upload and the file viewer are web only. Stored files are off until `FILES_BLOB_ACCOUNT_URL` is set. |
-| TownwiseAI (Claude through the Anthropic API): reads a location's sales, notes, business rules, town calendar, published forecast and orders; draws charts; takes files attached from Your data; proposes notes and order changes for the owner to save | Built in the API and the app. Off until `ANTHROPIC_API_KEY` is set. |
-| TownwiseAI reading a whole file: opt in per stored file, and it turns what it finds into notes, an upload or a summary, with one Undo | Built. Needs stored files and `ANTHROPIC_API_KEY`. |
-| Calendar and business rules: a month grid with each day's published forecast and the notes on it, and standing rules that can carry a forecast schedule | Built |
-| Owner calendars: a location's own calendars, each an imported `.ics` file or a subscription link refreshed in the background, read by TownwiseAI | Phase 1 built: the API and TownwiseAI's tool. The Calendar page's panel for managing them is phase 2, not built yet. Links are off until `TOWNWISE_CALENDAR_KEY` is set. |
+| TownwiseAI (Claude through the Anthropic API): reads a location's sales, notes, business rules, own calendars, town calendar, people in town, published forecast, orders and Your data; searches the web; draws charts; takes files attached from Your data; lets an org admin start a calibration; proposes notes, order changes and setup for the owner to save, and saves a note the owner stated plainly, with Undo | Built in the API and the app. Off until `ANTHROPIC_API_KEY` is set. |
+| TownwiseAI working on its own: it reads each stored file a person adds (the box on Add a file is checked by default), sorts imported calendar files, and saves only what it is sure of (notes, summaries, days a location lacks, closure rules from its weekly suggestions), each change listed in its activity with Undo; anything less certain waits as a question. An org admin can turn it off for the organization | Built, on by default (`TOWNWISE_AGENT_AUTO`, true in production). Needs stored files and `ANTHROPIC_API_KEY`. |
+| Calendar and business rules: a month grid or a scrolling week view with each day's published forecast, a forecast chart, the notes and the location's own calendars' events on each day, and standing rules that can carry a forecast schedule | Built |
+| Owner calendars: a location's own calendars, each an imported `.ics` or calendar CSV file, a subscription link refreshed in the background, or a connected Google calendar, managed from the Calendar page's Your calendars and listed as items in Your data (a calendar file dropped there becomes a calendar), read by TownwiseAI | Built. Links and Google calendars are off until `TOWNWISE_CALENDAR_KEY` is set; Google calendars also need `TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID` and `TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET`. Connecting a Google calendar and importing a file are web only. |
 | Bar ordering: Orders (the next order per supplier) and Ordering setup (suppliers, items, item sales upload, counts) | Built, with the order math a TypeScript port of the core of the `reorder/` engine. The item sales upload and the sheet import are web only. |
-| Staff console: requests, organizations (including setup of one nobody has joined yet), people, the audit log, audited "view as" and "open as admin", and forecast import and publish | Built, web only |
-| Forecasts in the app | Built. Staff import a forecast run made on the team's computers and publish it. The forecast lab refits a location's model in a job on Townwise's servers and publishes only when staff have switched forecasts on and the run passes a quality gate. The lab is off until `TOWNWISE_LAB_RUNNER` is set. |
+| Staff console: an overview, requests, organizations (including setup of one nobody has joined yet), people, the audit log, audited "view as" and "open as admin", forecast import and publish, calibrations and the forecasts switch | Built, web only |
+| Forecasts in the app | Built. The forecast lab refits a location's model in a job on Townwise's servers: staff start a calibration from the console, an org admin can ask TownwiseAI to start one, and a weekly worker job refreshes every location with enough history with no one starting anything. A run publishes only when it passes a quality gate and the organization's forecasts are on (the default; staff can switch them off). A published run covers 91 days as the forecast and then a rougher outlook up to a year ahead. Staff can still import and publish a run made on the team's computers. The lab and the weekly refresh are off until `TOWNWISE_LAB_RUNNER` is set. |
 | Town research agent | Not built. Dartmouth's 2025-26 calendar (terms, finals, Commencement, home games and more) is in `modeling/dartmouth_calendar_2025_2026.csv`, every date with a source, and the API's town calendar for Hanover is seeded from it. No other town has calendar entries yet. |
 | Forecasting models | A first demand model for our partner restaurant is in `modeling/demand_model_v0.ipynb`. Its forecasts for Oct 22 to Dec 31, 2026 were frozen on Nov 1, to be scored against actual sales. `modeling/lab` packages its guest model for the forecast lab. |
 
@@ -56,20 +56,25 @@ flowchart LR
     api["Container Apps<br/>Node API + Valkey"]
     db[("DocumentDB<br/>private endpoint only")]
     files[("Client file storage<br/>private endpoint only")]
-    lab["Forecast lab job"]
+    worker["Forecast worker job<br/>hourly check, weekly refresh"]
+    lab["Forecast lab job<br/>Python, no database access"]
     backup["Nightly backup<br/>to Blob Storage"]
     email["Communication Services<br/>(email)"]
   end
-  google["Google sign-in<br/>and Places"]
+  google["Google sign-in, Places,<br/>maps and Calendar"]
   claude["Anthropic API<br/>(TownwiseAI)"]
 
   web -->|served by| swa
   web --> api
+  web -->|sign-in button, map images| google
   native --> api
   api --> db
   api -.->|when enabled| files
   api -.->|when enabled| lab
   lab -.->|callback| api
+  worker --> db
+  worker -.->|starts, when enabled| lab
+  worker -.-> claude
   backup --> db
   api --> email
   api --> google
@@ -77,7 +82,7 @@ flowchart LR
 ```
 
 - **Client** (`client/`): one React Native app built with Expo and Expo Router, for iOS, Android and the web. The homepage, the daily-totals and item sales uploads, the file viewer and the staff console are web only. The rest of the signed-in portal runs on every platform.
-- **API** (`api/`): one Node.js and Express process. It mounts sign-in under `/auth`, the Townwise product under `/api`, and the forecast lab's callbacks under `/lab`. Every `/api` route declares who may call it (signed in, member, org admin or staff) in one table, `api/src/access/routes.ts`, and each organization's data is isolated from every other's (pinned by `api/test/isolation.test.ts`). The same process runs the background workers for stored files, TownwiseAI's file reads and calendar links.
+- **API** (`api/`): one Node.js and Express process. It mounts sign-in under `/auth`, the Townwise product under `/api`, and the forecast lab's callbacks under `/lab`. Every `/api` route declares who may call it (signed in, member, org admin or staff) in one table, `api/src/access/routes.ts`, and each organization's data is isolated from every other's (pinned by `api/test/isolation.test.ts`). The same process runs the background workers for stored files, TownwiseAI's file reads, calendar links and chat turns. The weekly forecast refresh runs outside it, in a Container Apps job that starts every hour from the API's image, starts the forecast lab for each location that is due and writes TownwiseAI's weekly suggestions. The lab is a Python job (`modeling/lab`) with no database access: it reads its input from the API and posts its result back over HTTPS.
 - **Shared backend modules** (`api/kit/`): sign-in and sessions, MongoDB, Redis, rate limiting, and the HTTP server core. They were copied from a reusable module kit (versions in [`KIT.md`](KIT.md)) and are owned here. `client/` came from the same kit.
 - **Infrastructure** (`infra/`): Terraform for Azure. The database and the client file storage accept connections only from inside the private network. Secrets live in Key Vault, and deploys run from GitHub Actions without long-lived keys. Expected cost is about $58 a month at low traffic; TownwiseAI and the Places search bill Anthropic and Google directly ([`infra/README.md`](infra/README.md), Monthly cost).
 - **Research** (`eda/`, `modeling/`) and **ordering** (`reorder/`): Python projects set up with uv. The notebooks read the private exports in `data/`, so they only run where a teammate has copied those in.
@@ -99,6 +104,24 @@ flowchart LR
 | `config/` | The reorder module's settings: the partner restaurant's ordering values and New Hampshire purchasing rules |
 | `compose.yaml` | Local MongoDB, Valkey and Azurite (blob storage) for development |
 | `.github/` | CI, security scans, secret scanning and the deploy workflow |
+
+### Size
+
+A snapshot from 2026-11-19 (1,467 commits since 2026-11-01): about 1,870 tracked files and 320,000 lines, counted with `wc -l`, so blank lines and comments are included.
+
+| Area | Lines |
+|---|---|
+| TypeScript, all (`.ts`, `.tsx`, `.mts`) | 281,000 |
+| `client/app` and `client/src` | 74,000 |
+| `client/test` | 74,000 |
+| `api/src` | 54,000 |
+| `api/test` | 67,000 |
+| `api/kit/*` source and tests | 4,000 and 7,000 |
+| Python (`modeling/`, `reorder/`) | 13,000 |
+| Markdown (11,000 of it in `openspec/`) | 21,000 |
+| Terraform | 4,700 |
+
+About half the TypeScript is tests. To recount one area: `git ls-files -z -- 'api/src/*.ts' | xargs -0 cat | wc -l`.
 
 ## Run it locally
 
@@ -127,7 +150,7 @@ npm start -w @ckeith26/expo-shell     # press w to open the web app on http://lo
 
 Signing in locally needs a Google OAuth web client with `http://localhost:8081` as an authorized JavaScript origin. Put its client ID in `AUTH_GOOGLE_CLIENT_IDS` (in `api/.env.local`) and in `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (in `client/.env.local`). Use `localhost`, not `127.0.0.1`: the browser treats them as different sites, and the session cookie will not carry over. The `.env.local` files are gitignored; never commit them.
 
-The optional services stay off until their settings are filled in: TownwiseAI needs `ANTHROPIC_API_KEY`, stored files need `FILES_BLOB_ACCOUNT_URL` (and, locally, `FILES_AZURITE_CONNECTION_STRING` for Azurite), the Places search needs `GOOGLE_PLACES_API_KEY`, calendar links need `TOWNWISE_CALENDAR_KEY`, and the forecast lab needs `TOWNWISE_LAB_RUNNER`. [`api/README.md`](api/README.md) has the full local setup (staff addresses, two-step sign-in, email) and every environment variable.
+The optional services stay off until their settings are filled in: TownwiseAI needs `ANTHROPIC_API_KEY`, stored files need `FILES_BLOB_ACCOUNT_URL` (and, locally, `FILES_AZURITE_CONNECTION_STRING` for Azurite), the Places search needs `GOOGLE_PLACES_API_KEY`, calendar links need `TOWNWISE_CALENDAR_KEY`, Google calendars need it plus `TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID` and `TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET`, and the forecast lab and its weekly refresh need `TOWNWISE_LAB_RUNNER`. TownwiseAI working on its own (`TOWNWISE_AGENT_AUTO`), the weekly refresh (`TOWNWISE_WEEKLY_FORECASTS`) and weekly suggestions (`TOWNWISE_WEEKLY_SUGGESTIONS`) default to on once the services they need are set. [`api/README.md`](api/README.md) has the full local setup (staff addresses, two-step sign-in, email) and every environment variable.
 
 ## Tests and checks
 
@@ -172,13 +195,13 @@ The notebooks read the private exports in `data/`, so they only run where a team
 
 ## Deployment
 
-Merging into `main` deploys, once the `DEPLOY_ENABLED` repository variable is `true`. The workflow builds the web export, the API image and the forecast lab image, pushes the images to Azure, points the API and the lab job at them, uploads the web build, then checks the API's health. A release is a pull request from `develop` into `main`; once it is live it gets an annotated `vYYYY.MM.DD` tag and a GitHub Release. When hosted Actions is unavailable, a release is deployed by hand. The full setup, release, rotation, backup, restore and teardown runbook is [`infra/README.md`](infra/README.md).
+Merging into `main` deploys, once the `DEPLOY_ENABLED` repository variable is `true`. The workflow runs on camo's self-hosted deploy runner while GitHub-hosted runners are unavailable. It builds and deploys only the services whose files changed since its last successful run (web, API, lab; a manual run deploys all three): it builds the web export and the images, pushes the images to Azure, points the API, the lab job and the weekly forecast worker at them, uploads the web build, then checks the API's health. A release is a pull request from `develop` into `main`; once it is live it gets an annotated `vYYYY.MM.DD` tag and a GitHub Release. The full setup, release, rotation, backup, restore and teardown runbook is [`infra/README.md`](infra/README.md).
 
 ## Data and privacy
 
 The sales data in `data/` comes from our partner restaurant's point-of-sale exports and is private. It is gitignored and shared only between teammates. Some item names in those exports contain customers' or groups' names, so nothing derived from them (notebook outputs, files, screenshots) may show those names, and none of it leaves the team. The frozen forecasts in `modeling/forecasts/` are committed on purpose: they hold daily forecast figures and no names.
 
-The product follows the same rule. The daily-totals upload sends only the date, guest count and net sales for each day; the file itself never leaves the browser. The item sales upload for ordering sends only matched servings per item per day, and names that match no item never leave the browser. Stored files, when they are on, keep an export as it was sent in a private storage account, and TownwiseAI's background read of a file is opt-in per file and off by default. When TownwiseAI is on, chat messages and the location data it reads go to Anthropic. Logs and audit events carry only the fields on a fixed list per action (mostly ids and counts), never sales figures, note text, chat messages or file contents.
+The product follows the same rule. The daily-totals upload sends only the date, guest count and net sales for each day; the file itself never leaves the browser. The item sales upload for ordering sends only matched servings per item per day, and names that match no item never leave the browser. Stored files, when they are on, keep an export as it was sent in a private storage account. While TownwiseAI works on its own (on by default; an org admin can turn it off), it reads each stored file whose box was left checked when it was added; the box can be unchecked per file. When TownwiseAI is on, chat messages and the location data it reads go to Anthropic. Logs and audit events carry only the fields on a fixed list per action (mostly ids and counts), never sales figures, note text, chat messages or file contents.
 
 ## Contributing
 

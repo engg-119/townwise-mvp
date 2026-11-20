@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Runs reach a year
-A lab run SHALL carry the days after its `dataThrough` through the calibration's `today` plus 365 days, capped at `dataThrough` plus 400 days, when its forecast tier is fully backed (8 or more backtest weeks at 91 days, and at the reach when sales lag past 91 days). When either of D42's stops applies, the run SHALL end where D42 ends it and carry no outlook. The lab input SHALL be `townwise.lab-input/3` with `horizonDays: 400` and `termsThrough`, accepted by the lab only in version 3, and `LAB_MODEL_VERSION` and the lab's `MODEL_VERSION` SHALL be `v10` (develop's `v9` is the closed-weekday fix of 2026-11-18, so the year-long runs take the next version). [CONFIRM: runs reach today plus 365 days, capped at 400 days after the last day of sales]
+A lab run SHALL carry the days after its `dataThrough` through the calibration's `today` plus 365 days, capped at `dataThrough` plus 400 days, when its forecast tier is fully backed (8 or more backtest weeks at 91 days, and at the reach when sales lag past 91 days). When either of D42's stops applies, the run SHALL end where D42 ends it and carry no outlook. The lab input SHALL be `townwise.lab-input/3` with `horizonDays: 400` and `termsThrough`, accepted by the lab only in version 3, and `LAB_MODEL_VERSION` and the lab's `MODEL_VERSION` SHALL be equal and later than `v9` (`v10` when release B was built; `v11` since PR #125's Halloween weekend flag). [CONFIRM: runs reach today plus 365 days, capped at 400 days after the last day of sales]
 
 #### Scenario: Current sales
 - **WHEN** a calibration on Monday 2026-11-23 has sales through Sunday 2026-11-22 and every horizon is backed

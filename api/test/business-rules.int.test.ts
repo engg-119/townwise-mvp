@@ -288,6 +288,8 @@ describe('a rule’s schedule (D31)', () => {
       { ...CLOSED_MONDAYS, expectedGuests: 20 }, { ...CLOSED_MONDAYS, endDate: '2026-12-01' }, { ...CLOSED_MONDAYS, detail: 'Smith party' },
       { ...CLOSED_MONDAYS, title: 'Holiday party' }, { ...CLOSED_MONDAYS, title: null },
       { ...CLOSED_MONDAYS, startDate: '2028-12-01' }, { ...SATURDAY_PARTY, startTime: '21:00', endTime: '18:00' }, 'closed Mondays',
+      // D67: a rule never marks guest counts wrong, even an Other schedule on past days only.
+      { ...CLOSED_MONDAYS, kind: 'other', startDate: '2025-10-06', endDate: '2025-10-27', effect: 'wrong_guest_count' },
     ]) {
       expect(await errorOf(await call(server, rulesPath(location), { session: author.session, json: { text: 'Shut Mondays', schedule: bad } })))
         .toEqual({ status: 400, error: 'invalid_request' });

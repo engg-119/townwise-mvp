@@ -82,6 +82,8 @@ Spec decision D58 (check develop's spec section 2 and the reservation list again
   Done: D58 row, 10.8 (the sort limiter), 10.18 (CSV, history window, labels, Sort, Use for forecasts, three routes, audit and logs), 11A.4, 11A.9, 14.5, 17, CONFIRM items 130 to 142, four [DECISION NEEDED] items in 22.3, and the changelog; `api/README.md` (routes, fields, collections, audit, logs, limiter) and `tuning-chat.md` section 9. The data model has no 6.x section for calendars (10.18 and the README hold their fields), so the fields are written there. The change's spec scenario about the Calendar showing March 2024 now says the calendar's page and chat do, since the Calendar page keeps its 12 months.
 - [x] 10.2 `client/app/(marketing)/privacy.tsx`: design decision 14's words. Owner approves the wording before push. Test: a new `client/test/marketing/privacy-calendar-csv.test.web.tsx` beside `privacy-calendar-titles.test.web.tsx`. `npm test -w @ckeith26/expo-shell -- test/marketing/privacy-calendar-csv.test.web.tsx test/marketing/privacy-calendar-titles.test.web.tsx --selectProjects web`
   Done: words as decision 14, plus one sentence in the Anthropic item; marked [CONFIRM] in the code and the CONFIRM index as shipped awaiting the owner's approval (as item 113 did for D56), since the owner said to use the defaults. Test: `client/test/marketing/privacy-calendar-csv.test.web.tsx`.
+  - Owner approved the privacy page's words on 2026-11-19.
+  - Owner approved on 2026-11-19: the import popover's and the Bookings section's words (spec 22.2 item 142); the Bookings section's `[CONFIRM]` was removed.
 
 ## 11. Verification and landing
 

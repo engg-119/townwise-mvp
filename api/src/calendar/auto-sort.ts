@@ -23,10 +23,7 @@
 //      keeps it from being written; it stops once the labels' change is no longer applied (an Undo). No calibration
 //      starts: a label on a past day wants a refit (agent/refit.ts).
 // Undo per calendar is handlers/agent-changes.ts, refused while the sort runs. Logs carry the calendar's id, codes and
-// counts only; never a title, a uid, an event's date or a label per event. [CONFIRM: a calendar file imported while TownwiseAI works on its own is
-// sorted and its labels used for forecasts with no press] [CONFIRM: a label other than unsure counts as sure, so an
-// import's labels are used for forecasts at once] [CONFIRM: a calendar file staff import with an organization open as
-// its admin is not sorted on its own]
+// counts only; never a title, a uid, an event's date or a label per event.
 import type { OrgScope } from '../access/policy.ts';
 import { agentAutoOn, applyChange, dedupeKeyOf, TOWNWISE_AI_AUTHOR, type WrittenFacts } from '../agent/apply.ts';
 import type { TownwiseContext } from '../app.ts';

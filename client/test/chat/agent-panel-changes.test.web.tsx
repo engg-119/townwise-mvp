@@ -239,3 +239,25 @@ test('a member gets no switch button, and under view-as Undo is not offered and 
   fireEvent.click(add);
   await waitFor(() => { expect(viewing.writes).toEqual([]); });
 });
+
+// UI review 2026-11-19: the landing's line says what is true in both modes: while TownwiseAI works on its own it saves
+// what it's sure of (D59, spec P25); while it doesn't, it suggests notes and the person decides.
+const LANDING_AUTO = 'It saves what it’s sure of, each change with Undo in its activity; anything it isn’t sure of waits for you.';
+const LANDING_OFF = 'It suggests notes; you decide what’s saved.';
+
+/** The landing's one text element whose words end with `words`. */
+function landingLine(words: string): (content: string, element: Element | null) => boolean {
+  return (_content, element) => element !== null && element.children.length === 0 && element.textContent.startsWith('It reads') && element.textContent.endsWith(words);
+}
+
+test('the landing says TownwiseAI saves what it’s sure of while it works on its own, and suggests notes while it doesn’t', async () => {
+  renderAt(chatApi({ ...fixture.panel, agentAuto: { on: true, available: true, canChange: false } }));
+  await side();
+  expect(await screen.findByText(landingLine(LANDING_AUTO))).toBeTruthy();
+  expect(screen.queryByText(landingLine(LANDING_OFF))).toBeNull();
+  cleanup();
+  // Switched on but not running here: it reads nothing on its own, so the line is the one for off.
+  renderAt(chatApi({ ...fixture.panel, agentAuto: { on: true, available: false, canChange: false } }));
+  await side();
+  expect(await screen.findByText(landingLine(LANDING_OFF))).toBeTruthy();
+});

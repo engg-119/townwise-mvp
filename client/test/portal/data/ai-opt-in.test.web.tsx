@@ -132,6 +132,44 @@ test('a kind TownwiseAI can’t read is not sent, and says why beside the file',
   expect(fake.ai).toEqual([]);
 });
 
+// UI review 2026-11-19: a calendar file is imported as a calendar (D60), never sent to TownwiseAI: the line beside it
+// says what the import did, with its link or Try again, never that TownwiseAI can't read it.
+describe('a calendar file added here', () => {
+  function completesAsCalendar(fake: DataFake, calendar: NonNullable<ReturnType<typeof itemOf>['calendar']>): void {
+    fake.files.answers['POST /files/f1/complete'] = () => ({
+      file: fileViewOf('f1', { name: 'Bookings.ics', kind: 'other', status: 'kept', purpose: 'reference', importId: null, result: null }), import: null,
+    });
+    fake.items = [itemOf('f_f1', { name: 'Bookings.ics', kind: 'other', state: 'kept', outcome: 'reference', calendar })];
+  }
+
+  test('checked or not, it says it was added to your calendars, with the calendar’s link', async () => {
+    const fake = setup();
+    completesAsCalendar(fake, { status: 'added', calendarId: 'c1', label: 'Bookings', eventCount: 2 });
+    await optIn();
+    await add(fake, ['Bookings.ics']);
+    const files = screen.getByRole('list', { name: 'Files being added' });
+    expect(await within(files).findByText('Added to your calendars as Bookings: 2 events.')).toBeTruthy();
+    expect(within(files).getByRole('link', { name: 'Open the calendar' }).getAttribute('href')).toBe('/locations/l1/data/c_c1');
+    expect(screen.queryByText(/can’t read this file/)).toBeNull();
+    expect(fake.ai).toEqual([]);
+    cleanup();
+    const unchecked = setup();
+    completesAsCalendar(unchecked, { status: 'added', calendarId: 'c1', label: 'Bookings', eventCount: 2 });
+    await add(unchecked, ['Bookings.ics']);
+    expect(await screen.findByText('Added to your calendars as Bookings: 2 events.')).toBeTruthy();
+  });
+
+  test('refused for a fixable cause, it says why and offers Try again', async () => {
+    const fake = setup();
+    completesAsCalendar(fake, { status: 'refused', reason: 'calendar_limit', retry: true });
+    await add(fake, ['Bookings.ics']);
+    expect(await screen.findByText('Not added to your calendars: this location already has 5 calendars. Remove one on the Calendar, then try again.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => { expect(fake.calendarRetries).toEqual(['f_f1']); });
+    expect(screen.queryByText(/can’t read this file/)).toBeNull();
+  });
+});
+
 test('503 ai_unavailable says so beside the file, keeps the upload, and hides the box', async () => {
   const fake = setup();
   fake.answers['POST ai'] = () => refusal(503, 'ai_unavailable');

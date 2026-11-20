@@ -450,7 +450,7 @@ def test_result_matches_contract(model_result, lab_input):
 
     assert result["run"]["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION,
                                       "notebookCommit": CODE}
-    assert version.MODEL_VERSION == "v10"
+    assert version.MODEL_VERSION == "v11"
 
 
 def test_a_model_run_carries_how_its_trees_learned(model_result, result, lab_input):
@@ -1431,7 +1431,8 @@ def test_backtest_scores_the_horizon_28_weeks(model_result, lab_input):
 def test_forecast_tier_unchanged(result):
     """Days 1 to 91 as D42 made them (D52 decision 4 (a)): the golden history's result as input version 2 gave it
     (golden/result-v2.json, develop's golden result.json at e53aaa53, the commit before year-long runs on this branch,
-    and never regenerated) against version 3's. Its forecast tier's days, reasons and weeks, its scorecard's gate fields and its
+    regenerated once since, at 8aeb6df4: that same lab code with v11's Halloween weekend, which changes the fixture's
+    guests and flags; it says model v10 there) against version 3's. Its forecast tier's days, reasons and weeks, its scorecard's gate fields and its
     params but the outlook's anchors are the same. The model's figures in `engines` come from XGBoost, whose sampling
     differs between builds, so they are held to the golden tolerance; everything else is the baseline's (pandas)."""
     v2 = json.loads((GOLDEN / "result-v2.json").read_text(encoding="utf-8"))

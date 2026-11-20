@@ -27,7 +27,7 @@ When all seven days count and the run that gave today's figure has a weekly band
 - **THEN** the range is 580 to 850: 600 estimated becomes 480 to 750, plus the 100 exact guests
 
 ### Requirement: Without 5 days of forecast the tile stays on last year
-The first tile SHALL be This week, last year, exactly as before, when nothing is published, the read fails or is loading, fewer than 5 of the seven days have a figure in the Forecast row, or the location's metric is not guests.
+The first tile SHALL be This week, last year, exactly as before, when nothing is published, the read fails, fewer than 5 of the seven days have a figure in the Forecast row, or the location's metric is not guests. While the forecast read is still out for a guests location, it SHALL show a loading skeleton (the Skeleton shapes, labeled "Loading this week's forecast") under the heading "This week's forecast", never last year's total first. While that read is out, the Home lead and the Last week tile SHALL also show skeletons rather than their text.
 
 #### Scenario: Four days covered
 - **WHEN** the published forecast gives only four of the seven days a figure

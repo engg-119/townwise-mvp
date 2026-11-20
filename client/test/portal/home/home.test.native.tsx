@@ -115,6 +115,8 @@ function portal(options: {
   orders?: unknown;
   /** GET .../forecast's body for November, or an error; no published forecast by default. */
   forecast?: unknown;
+  /** Every forecast read answers only once this settles. */
+  forecastGate?: Promise<unknown>;
 } = {}): FakePortalApi {
   const me = options.me ?? meOf(ACCESS.member);
   const fake = analyticsFake({
@@ -132,6 +134,8 @@ function portal(options: {
   });
   const base = fake.json.bind(fake);
   if (options.pending === true) fake.json = (path, schema, opts) => (path.endsWith('/sales/history') ? deferred<never>().promise : base(path, schema, opts));
+  const gate = options.forecastGate;
+  if (gate !== undefined) fake.json = (path, schema, opts) => (path.includes('/forecast?') ? gate.then(() => base(path, schema, opts)) : base(path, schema, opts));
   const role = me.access.state === 'member' ? me.access.role : 'member';
   return fakePortalApi({ me, org: orgOf(role, options.locations), fallback: fake });
 }
@@ -486,6 +490,21 @@ test('loading names the location, and a failed read offers Try again', async () 
 
   await renderApp('/locations/l1', portal({ history: offline() }));
   expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
+});
+
+// UI review 2026-11-19: while the forecast reads are out, the lead and Last week show skeletons, never the
+// not-published words; once nothing published answers, the lead says so.
+test('while the forecast reads are out, the lead never says no forecast is published', async () => {
+  const gate = deferred<undefined>();
+  await renderApp('/locations/l1', portal({ forecastGate: gate.promise }));
+  expect(await screen.findByRole('heading', { name: /^Welcome back/ })).toBeTruthy();
+  expect(screen.getByTestId('skeleton-home-lead-forecast')).toBeTruthy();
+  expect(screen.getByTestId('skeleton-last-week')).toBeTruthy();
+  expect(screen.queryByText(forecastLine('Main Street Bar'))).toBeNull();
+  gate.resolve(undefined);
+  expect(await screen.findByText(forecastLine('Main Street Bar'))).toBeTruthy();
+  expect(screen.queryByTestId('skeleton-home-lead-forecast')).toBeNull();
+  expect(screen.queryByTestId('skeleton-last-week')).toBeNull();
 });
 
 test('with one location the loading line names the organization (D29)', async () => {

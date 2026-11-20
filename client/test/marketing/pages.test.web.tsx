@@ -358,6 +358,8 @@ test('About says what stages 2 and 3 do today: the model and the baseline, refit
   expect(rows[1]).toBe('Candidate models run in our research notebooks and are tested with a rolling backtest. In the app, Townwise’s trained demand model and a simpler baseline are both tested on each restaurant’s own past weeks, and its forecast switches between them only when the other does clearly better. The forecasting agent itself is not built yet.');
   expect(rows[2]).toBe('Restaurants with early access can upload their sales history and add notes about unusual days in the app. Once a location’s history spans 230 days, Townwise refits its daily guest forecast every week and publishes it, with a range and reasons, when it passes our accuracy checks. We are still testing how much history it takes to make a difference.');
   expect(screen.getByRole('main').textContent).not.toContain('shows no forecasts');
+  const tags = [...screen.getByRole('main').querySelectorAll('.stages tbody tr .tag')].map((tag) => tag.textContent);
+  expect(tags).toEqual(['In progress', 'In progress', 'Live', 'Planned']);
 });
 
 test('Privacy says notes hold optional hours and change the published forecast (spec 17, D30)', () => {
@@ -551,16 +553,15 @@ test('Terms and Security carry the new date, and Security says where Townwise is
   expect(within(screen.getByRole('main')).getByRole('link', { name: 'hello@townwise.tech' }).getAttribute('href')).toBe(CONTACT);
 });
 
-test('About lists what we are building in the future tense, then what comes next, unnumbered', () => {
+test('About lists what we are building, in the future tense only for what is not built yet', () => {
   renderAt('/about');
   const items = [...within(screen.getByRole('region', { name: 'What we’re building' })).getAllByRole('listitem')];
   expect(items.map((item) => item.textContent)).toEqual([
     'A research agent that will find every event and driver of demand in a town, with the date and the public source behind each one.',
     'Uploading your sales history from your point-of-sale system, to calibrate your forecasts.',
     'A model calibrated to your business: the town model, tuned with your own history to forecast your daily guests, each day with a range and a reason.',
-    'A tuning agent you talk to: tell it what it can’t see, and it will retrain your model and explain its forecasts.',
-    'An app that will put it in front of the people who place the orders.',
-    'Next: reorder suggestions, starting with bar inventory.',
+    'TownwiseAI, an assistant you talk to: tell it what it can’t see, and it proposes notes, retrains your model and explains its forecasts.',
+    'An app that puts it in front of the people who place the orders.',
+    'Order suggestions for bar inventory, from the forecast and your item sales.',
   ]);
-  expect(items.map((item) => item.className)).toEqual(['', '', '', '', '', 'nx']);
 });

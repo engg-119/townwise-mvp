@@ -12,6 +12,7 @@
 import type { Logger } from '@ckeith26/server-core';
 
 import type { OrgScope } from '../access/policy.ts';
+import { isWrongGuestCount } from '../closed-days.ts';
 import { readNoteContent } from '../handlers/notes.ts';
 import type { FollowContent, FollowUp } from '../stores/agent-suggestions.ts';
 import type { TownwiseStores } from '../stores/index.ts';
@@ -77,7 +78,9 @@ function snapshot(content: NoteContent): NoteContent {
 /** One linked note's follow-up, or null when there is nothing to suggest. */
 function followUpOf(note: NoteRecord, event: StoredEvent | undefined, guards: FollowGuards): FollowContent | null {
   const link = note.fromEvent;
-  if (link === null) return null;
+  // A guest-count mark (D67) is a fact about past days: it never follows an event, and its follow-up content would not
+  // fit the suggestions' effects.
+  if (link === null || isWrongGuestCount(note)) return null;
   const from = datesOf(link);
   // A note edited off its event gets no suggestion.
   if (!sameDates(datesOf(note), asNote(from))) return null;
@@ -101,7 +104,7 @@ function followUpOf(note: NoteRecord, event: StoredEvent | undefined, guards: Fo
  * The follow-ups for the notes linked to one calendar, given its current keyed events: a `move` for a note still on an
  * event that moved, a `remove` for one whose event went (an event ending today or later, a note starting after today, a
  * calendar under 2,000 events, and a refresh that kept a key when the calendar had any), and an expiry for every other
- * linked note. Unlinked notes are left out. Pure.
+ * linked note, a guest-count mark (D67) included. Unlinked notes are left out. Pure.
  */
 export function followUpsFor(links: readonly NoteRecord[], events: readonly StoredEvent[], guards: FollowGuards): FollowUps {
   const byUid = new Map(events.filter((event) => event.keyed).map((event) => [event.uid, event]));

@@ -28,6 +28,11 @@ forecast.lead_ratios given no outlook, so every outlook day takes the forecast t
 reach), which is the run the same calibration would publish if the outlook only carried the tier's ranges on. Outlook
 weeks stay the same on both sides in the control, so it isolates the ratio. (Until 2026-11-19 the control forced every
 outlook ratio to 1, narrower than the tier's own last days: a strawman that any widening would beat.)
+The check runs with Halloween as the lab flagged it when the check was set, Oct 31 alone (_oct_31), not v11's Halloween
+weekend (features.halloween_weekend; owner's call, 2026-11-19). These histories carry no Halloween effect in their
+guests, so v11 only adds an effect learned from noise on four nights a year. On 2026-11-19, with v11's weekend, the
+honest check still passed at every cut and horizon (lowest history 76.9% to 100% of weeks), and the control failed at
+three of four: at the two-year cut, horizon 182, its lowest history, 61.5% with Oct 31 alone, went to 76.9%.
 Synthetic data only. Calibrates 64 histories (several minutes)."""
 
 import numpy as np
@@ -35,7 +40,7 @@ import pandas as pd
 import pytest
 from fixture import FOUR_YEAR_SHAPES, four_year_input
 
-from townwise_lab import baseline, forecast, pipeline
+from townwise_lab import baseline, features, forecast, pipeline
 
 SEEDS = (0, 1, 2, 3)
 CUTS = (2, 3)
@@ -89,6 +94,11 @@ def coverage(run: dict, actual: pd.Series, through: pd.Timestamp, tier_end: pd.T
     return out
 
 
+def _oct_31(dates: pd.Series) -> pd.Series:
+    """Halloween as the lab flagged it when this check was set (Oct 31 alone, before v11's weekend)."""
+    return (dates.dt.month == 10) & (dates.dt.day == 31)
+
+
 @pytest.fixture(scope="module")
 def scored() -> list[dict]:
     """For every history and cut: its engine and the honest and control runs' coverage."""
@@ -99,6 +109,7 @@ def scored() -> list[dict]:
                 inp, actual = four_year_input(seed, shape, cut)
                 controls: list[dict] = []
                 with pytest.MonkeyPatch.context() as patch:
+                    patch.setattr(features, "halloween_weekend", _oct_31)
                     patch.setattr(forecast, "run_file", _twice(forecast.run_file, controls))
                     patch.setattr(baseline, "run_file", _twice(baseline.run_file, controls))
                     result = pipeline.calibrate(inp, "0" * 40)

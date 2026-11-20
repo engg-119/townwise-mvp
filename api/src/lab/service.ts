@@ -96,7 +96,7 @@ function isLive(record: CalibrationRecord): boolean {
 
 /**
  * What starting a calibration reads (D42): the API's context, or the weekly worker's (workers/weekly-forecasts.ts),
- * which has no Valkey (it is the API's sidecar). Only a person's start uses `redis`, for the 4 a day.
+ * which has no Valkey (it is the API's sidecar). Only an org admin's start uses `redis`, for the 4 a day.
  */
 export type LabStartContext = Pick<TownwiseContext, 'config' | 'logger' | 'now' | 'stores' | 'labRunner'> & {
   readonly redis: TownwiseContext['redis'] | null;
@@ -167,6 +167,16 @@ function systemPaid(req: StartRequest): boolean {
   return req.requester.role === 'system';
 }
 
+/**
+ * Whether the start is one of the organization's 4 a day: an org admin's only. Staff (`superadmin`, from the console, a
+ * chat or a file read while open as admin) are not limited (owner decision, 2026-11-19: "a super admin account should be
+ * able to do whatever they want"), and the weekly refresh's start never was (D42). Staff's start keeps the $0.10 and
+ * the budget refusal.
+ */
+function dailyLimited(req: StartRequest): boolean {
+  return req.requester.role === 'org_admin';
+}
+
 /** Whether the location's current run (the gate's, launch's championRunId) is from the model engine, lab or imported. */
 async function modelIsCurrent(ctx: LabStartContext, req: StartRequest): Promise<boolean> {
   const current = currentChampion(await ctx.stores.forecasts.published(req.scope, req.location.id), req.today);
@@ -216,7 +226,8 @@ export async function checkStart(ctx: LabStartContext, req: StartRequest): Promi
 }
 
 /**
- * Starts a calibration after checkStart passed: one of the organization's 4 a day, a queued calibration holding the
+ * Starts a calibration after checkStart passed: one of the organization's 4 a day (an org admin's start only; staff's
+ * and the weekly refresh's take none), a queued calibration holding the
  * location's live slot with its callback open for 20 minutes, the job (handed the calibration's id and no secret: it
  * signs in as the lab identity), then running, then the charge to the month. A job that can't start fails the
  * calibration start_failed and is not charged. The weekly refresh's start (D42) takes none of the 4 a day and is not
@@ -228,8 +239,8 @@ export async function launch(
   const runner = ctx.labRunner;
   if (runner === null) return { ok: false, code: 'lab_unavailable' };
   const { scope, location } = req;
-  if (!systemPaid(req)) {
-    // No Valkey (the weekly worker) denies a person's start, as a store outage does; it never makes one.
+  if (dailyLimited(req)) {
+    // No Valkey (the weekly worker) denies an org admin's start, as a store outage does; it never makes one.
     if (ctx.redis === null) return { ok: false, code: 'rate_limited' };
     let limiter = limiters.get(ctx.redis);
     if (limiter === undefined) {

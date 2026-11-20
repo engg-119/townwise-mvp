@@ -132,9 +132,9 @@ describe('config', () => {
     expect(() => resolved({ TOWNWISE_AGENT_AUTO: 'sometimes' })).toThrow(ConfigError);
   });
 
-  it('production keeps TownwiseAI working on its own off until the owner approves the privacy wording (D59)', () => {
+  it('production turns TownwiseAI working on its own on, as the owner chose on 2026-11-19 (D59)', () => {
     const env = readFileSync(new URL('../production.env', import.meta.url), 'utf8');
-    expect(env).toMatch(/^TOWNWISE_AGENT_AUTO=false$/m);
+    expect(env).toMatch(/^TOWNWISE_AGENT_AUTO=true$/m);
     const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
     expect(example).toMatch(/^TOWNWISE_AGENT_AUTO=true$/m);
   });

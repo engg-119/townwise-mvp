@@ -48,6 +48,8 @@ export const ITEM = {
   sheets: 'Sheets',
   pdfLine: 'A PDF opens in a new tab, in your browser’s own PDF viewer.',
   openPdf: 'Open PDF',
+  /** UI review 2026-11-19: a calendar file's viewer (an .ics or .ical file, drawn by no viewer). */
+  calendarFileView: 'Townwise doesn’t show a calendar file here: its events show on the Calendar once it’s one of your calendars.',
   /** Added after a line that shows no content, when the person may download the original. */
   download: 'Use Download original to open it on your computer.',
 } as const;
@@ -258,6 +260,15 @@ export const CALENDAR_IMPORT = {
   open: 'Open the calendar',
   retry: 'Try again',
   retrying: 'Trying again…',
+  // UI review 2026-11-19: a calendar file kept before D60 imported calendar files. [CONFIRM: the words and the action for
+  // a calendar file kept before calendar files were imported]
+  unimported: 'This calendar file was kept before Townwise added calendar files to your calendars, so it isn’t one of them. Import it as a calendar, or delete it if it’s already one of your calendars.',
+  unimportedGone: 'This calendar file was kept before Townwise added calendar files to your calendars, and its original was deleted, so it can’t be imported.',
+  importOld: 'Import as a calendar',
+  importingOld: 'Importing…',
+  /** Beside a calendar file on Add a file while its item is read, and when that read fails. */
+  checking: 'Added. Checking whether it was added to your calendars…',
+  unknown: 'Added. Open it on Your data to see whether it was added to your calendars.',
 } as const;
 
 const CALENDAR_REFUSALS: Readonly<Record<string, string>> = {

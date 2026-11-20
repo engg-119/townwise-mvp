@@ -32,16 +32,14 @@
 // mark when nothing the lab reads changed (or the history is too short), and otherwise starts a calibration as the
 // system, inside the live cap of 3 and counted in the weekly cap with the week's rows, and records the start. The mark
 // is cleared by compare-and-set on the value read, so a change landing during the pass keeps it for a later one. A
-// location the live or weekly cap holds keeps its mark. [CONFIRM: a training change refits as the system after 15 quiet
-// minutes, at most once a day per location]
+// location the live or weekly cap holds keeps its mark.
 // D59 slice 3 (design decisions 1 and 4): after the week's suggestions, under the same lease and deadline, the pass takes
 // each location a calendar refresh marked (calendar/early-pass.ts) and brings its weekly suggestions forward: while
 // TOWNWISE_AGENT_AUTO and the organization's `agentAuto` and calendar titles switch are on (suggestFor checks its weekly
 // suggestions switch), unless a pass of the location ran since the mark (it read the change already), and at most once a
 // day: a location whose pass ran earlier today keeps its mark for tomorrow. The pass is suggestFor's, keyed by the town's
 // day (its row's `week`), so a day makes at most one call per location, and a Monday's brings the week's forward. The
-// mark is cleared by compare-and-set on the value read, so a refresh during the pass keeps it. [CONFIRM: a calendar change
-// brings the weekly pass forward at most once a day]
+// mark is cleared by compare-and-set on the value read, so a refresh during the pass keeps it.
 // A pass has SCHEDULE_PASS_BUDGET_MS (inside the job's replica timeout): it takes another location only while it could
 // finish it in the time left, and otherwise ends that part `deadline`, leaving the rest to the next hour's pass.
 // Nothing here names a town, an organization or a location. The pass logs one line of counts and its state for each

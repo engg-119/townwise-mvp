@@ -20,8 +20,7 @@ import { described } from './described';
 // A card from a reply that is still streaming waits for it to end (the server keeps the proposal only then). One
 // from a reply the server never kept says so, and its Save note goes through the notes route instead. D59 slice 4: a
 // note TownwiseAI saved itself, the person having stated it plainly, reads saved with Undo (its change's own route) while
-// the person may undo it, and says so once it was undone or changed since. [CONFIRM: the card's words for a note
-// TownwiseAI saved from your message]
+// the person may undo it, and says so once it was undone or changed since.
 
 export interface ProposalActions {
   save: (cardId: string) => void;
@@ -69,9 +68,12 @@ export function ProposalCard(props: {
         initial={draftOfContent(proposal)}
         editing={false}
         save={async (input) => {
-          await actions.saveEdited(card.id, input);
+          // A proposal's form never offers the guest-count mark (D67), which only a person's own note takes.
+          if (input.effect === 'wrong_guest_count') return null;
+          await actions.saveEdited(card.id, { ...input, effect: input.effect });
           return null;
         }}
+        marks={false}
         onSaved={() => undefined}
         onCancel={() => { actions.cancelEdit(card.id); }}
         // The composer's button is the chat page's one primary (spec 15.6, D26).

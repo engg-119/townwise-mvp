@@ -26,7 +26,7 @@ import { activityHref, locationHref } from '../routing';
 import { fetchRules, type Rule } from '../rules/api';
 import { updatingOf, type Calibration } from '../schemas';
 import { useLocation } from '../shell/LocationShell';
-import { HomeSkeleton } from '../skeleton';
+import { HomeSkeleton, Skeleton, SkeletonText } from '../skeleton';
 import { Actions, LinkButton } from '../ui/Button';
 import { ReadOnlyLine, StatusTag } from '../ui/feedback';
 import { Mono, Small } from '../ui/text';
@@ -139,28 +139,33 @@ function HomeView(props: {
 }): React.JSX.Element {
   const { data, rules, today, locationId, needs, readOnlyId } = props;
   const { api } = usePortal();
-  // This month's published forecast, on its own: while it loads or when it fails, Home shows no forecast figure and
-  // the lead keeps the not-published line.
-  // It covers This week's seven days too, which can run into next month. When a run of the location this page saw
-  // updating ends (D65), it is read again in place: the page keeps what it shows until the answer lands.
+  // This month's published forecast, on its own: while it loads or when it fails, Home shows no forecast figure; when it
+  // fails the lead keeps the not-published line, and while it loads (UI review 2026-11-19) the lead shows a skeleton in
+  // that line's place, never words it may take back. It covers This week's seven days too, which can run into next month.
+  // When a run of the location this page saw updating ends (D65), it is read again in place: the page keeps what it
+  // shows until the answer lands, so a refresh shows no skeleton.
   const forecastLoad = useRefreshable(useCallback(() => fetchForecast(api, locationId, forecastRange(today)), [api, locationId, today]));
   const forecastRead = forecastLoad.state;
   const { refresh: refreshForecast } = forecastLoad;
   useWhenDone(updatingOf(props.calibration) !== null, () => { void refreshForecast(); });
   const forecast = forecastRead.status === 'ready' ? forecastRead.data : null;
+  const forecastLoading = forecastRead.status === 'loading';
   // A published run that doesn't cover this month is still published, so the line would be wrong there.
-  const notPublished = forecast === null || (!forecast.available && forecast.reason === 'no_published_forecast');
-  // Last week's published forecast, on its own too (D42): while it loads, when it fails, and with none published or
-  // covering none of its days, Last week and its tile are exactly the history comparison.
+  const notPublished = !forecastLoading && (forecast === null || (!forecast.available && forecast.reason === 'no_published_forecast'));
+  // Last week's published forecast, on its own too (D42): when it fails, and with none published or covering none of its
+  // days, Last week and its tile are exactly the history comparison; while it loads both show skeletons (UI review
+  // 2026-11-19), so neither says the sales stop and then swaps that for the forecast's words.
   const lastWeekRead = useLoad(useCallback(() => fetchForecast(api, locationId, lastWeekRange(today)), [api, locationId, today])).state;
   const lastWeekForecast = lastWeekRead.status === 'ready' ? lastWeekRead.data : null;
+  const lastWeekLoading = lastWeekRead.status === 'loading';
   const { history, notes, calendar } = data;
   // The location's own calendars' events, on their own (D49): until they load, or if they can't, Home shows none.
   const eventsRead = useLoad(useCallback(() => fetchOwnerCalendarEvents(api, locationId, forecastRange(today)), [api, locationId, today])).state;
   const imported = eventsRead.status === 'ready' ? eventsRead.data : NO_EVENTS;
   // One read of the board for Bar order and the selected day's Reorder part; it fails on its own, in their places.
   const { state: board } = useLoad(useCallback(() => fetchOrderBoard(api, locationId), [api, locationId]));
-  const days = useMemo(() => decodeHistory(history), [history]);
+  // D67: a guest count a note marks wrong reads as none, as the API reads it.
+  const days = useMemo(() => decodeHistory(history, notes), [history, notes]);
   // With the town's today, so only a day before it can be likely closed (D32): today's upload may be partial.
   const context = useMemo(() => dayContext(notes, calendar.events, ruleSchedules(rules), today), [notes, calendar.events, rules, today]);
   const metric = metricsWithData(days).guests ? 'guests' : 'netSales';
@@ -190,7 +195,9 @@ function HomeView(props: {
       <View style={[styles.lead, desktop ? styles.leadWide : null]}>
         <View style={styles.leadText}>
           <Mono>{leadLine(history.coverage.lastDate, calendar, history.uploadsOff === true)}</Mono>
-          {notPublished ? <NoForecast calibration={props.calibration} locationId={locationId} locationName={props.locationName} /> : null}
+          {forecastLoading ? (
+            <Skeleton name="home-lead-forecast" label="Loading the forecast"><SkeletonText width="80%" /></Skeleton>
+          ) : notPublished ? <NoForecast calibration={props.calibration} locationId={locationId} locationName={props.locationName} /> : null}
           <QuestionsLink locationId={locationId} />
         </View>
         <Actions><LinkButton variant="outline" href={locationHref(locationId, 'agent')} label="Ask TownwiseAI" /></Actions>
@@ -200,8 +207,9 @@ function HomeView(props: {
         <Glance
           week={week}
           forecast={forecast?.available === true ? forecast : null}
-          forecastLoading={forecastRead.status === 'loading'}
+          forecastLoading={forecastLoading}
           lastWeek={lastWeek}
+          lastWeekLoading={lastWeekLoading}
           next={next}
           calendar={calendar}
           until={homeCalendarRange(today).to}
@@ -224,7 +232,7 @@ function HomeView(props: {
               />
             ),
           },
-          { key: 'last', span: wideLastWeek ? 12 : 4, node: needs ? null : <LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} /> },
+          { key: 'last', span: wideLastWeek ? 12 : 4, node: needs ? null : <LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} loading={lastWeekLoading} /> },
         ]}
       />
       <BlockRow

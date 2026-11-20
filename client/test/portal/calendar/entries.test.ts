@@ -1,4 +1,4 @@
-import { compactEntries, dayEntries, fitLines, folded, notNamed, type DaySources } from '../../../src/portal/calendar/entries';
+import { compactEntries, dayEntries, fitLines, folded, notNamed, noteChip, noteWords, type DaySources } from '../../../src/portal/calendar/entries';
 import { ALL_FILTERS, type ImportedEvent } from '../../../src/portal/calendar/model';
 import { holiday, note, townEvent } from '../analytics/fakes';
 import { ruleOf } from '../rules/fakes';
@@ -117,4 +117,12 @@ test('fitLines shows every line up to the limit, else one fewer and “+N more�
   expect(fitLines(['a', 'b', 'c', 'd'], 3)).toEqual({ lines: ['a', 'b'], more: '+2 more' });
   expect(fitLines(['a', 'b', 'c'], 2)).toEqual({ lines: ['a'], more: '+2 more' });
   expect(fitLines([], 2)).toEqual({ lines: [], more: null });
+});
+
+test('a note marking a day’s guest count wrong (D67) reads “Guest count marked wrong”, or its event name', () => {
+  const mark = note({ kind: 'other', startDate: DAY, effect: 'wrong_guest_count', detail: null });
+  expect(noteChip(mark)).toBe('Guest count marked wrong');
+  expect(noteWords({ ...mark, title: null })).toBe('Guest count marked wrong');
+  expect(noteWords({ ...mark, title: 'Door counter broken' })).toBe('Door counter broken');
+  expect(compactEntries(dayEntries(DAY, sources({ notes: [mark] }))).map((entry) => entry.words)).toEqual(['Guest count marked wrong']);
 });
