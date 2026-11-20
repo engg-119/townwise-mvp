@@ -41,6 +41,9 @@ beforeEach(async () => {
   model.calls.length = 0;
   server.logs.length = 0;
   await server.connection.collection('tw_chat_usage').deleteMany({});
+  // A town row left by an earlier test is the same happening as a location row of the same title and day, and the read
+  // shows only the town's (research/read.ts), so each test starts with no town rows.
+  await server.connection.collection('tw_town_events').deleteMany({});
 });
 afterEach(() => { expect(model.remaining()).toBe(0); });
 

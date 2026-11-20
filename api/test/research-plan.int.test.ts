@@ -232,7 +232,10 @@ describe('the tick', () => {
       merged.push(claimed);
       return Promise.resolve();
     };
-    expect((await planTick(context(), 'replica-b', merge)).merges).toBe(2);
+    // The town's run merges first; the location's waits while the town's is merging (its town rows not stored yet).
+    expect((await planTick(context(), 'replica-b', merge)).merges).toBe(1);
+    await server.connection.collection('tw_town_research_runs').updateMany({}, { $set: { status: 'done' }, $unset: { liveSubject: '' } });
+    expect((await planTick(context(), 'replica-b', merge)).merges).toBe(1);
     expect(merged.map((claimed) => [claimed.kind, claimed.runId, claimed.owner])).toEqual([
       ['town', town?.id, 'replica-b'], ['location', run?.id, 'replica-b'],
     ]);

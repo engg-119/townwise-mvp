@@ -53,7 +53,7 @@ import { profileModel } from './profiles.ts';
 import { locationEventModel, locationResearchRunModel, locationResearchThreadModel } from './research-locations.ts';
 import { researchRevisionModel } from './research-revisions.ts';
 import { allThreadsEnded, type ThreadDoc } from './research-shared.ts';
-import { townEventModel } from './research-towns.ts';
+import { townEventModel, townResearchRunModel } from './research-towns.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { uploadDayModel } from './upload-days.ts';
 import { UPLOADS_COLLECTION } from './uploads.ts';
@@ -1105,6 +1105,10 @@ export interface ClaimedLocationResearchMerge {
  * organization, so a run never stays `running` because that lane died. One caller wins each claim. The sweep leaves out
  * organizations research leaves alone (not active, or switched off), whose queued threads no lane claims, and pages
  * past runs not ready yet, so runs that cannot finish never hide newer ones that can.
+ *
+ * A run waits while its town's run has started and not ended (`running` or `merging`), so the town's rows are stored
+ * before the location's merge checks them (`town_dupe`) and the planner's next sweep merges it. A town run still
+ * `queued` (its threads not due yet) does not hold it, so Research now never waits hours for the town's Monday.
  */
 export async function claimLocationResearchMerge(
   connection: Connection, input: { readonly runId?: string; readonly owner: string; readonly now: Date; readonly leaseMs: number },
@@ -1120,11 +1124,14 @@ export async function claimLocationResearchMerge(
     where = { _id: new Types.ObjectId(input.runId), ...due };
   }
   // Ids and thread counts only; at most one live run a location, so this stays as small as the locations researched.
-  const candidates = await Run.find(where, { _id: 1, status: 1, mergeUntil: 1, threads: 1 }).sort({ createdAt: 1, _id: 1 }).lean();
+  const candidates = await Run.find(where, { _id: 1, status: 1, mergeUntil: 1, threads: 1, town: 1 }).sort({ createdAt: 1, _id: 1 }).lean();
+  const TownRun = townResearchRunModel(connection);
   const set = { $set: { status: 'merging', mergeOwner: input.owner, mergeUntil: new Date(input.now.getTime() + input.leaseMs) } };
   for (const run of candidates) {
     // Every thread the run planned has a row and has ended (a plan that crashed between its thread rows waits for them).
     if (!await allThreadsEnded(Thread as unknown as Model<ThreadDoc>, {}, run._id, run.threads.length)) continue;
+    // The town's run is searching or merging: this one merges after it.
+    if (run.status === 'running' && await TownRun.exists({ liveSubject: run.town, status: trusted({ $in: ['running', 'merging'] }) }) !== null) continue;
     // The claim compares the status (and, for a stale merge, the lease) it read.
     const filter = run.status === 'running'
       ? { _id: run._id, status: 'running' as const }

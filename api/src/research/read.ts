@@ -4,6 +4,11 @@
 // (research/revisions.ts). Ids are `t-<hex>` for a town row and `l-<hex>` for a location row; each view carries its
 // `head`, the `basedOn` an edit of it sends.
 //
+// A location row that is the same happening as one of its town's rows (dedupe.ts sameEvent, on what research found) is
+// left out, its sources (and its competitor) folded into the town's view: a town run and a location run that merge in
+// either order show it once. The location run's merge drops such a finding when the town's row is already stored
+// (merge.ts `town_dupe`); this read covers a town run that merged after it.
+//
 // The one reader of researched events for the calendar route, TownwiseAI's tools, weekly suggestions and the research
 // routes. It answers `[]` while the organization's research switch or TOWNWISE_RESEARCH is off, so nothing researched
 // is read for an organization that turned it off, and `null` when a read fails, so a caller shows everything else
@@ -19,10 +24,11 @@ import type { ResolvedTownwiseConfig } from '../config.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { EntityRecordBase, EventRecordBase } from '../stores/research-shared.ts';
+import { sameEvent, type Comparable } from './dedupe.ts';
 import { isTownId, townStamp } from './plan.ts';
 import { foldRevisions } from './revisions.ts';
 import type { LocationOrigin } from './threads.ts';
-import type { Confidence, EventCategory, EventKind, EventStatus, SourceRef } from './verify.ts';
+import { MAX_EVENT_SOURCES, type Confidence, type EventCategory, type EventKind, type EventStatus, type SourceRef } from './verify.ts';
 
 export interface ResearchReadContext {
   readonly stores: TownwiseStores;
@@ -118,14 +124,29 @@ export async function readResearchedViews(
   const byId = (list: readonly EntityRecordBase[]) => new Map(list.map((entity) => [entity.id, entity]));
   const townNames = byId(townEntities);
   const ownNames = byId(ownEntities);
-  const views = [
-    ...townRows.filter((row) => row.suppressed === null)
-      .map((row) => viewOf(`${TOWN_PREFIX}${row.id}`, row, 'town', townNames, revisions, null)),
-    ...ownRows.filter((row) => row.placeId === stamp.placeId && row.town === stamp.town)
-      .map((row) => viewOf(`${LOCATION_PREFIX}${row.id}`, row, row.origin, ownNames, revisions,
-        row.competitorEntityId === null && row.competitorPlaceId === null ? null
-          : { entityId: row.competitorEntityId, placeId: row.competitorPlaceId })),
-  ];
+  const comparable = (row: EventRecordBase, names: ReadonlyMap<string, EntityRecordBase>): Comparable => ({
+    title: row.title, start: row.start, end: row.end, category: row.category,
+    venueKey: row.venueId === null ? null : names.get(row.venueId)?.nameKey ?? null,
+  });
+  const town = townRows.filter((row) => row.suppressed === null).map((row) => ({
+    match: comparable(row, townNames), view: viewOf(`${TOWN_PREFIX}${row.id}`, row, 'town', townNames, revisions, null),
+  }));
+  const own: ResearchedEventView[] = [];
+  for (const row of ownRows.filter((each) => each.placeId === stamp.placeId && each.town === stamp.town)) {
+    const competitor = row.competitorEntityId === null && row.competitorPlaceId === null ? null
+      : { entityId: row.competitorEntityId, placeId: row.competitorPlaceId };
+    const same = town.find((each) => sameEvent(comparable(row, ownNames), each.match));
+    if (same === undefined) {
+      own.push(viewOf(`${LOCATION_PREFIX}${row.id}`, row, row.origin, ownNames, revisions, competitor));
+      continue;
+    }
+    const sources = [...same.view.sources];
+    for (const source of row.sources) {
+      if (sources.length < MAX_EVENT_SOURCES && !sources.some((kept) => kept.url === source.url)) sources.push({ label: source.label, url: source.url });
+    }
+    same.view = { ...same.view, sources, competitor: same.view.competitor ?? competitor };
+  }
+  const views = [...town.map((each) => each.view), ...own];
   return views
     .filter((view) => range === null || (view.start <= range.to && view.end >= range.from))
     .sort((a, b) => (a.start === b.start ? (a.id < b.id ? -1 : 1) : a.start < b.start ? -1 : 1));

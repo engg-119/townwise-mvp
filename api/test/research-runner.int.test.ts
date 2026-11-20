@@ -22,6 +22,7 @@ import type { ChatModel } from '../src/chat/model.ts';
 import { messageCostMicroUsd } from '../src/chat/pricing.ts';
 import type { Competitor } from '../src/research/competitors.ts';
 import { researchRuns } from '../src/research/plan.ts';
+import { researchedEventsFor } from '../src/research/read.ts';
 import { createResearchRunner, staleGraceMicroUsd, type ResearchRunner, type ResearchRunnerDeps } from '../src/research/runner.ts';
 import type { ThreadId } from '../src/research/threads.ts';
 import type { TownwiseStores } from '../src/stores/index.ts';
@@ -430,6 +431,48 @@ describe('the runner: merges', () => {
     expect(lines('townwise.research_run')).toHaveLength(0);
     // Found is kept for the merge that holds the run now.
     expect((await stores.researchTowns.threadsOf(created.id)).every((thread) => thread.found !== null)).toBe(true);
+  });
+
+  it('a location run merged before its town’s run shows the event once: the town’s view, with both runs’ sources', async () => {
+    const t = await tenant();
+    const [locationId = ''] = t.locationIds;
+    await locationRun(t, locationId);
+    await run(runner(answering().model));
+    expect(await stores.researchLocations.events(t.scope, locationId)).toHaveLength(1);
+    const town = await townRun();
+    const otherPage = 'https://news.sentinel-valley.example.com/lantern';
+    const townGathered = message([
+      webSearch('s1'), webResults('s1', [otherPage]), citedQuotes(`EVENT: ${TITLE}, January 16, 2027.`, [{ url: otherPage, quote: QUOTE }]),
+    ], { usage: { input: 4_000, output: 600, searches: 1 } });
+    await run(runner(answering({ gather: () => ({ kind: 'message', message: townGathered }) }).model));
+    expect(await stores.researchTowns.findRun(town.id)).toMatchObject({ status: 'done', counts: { added: 1 } });
+    const location = await stores.locations.find(t.scope, locationId);
+    if (location === null) throw new Error('fixture location missing');
+    const found = await researchedEventsFor(server.ctx, t.scope, location, { from: '2027-01-01', to: '2027-01-31' });
+    expect(found).toHaveLength(1);
+    expect(found?.[0]?.id.startsWith('t-')).toBe(true);
+    expect(found?.[0]?.sources.map((source) => source.url).sort()).toEqual([PAGE_A, otherPage].sort());
+  });
+
+  it('a location run waits to merge while its town’s run is under way, then merges after it and stores no copy', async () => {
+    const t = await tenant();
+    const [locationId = ''] = t.locationIds;
+    // The town's run has started, its thread not due for an hour.
+    const town = await stores.researchTowns.insertRun({ townKey: 'hanover-nh', key: `w:${randomUUID()}`, threads: ['schools'], now: clock });
+    if (town === null) throw new Error('no run');
+    await stores.researchTowns.insertThreads(town, [{ thread: 'schools', notBefore: new Date(NOW.getTime() + 3_600_000) }], clock);
+    await server.connection.collection('tw_town_research_runs').updateOne({ _id: new Types.ObjectId(town.id) }, { $set: { status: 'running', startedAt: clock } });
+    const own = await locationRun(t, locationId);
+    await run(runner(answering().model));
+    expect((await stores.researchLocations.findRun(t.scope, own.id))?.status).toBe('running');
+    expect(await stores.researchLocations.events(t.scope, locationId)).toHaveLength(0);
+    clock = new Date(NOW.getTime() + 2 * 3_600_000);
+    await run(runner(answering().model));
+    expect((await stores.researchTowns.findRun(town.id))?.status).toBe('done');
+    await runner(answering().model, { lanes: 0 }).plan();
+    expect(await stores.researchLocations.findRun(t.scope, own.id)).toMatchObject({ status: 'done', counts: { added: 0 } });
+    expect(await stores.researchLocations.events(t.scope, locationId)).toHaveLength(0);
+    expect(await stores.researchTowns.events('hanover-nh')).toHaveLength(1);
   });
 
   it('merges a location run into the location’s rows, stamped with its place and town', async () => {
