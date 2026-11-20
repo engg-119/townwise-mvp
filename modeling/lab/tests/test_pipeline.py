@@ -450,7 +450,7 @@ def test_result_matches_contract(model_result, lab_input):
 
     assert result["run"]["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION,
                                       "notebookCommit": CODE}
-    assert version.MODEL_VERSION == "v11"
+    assert version.MODEL_VERSION == "v12"
 
 
 def test_a_model_run_carries_how_its_trees_learned(model_result, result, lab_input):
@@ -876,20 +876,30 @@ def test_closed_weekday_and_holiday_rules(engine, results, lab_input):
     status = statuses_of(inp)
     assert status["2025-12-25"] == "open" and status["2025-12-24"] == "closed" and status["2025-11-27"] == "closed"
 
-    # A weekday is closed when none of its last 8 dates had guests, counting only weeks with guests on another day
+    # A weekday is closed when at most 1 of its last 8 dates had guests, counting only weeks with guests on another day
     inp = copy.deepcopy(lab_input)
-    thursdays = [d for d in inp["days"] if d["date"] <= inp["dataThrough"] and day(d["date"]).weekday() == 3][-9:]
-    assert thursdays[0]["guests"] and thursdays[0]["guests"] > 0
-    for d in thursdays[1:]:
+    thursdays = [d for d in inp["days"] if d["date"] <= inp["dataThrough"] and day(d["date"]).weekday() == 3][-10:]
+    assert day(thursdays[-1]["date"]) + timedelta(days=3) <= day(inp["dataThrough"])  # in a complete week: it counts
+    assert all(d["guests"] and d["guests"] > 0 for d in thursdays[:2])
+    for d in thursdays[:2]:
+        d["privateEvent"] = d["booked"] = False  # served: a private event or buyout never is
+    for d in thursdays[2:]:
         d["guests"] = None
     status = statuses_of(inp)
     future_thursdays = [when for when in status if day(when).weekday() == 3
                         and when not in holidays_closed + sorted(booked | closed_note)]  # Thanksgiving is a Thursday
     assert future_thursdays and all(status[when] == "closed" for when in future_thursdays)
-    week_of_last = day(thursdays[-1]["date"]) - timedelta(days=3)
-    for d in inp["days"]:
-        if week_of_last <= day(d["date"]) <= week_of_last + timedelta(days=6):
-            d["guests"] = None  # a week with no guests at all: not evidence about Thursdays
+
+    def empty_week_of(thursday: dict) -> None:
+        monday = day(thursday["date"]) - timedelta(days=3)
+        for d in inp["days"]:
+            if monday <= day(d["date"]) <= monday + timedelta(days=6):
+                d["guests"] = None  # a week with no guests at all: not evidence about Thursdays
+
+    empty_week_of(thursdays[-1])  # the last 8 counted Thursdays now hold one with guests: still closed
+    status = statuses_of(inp)
+    assert all(status[when] == "closed" for when in future_thursdays)
+    empty_week_of(thursdays[-2])  # and now two
     status = statuses_of(inp)
     assert all(status[when] == "open" for when in future_thursdays)
 
@@ -898,11 +908,62 @@ def test_a_closing_holiday_with_no_past_occurrence_stays_open():
     dates = pd.Series(pd.date_range("2025-06-01", "2025-07-10"))
     frame = pd.DataFrame({"date": dates, "weekday": dates.dt.day_name(), "guests": np.where(dates <= "2025-06-30", 20.0,
                                                                                             np.nan),
-                          "closed": False, "booked": False})
+                          "closed": False, "private_event": 0, "booked": False})
     frame = pd.concat([frame, features.holiday_flags(frame.date)], axis=1)
     status = forecast.statuses(frame, pd.Timestamp("2025-06-30"))
     assert frame.date[status.index].tolist() == list(pd.date_range("2025-07-01", "2025-07-10"))
     assert (status == "open").all()  # July 4 included: no earlier July 4 says the place closes
+
+
+# Closed weekdays (forecast.closed_weekdays, v12): a restaurant open every day at 100 guests, then closed on Sundays and
+# Mondays from June 2025 (no guest count), with the days each test serves on them
+
+CLOSED_FROM = pd.Timestamp("2025-06-01")
+
+
+def closed_weekdays_of(through: str, guests: dict[str, float] | None = None, private: tuple[str, ...] = (),
+                       booked: tuple[str, ...] = (), first: str = "2025-03-03") -> set[str]:
+    dates = pd.Series(pd.date_range(first, through))
+    shut = dates.dt.day_of_week.isin([6, 0]) & dates.ge(CLOSED_FROM)
+    frame = pd.DataFrame({"date": dates, "weekday": dates.dt.day_name(), "guests": np.where(shut, np.nan, 100.0),
+                          "private_event": dates.isin(pd.to_datetime(list(private))).astype(int),
+                          "booked": dates.isin(pd.to_datetime(list(booked)))})
+    for when, count in (guests or {}).items():
+        frame.loc[frame.date.eq(pd.Timestamp(when)), "guests"] = count
+    return forecast.closed_weekdays(frame, pd.Timestamp(through))
+
+
+def test_a_partial_last_week_whose_median_collapses_does_not_reopen_a_closed_weekday():
+    # Data ends on a Tuesday: its week holds only Monday's 4 guests and Tuesday's 49, a median of 26.5 and a bar of
+    # 2.65 that 4 passes. One real Monday among the last 8 is not enough alone, so only that week could reopen Mondays.
+    assert closed_weekdays_of("2025-08-26", {"2025-07-14": 100.0, "2025-08-25": 4.0, "2025-08-26": 49.0}) == {
+        "Sunday", "Monday"}
+    # A complete week counts: the same real Monday then opens Mondays, with July's
+    assert closed_weekdays_of("2025-08-31", {"2025-07-14": 100.0, "2025-08-25": 100.0}) == {"Sunday"}
+    # but not while its week is still partial
+    assert closed_weekdays_of("2025-08-26", {"2025-07-14": 100.0, "2025-08-25": 100.0}) == {"Sunday", "Monday"}
+
+
+def test_a_private_event_or_booked_day_on_a_closed_weekday_does_not_reopen_it():
+    # Two parties on closed Sundays, rung as full rooms, beside one real Sunday: one served date in 8
+    parties = {"2025-08-17": 60.0, "2025-08-24": 80.0}
+    real = {"2025-07-13": 100.0}
+    assert closed_weekdays_of("2025-08-31", parties | real, private=("2025-08-17",), booked=("2025-08-24",)) == {
+        "Sunday", "Monday"}
+    assert closed_weekdays_of("2025-08-31", parties | real) == {"Monday"}  # unflagged, they would have reopened it
+
+
+def test_one_served_date_in_the_last_eight_does_not_reopen_a_weekday_but_two_do():
+    assert closed_weekdays_of("2025-08-31", {"2025-08-18": 100.0}) == {"Sunday", "Monday"}
+    assert closed_weekdays_of("2025-08-31", {"2025-08-11": 100.0, "2025-08-18": 100.0}) == {"Sunday"}
+
+
+def test_an_open_weekday_stays_open():
+    assert closed_weekdays_of("2025-05-25") == set()  # before the closures every weekday is served
+    # Tuesdays to Saturdays are served throughout, so only Sundays and Mondays close
+    assert closed_weekdays_of("2025-08-31") == {"Sunday", "Monday"}
+    # A weekday with fewer than 2 counted dates stays open, even unserved: one week of data, closed Sunday and Monday
+    assert closed_weekdays_of("2025-08-31", first="2025-08-25") == set()
 
 
 def test_open_days_take_the_holiday_multipliers_and_ranges_widened_by_k(lab_input):

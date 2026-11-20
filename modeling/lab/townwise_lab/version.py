@@ -15,4 +15,8 @@
 # test, so a bump refits every location once.
 # v11 (2026-11-19): Halloween is the weekend around Oct 31 (features.halloween_weekend), not Oct 31 alone, so the other
 # weekend night carries the Halloween effect and a Sunday Halloween keeps its Friday and Saturday.
-MODEL_VERSION = "v11"
+# v12 (2026-11-19): closed weekdays are judged on complete weeks and real service (forecast.closed_weekdays): the week
+# holding the data cutoff counts only when the cutoff is its Sunday, a private-event or booked day is never served, and
+# a weekday is closed until 2 of its last 8 counted dates were served, so a partial last week or one party on a closed
+# Sunday or Monday no longer reopens it.
+MODEL_VERSION = "v12"

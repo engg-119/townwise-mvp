@@ -34,7 +34,7 @@ export const LAB_INPUT_SCHEMA = 'townwise.lab-input/3';
  * The lab's model version (modeling/lab/townwise_lab/version.py's MODEL_VERSION; lab-contract.test.ts holds the two
  * equal). The weekly refresh's fingerprint includes it (D42), so a bump refits every location once.
  */
-export const LAB_MODEL_VERSION = 'v11';
+export const LAB_MODEL_VERSION = 'v12';
 /**
  * Days the input carries after the last day with guests (D52): the furthest a run reaches, its outlook capped at 400
  * days after the last day of sales (the lab's forecast.HORIZON_DAYS).
