@@ -3537,7 +3537,7 @@ Each is marked inline with “lead default”:
 - [DECISION NEEDED: whether repeating events on link and file calendars are expanded so they can answer a closure question] `calendar/ics.ts` counts a repeating event and imports none of its days, so a weekly "Closed" on an iCloud or Outlook link answers nothing; Google expands repeats (D59 slice 5, 10.12).
 - [DECISION NEEDED: whether a calendar event that plainly says open answers a likely-closed question] A title like "Open" is rare and close to "Open mic" or "Open bar", and a likely-closed day would still read as closed to D32 without the open-day note (D59 slice 5, 10.12).
 - [Decided 2026-11-19 by the owner: allowed (“yes that is allowed”), to whether Google Maps Platform's terms allow sending Places names, types and websites to Anthropic.] `TOWNWISE_RESEARCH_PLACES_TO_AI` is true in `api/production.env`: a location's research sends the restaurant's Google name and address and its competitors' Google names, types and websites, and keeps the competitors' place ids; the code default stays false, so an environment that leaves it unset sends no Google content (D66, 13.3).
-- Whether researched events should become lab training groups (a later change, `townwise.lab-input/3` bumped), or stay on the Calendar and in TownwiseAI only (D66, 13.1a).
+- Whether researched events should become lab training groups (a later change, `townwise.lab-input/4` bumped to `/5`), or stay on the Calendar and in TownwiseAI only (D66, 13.1a).
 - Whether weekly location research should become fortnightly if the live eval's cost per location is near the $6 share, since each run re-reads the same 180 days (D66, 13.3).
 
 ### 22.4 Conflicts in existing copy

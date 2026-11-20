@@ -398,5 +398,5 @@ Additive: new collections, an additive calendar key, new routes, a new tool at t
 ## Open Questions
 
 - Google Maps Platform terms on sending Places names to a model (decision 10): Decided 2026-11-19 by the owner: allowed.
-- Whether researched events should become lab training groups (a later change; `townwise.lab-input/3`).
+- Whether researched events should become lab training groups (a later change; `townwise.lab-input/4` bumped to `/5`).
 - Whether weekly location research should become fortnightly if the eval's cost per location is near the $6 share (each run re-reads the same 180 days).
