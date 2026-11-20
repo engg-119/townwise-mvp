@@ -6,7 +6,7 @@ import {
   calendarHref, clientNav, consoleNav, HOME, homeFor, isAllowed, isFillRoute, itemHref, locationHref, navLocationId, pageTitle, tabOf,
   type TabKey,
 } from '../../src/portal/routing';
-import { calibrationSchema, meResponseSchema, orgResponseSchema, type Access } from '../../src/portal/schemas';
+import { calibrationSchema, lastRunOf, meResponseSchema, orgResponseSchema, updatingOf, type Access } from '../../src/portal/schemas';
 import {
   dateRange, patternOf, TOWN_GROUPS, townProfile, townResearchLine,
 } from '../../src/portal/towns';
@@ -337,6 +337,27 @@ describe('schemas', () => {
     expect(calibrationSchema.parse(calibrated)).toEqual(calibrated);
     expect(calibrationSchema.safeParse({ state: 'stale', ...days }).success).toBe(false);
     expect(calibrationSchema.safeParse({ state: 'queued' }).success).toBe(false);
+  });
+
+  test('D65: updating and lastRun are fields beside the state, optional, and never fail the parse', () => {
+    const days = { dayCount: 400, firstDate: '2025-01-01', lastDate: '2026-11-21' };
+    // An API from before D65: every state parses and reads as not updating, with no last run.
+    const old = calibrationSchema.parse({ state: 'not_calibrated', ...days });
+    expect(updatingOf(old)).toBeNull();
+    expect(lastRunOf(old)).toBeNull();
+    expect(updatingOf(calibrationSchema.parse({ state: 'no_sales_data' }))).toBeNull();
+    const running = { stage: 'running', since: '2026-11-19T19:14:00.000Z' };
+    const stale = calibrationSchema.parse({ state: 'stale', ...days, dataThrough: '2026-11-15', newerDays: 6, nextRefresh: null, updating: running });
+    expect(updatingOf(stale)).toEqual(running);
+    const lastRun = { outcome: 'kept', reason: 'not_beat_average', finishedAt: '2026-11-18T09:00:00.000Z' };
+    const held = calibrationSchema.parse({ state: 'not_calibrated', ...days, updating: null, lastRun });
+    expect(lastRunOf(held)).toEqual(lastRun);
+    // A stage or reason this client doesn't know reads as none rather than failing GET /api/org.
+    expect(updatingOf(calibrationSchema.parse({ state: 'not_calibrated', ...days, updating: { stage: 'paused', since: 'x' } }))).toBeNull();
+    expect(lastRunOf(calibrationSchema.parse({ state: 'not_calibrated', ...days, lastRun: { ...lastRun, reason: 'later' } }))).toBeNull();
+    // Still four states: progress is never one of them.
+    expect(calibrationSchema.safeParse({ state: 'queued', updating: running }).success).toBe(false);
+    expect(calibrationSchema.safeParse({ state: 'calibrating', ...days }).success).toBe(false);
   });
 });
 

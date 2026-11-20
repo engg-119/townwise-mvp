@@ -5,7 +5,7 @@ How the client app's top bar fits a location's sections: four sit under one More
 
 ## Requirements
 ### Requirement: The client bar groups four sections under More
-The client app's top bar SHALL show a location's sections Home, Calendar, Orders, Analytics and TownwiseAI, then one control named "More", then the right-hand group (Team for org admins outside open as admin, and Settings). More SHALL hold Notes, Rules, Town and Your data, in that order. With no location the bar SHALL show only the right-hand group and no More. The gate and console bars SHALL be unchanged. [CONFIRM: Notes, Rules, Town and Your data under More]
+The client app's top bar SHALL show a location's sections Home, Calendar, Orders, Analytics and TownwiseAI, then one control named "More", then the right-hand group (Team for org admins outside open as admin, and Settings). More SHALL hold Notes, Rules, Town and Your data, in that order. With no location the bar SHALL show only the right-hand group and no More. The gate and console bars SHALL be unchanged.
 
 #### Scenario: An org admin on a location page
 - **WHEN** an org admin opens `/locations/l1`

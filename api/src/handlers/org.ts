@@ -28,7 +28,6 @@ const leaveBody = z.strictObject({});
 
 /**
  * PATCH /api/org { name, orgId? } (P18). `orgId`, the organization the page shows, is required in open as admin (D25).
- * [CONFIRM: org admins can rename their own organization]
  */
 export async function renameOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);

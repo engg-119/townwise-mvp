@@ -24,7 +24,7 @@ export interface MemberView {
 
 export interface AddResult { email: string; outcome: 'invited' | 'already_invited' | 'already_member' | 'invalid' }
 
-/** Spec 18. [CONFIRM: 20 emails per add; 200 people per organization] */
+/** Spec 18. */
 const MAX_EMAILS_PER_ADD = 20;
 const MAX_PEOPLE = 200;
 
@@ -32,7 +32,6 @@ const roleSchema = z.enum(['org_admin', 'member']);
 /** Also the staff console's team edits (spec 10.7: as 10.6). */
 export const addBody = z.object({
   emails: z.array(z.string().max(320)).min(1).max(MAX_EMAILS_PER_ADD),
-  // [CONFIRM: role chosen at invite, default member]
   role: roleSchema.default('member'),
 });
 export const roleBody = z.object({ role: roleSchema });

@@ -5,7 +5,7 @@ Planned by week, in this order.
 ## 1. Locality Research and Data Collection
 
 - Finalize access to Sawtooth's historical sales and transaction data
-- Develop the locality research agent to identify Hanover-specific demand drivers
+- Develop the locality research agent to identify Hanover-specific demand drivers (town research, spec D66: weekly web research of each town and each restaurant in parallel threads, its findings on the Calendar with their sources; `docs/portal/tuning-chat.md` section 10)
 - Identify and collect publicly available datasets
 - Set up app scaffold
 

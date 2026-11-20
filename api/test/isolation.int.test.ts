@@ -11,12 +11,14 @@ import { ORDER_CHANGE_RESULT } from '../src/chat/tools/orders.ts';
 import { utcDay } from '../src/dates.ts';
 import { createItemReader } from '../src/files/items.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
+import { runFileSha256, type ForecastRunFile } from '../src/forecasts/file.ts';
 import { createTownwiseStores } from '../src/stores/index.ts';
 import {
   addChatTurn, addConversation, addInvite, addLocation, addNote, addOpenAsAdminGrant, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat,
-  addUpload, createOrg, ORDER_COLLECTIONS,
+  addResearchRecords, addUpload, createOrg, ORDER_COLLECTIONS, RESEARCH_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
+import { runDays } from './helpers/lab.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
 import { call, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
@@ -59,6 +61,17 @@ interface Tenant {
   turnId: string;
   /** D59: a change TownwiseAI applied at the location (its note), its why named after the organization. */
   changeId: string;
+  /**
+   * D65: the location's calibrations, a live one (queued `liveMinutesAgo` minutes ago) and a finished one (succeeded,
+   * its gate held, with a draft run), and that run's id.
+   */
+  liveCalibrationId: string;
+  doneCalibrationId: string;
+  calibrationRunId: string;
+  /** When the live calibration was requested. */
+  liveRequestedAt: Date;
+  /** D66: a researched event of the location (`l-<hex>`), hidden there by a member's revision. */
+  eventId: string;
 }
 
 /**
@@ -87,6 +100,8 @@ interface SetupTenant {
   turnId: string;
   /** D59: a change TownwiseAI applied at the location (its note), its why named after the organization. */
   changeId: string;
+  /** D66: a researched event of the location (`l-<hex>`), hidden there by a member's revision. */
+  eventId: string;
 }
 
 let a: Tenant;
@@ -97,7 +112,40 @@ let staffSession: TestSession;
 /** B's invitation addressed to A's member. */
 let bInvitesAMember: string;
 
-async function tenant(name: string): Promise<Tenant> {
+/** D65: a finished calibration of the location (succeeded, its gate held, with a draft run), then a live one. */
+async function addCalibrations(orgId: string, locationId: string, liveMinutesAgo: number) {
+  const scope = { orgId } as OrgScope;
+  const stores = createTownwiseStores(server.connection);
+  const now = server.clock.now();
+  const at = (minutesAgo: number): Date => new Date(now.getTime() - minutesAgo * 60_000);
+  const queue = async (requestedAt: Date): Promise<string> => {
+    const id = new Types.ObjectId().toHexString();
+    await stores.calibrations.insertQueued(scope, {
+      id, locationId, requestedBy: { userId: null, role: 'system', via: 'scheduled' }, causes: ['weekly'], regimeStart: null,
+      championRunId: null, tokenExpiresAt: new Date(requestedAt.getTime() + 20 * 60_000), now: requestedAt,
+    });
+    return id;
+  };
+  const doneCalibrationId = await queue(at(120));
+  const file: ForecastRunFile = {
+    schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'seasonal_baseline', version: 'v7', notebookCommit: 'abcdef0' },
+    trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: '2026-04-30', madeAt: '2026-04-30', frozen: null,
+    interval: { level: 0.8, widened: true }, backtest: null, ...runDays('2026-04-30', 14),
+  };
+  const { run } = await stores.forecasts.upsertRun(scope, locationId, {
+    id: new Types.ObjectId().toHexString(), file, fileSha256: runFileSha256(file), importedBy: null, lab: null, now: at(110),
+  });
+  await stores.forecasts.setStatus(scope, run.id, { from: ['importing'], to: 'draft', at: at(110), by: null });
+  await stores.calibrations.markRunning(scope, doneCalibrationId, { now: at(119), imageDigest: null });
+  await stores.calibrations.recordResult(scope, doneCalibrationId, { runId: run.id, scorecardJson: '{}', codeVersion: 'c0de' });
+  await stores.calibrations.recordGate(scope, doneCalibrationId, { published: false, reason: 'not_better' });
+  await stores.calibrations.finish(scope, doneCalibrationId, { status: 'succeeded' }, at(110));
+  const liveRequestedAt = at(liveMinutesAgo);
+  const liveCalibrationId = await queue(liveRequestedAt);
+  return { liveCalibrationId, doneCalibrationId, calibrationRunId: run.id, liveRequestedAt };
+}
+
+async function tenant(name: string, liveMinutesAgo: number): Promise<Tenant> {
   const orgId = await createOrg(server, { name });
   const adminEmail = `admin-${randomUUID().slice(0, 8)}@example.test`;
   const memberEmail = `member-${randomUUID().slice(0, 8)}@example.test`;
@@ -126,6 +174,7 @@ async function tenant(name: string): Promise<Tenant> {
   const turnId = await addChatTurn(server, { orgId, locationId, conversationId, userId: member.session.userId });
   const suggestionId = await addSuggestionRow(orgId, locationId, name);
   const changeId = await addChangeRow(orgId, locationId, noteId, name);
+  const eventId = `l-${await addResearchRecords(server, { orgId, locationId })}`;
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-02_2026-05-03',
@@ -133,7 +182,7 @@ async function tenant(name: string): Promise<Tenant> {
   });
   return {
     orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId, refFileId,
-    ruleId, calendarId, suggestionId, turnId, changeId,
+    ruleId, calendarId, suggestionId, turnId, changeId, eventId, ...await addCalibrations(orgId, locationId, liveMinutesAgo),
   };
 }
 
@@ -158,8 +207,10 @@ async function setupTenant(name: string, staffUserId: string): Promise<SetupTena
   const suggestionId = await addSuggestionRow(orgId, locationId, name);
   const turnId = await addChatTurn(server, { orgId, locationId, conversationId, userId: staffUserId });
   const changeId = await addChangeRow(orgId, locationId, noteId, name);
+  const eventId = `l-${await addResearchRecords(server, { orgId, locationId })}`;
   return {
     orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId, calendarId, suggestionId, turnId, changeId,
+    eventId,
   };
 }
 
@@ -267,6 +318,10 @@ async function snapshotOf(org: Tenant): Promise<string> {
     'tw_business_rules',
     // Owner calendars.
     'tw_calendar_sources', 'tw_calendar_events',
+    // D65: a read of B's calibrations never expires or changes them.
+    'tw_calibrations',
+    // D66: a location's research runs, threads, events, entities and revisions.
+    ...RESEARCH_COLLECTIONS,
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -278,8 +333,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
 beforeAll(async () => {
   blobs = createMemoryFileBlobs();
   server = await startTownwiseServer({ probe: PROBE_ROUTES, files: blobs });
-  a = await tenant('Alpine Tavern');
-  b = await tenant('Beachside Bistro');
+  a = await tenant('Alpine Tavern', 3);
+  b = await tenant('Beachside Bistro', 6);
   bInvitesAMember = await addInvite(server, { orgId: b.orgId, email: a.member.email, invitedBy: b.admin.session.userId });
   await addRequest(server, { userId: b.member.session.userId, email: b.member.email, status: 'withdrawn' });
   staffSession = await signInStaff(server);
@@ -295,6 +350,7 @@ function bIds(): Record<string, string> {
     orgId: b.orgId, inviteId: b.inviteId, memberId: b.inviteId, userId: b.member.session.userId,
     locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId, fileId: b.fileId, importId: b.importId,
     ref: `u_${b.uploadId}`, ruleId: b.ruleId, calendarId: b.calendarId, suggestionId: b.suggestionId, turnId: b.turnId, changeId: b.changeId,
+    eventId: b.eventId,
   };
 }
 
@@ -306,6 +362,10 @@ function bSecrets(): string[] {
     b.ruleId, `${b.name} private rule`,
     b.calendarId, `${b.name} bookings`, `${b.name} private booking`, b.suggestionId, `${b.name} private why`, b.turnId,
     b.changeId, `${b.name} private change why`,
+    // D65: B's calibrations and their run, and when B's live one started.
+    b.liveCalibrationId, b.doneCalibrationId, b.calibrationRunId, b.liveRequestedAt.toISOString(),
+    // D66: B's researched event.
+    b.eventId.slice(2),
   ];
 }
 
@@ -381,6 +441,8 @@ const BODY: Record<string, unknown> = {
   'org.owner_calendars.create': { kind: 'file', label: 'Added by A', ics: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n' },
   // D58: a label names its event in the body.
   'org.owner_calendars.bookings_label': { uid: 'fixture-0@example.test', booking: 'party' },
+  // D66: a person's hide of a researched event.
+  'org.research.event_update': { op: 'hide', basedOn: 'base' },
 };
 const QUERY: Record<string, string> = {
   'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
@@ -389,6 +451,8 @@ const QUERY: Record<string, string> = {
   // U13B.
   'org.forecast.get': '?from=2026-05-01&to=2026-05-31',
   'org.owner_calendars.events': '?from=2026-11-01&to=2026-11-30',
+  // D66.
+  'org.competition.get': '?theme=light',
 };
 
 /**
@@ -399,7 +463,7 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
   const bOwn: Record<string, string[]> = {
     memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
     fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.refFileId}`], ruleId: [b.ruleId],
-    calendarId: [b.calendarId], suggestionId: [b.suggestionId], turnId: [b.turnId], changeId: [b.changeId],
+    calendarId: [b.calendarId], suggestionId: [b.suggestionId], turnId: [b.turnId], changeId: [b.changeId], eventId: [b.eventId],
   };
   const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
   // Every other segment is the caller's own, so the request reaches the route: an empty one would match no route, and
@@ -430,7 +494,7 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
 function ownIds(
   org: Pick<
     Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId' | 'calendarId' | 'suggestionId' | 'turnId'
-    | 'changeId'
+    | 'changeId' | 'eventId'
   >,
   route: TownwiseRoute,
 ): Record<string, string> {
@@ -443,7 +507,7 @@ function ownIds(
     ref: `u_${org.uploadId}`, ruleId: org.ruleId,
     // The reply of the organization's conversation (its stored messages have no tree, so their nodes are legacy-{index}).
     nodeId: 'legacy-1',
-    calendarId: org.calendarId, suggestionId: org.suggestionId, turnId: org.turnId, changeId: org.changeId,
+    calendarId: org.calendarId, suggestionId: org.suggestionId, turnId: org.turnId, changeId: org.changeId, eventId: org.eventId,
   };
 }
 
@@ -452,7 +516,9 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
     expect(tenantRoutesWithIds.map((route) => route.id)).toEqual(expect.arrayContaining([
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
-      'org.notes.remove', 'org.sales.history', 'org.calendar.get', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
+      'org.notes.remove', 'org.sales.history', 'org.calendar.get',
+      // D66, the research agent's Town tab read, Research now, and a person's edit of a researched event.
+      'org.research.get', 'org.competition.get', 'org.research.run', 'org.research.event_update', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
       'org.chat.proposal', 'org.chat.rename', 'org.chat.active', 'org.chat.feedback',
       // Weekly suggestions (weekly-forecast-suggestions), and suggested closure rules (suggest-closure-rules).
       'org.agent.suggestion_accept', 'org.agent.suggestion_dismiss', 'org.agent.rule_suggestion_accept', 'org.agent.rule_suggestion_dismiss',
@@ -672,6 +738,19 @@ describe('isolation, case by case', () => {
     } finally {
       await server.connection.collection('tw_chat_turns').updateOne({ turnId: a.turnId }, { $set: { state: 'running', endedAt: null } });
     }
+  });
+
+  it('A’s GET /api/org reads A’s location updating from A’s own calibration, none of B’s', async () => {
+    const before = await snapshotOf(b);
+    const res = await call(server, '/api/org', { session: a.member.session });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    for (const secret of bSecrets()) expect(text).not.toContain(secret);
+    const { locations } = JSON.parse(text) as { locations: { id: string; calibration: { updating: unknown } }[] };
+    expect(locations.map((location) => [location.id, location.calibration.updating])).toEqual([
+      [a.locationId, { stage: 'running', since: a.liveRequestedAt.toISOString() }],
+    ]);
+    expect(await snapshotOf(b)).toBe(before);
   });
 
   it('a member route takes the organization only from the principal, never from the request', async () => {

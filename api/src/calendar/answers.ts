@@ -379,7 +379,7 @@ export async function takeBackAnswers(deps: Omit<AnswerDeps, 'agentAuto'>, scope
         details: { locationId, action: change.action, sourceKind: change.sourceKind },
       });
       if (change.startDate !== null && change.endDate !== null) {
-        await wantRefitFor(deps, scope, locationId, { startDate: change.startDate, endDate: change.endDate });
+        await wantRefitFor(deps, scope, locationId, { startDate: change.startDate, endDate: change.endDate }, 'townwise_ai');
       }
     }
     if (undone > 0) deps.logger.info({ locationId, calendarId, undone }, 'townwise.calendar_answers_taken_back');

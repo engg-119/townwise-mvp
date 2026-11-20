@@ -54,8 +54,11 @@ function parsePoint(raw: string | null): LatLng | null {
   return lat === undefined || lng === undefined || !Number.isFinite(lat) || !Number.isFinite(lng) ? null : { lat, lng };
 }
 
-/** The place's point from Valkey, else from Google (then kept); null when it can't be had. */
-async function pointOf(ctx: TownwiseContext, placeId: string): Promise<LatLng | null> {
+/**
+ * The place's point from Valkey, else from Google (then kept); null when it can't be had. D66's research runner reads
+ * the same cache (research/places.ts), naming itself in the failure log as `routeId`.
+ */
+export async function pointOf(ctx: Pick<TownwiseContext, 'redis' | 'places' | 'logger'>, placeId: string, routeId: string = ROUTE_ID): Promise<LatLng | null> {
   const raw = await ctx.redis.get(placePointKey(placeId));
   if (raw === NO_POINT) return null;
   const cached = parsePoint(raw);
@@ -71,7 +74,7 @@ async function pointOf(ctx: TownwiseContext, placeId: string): Promise<LatLng | 
     return at;
   } catch (err) {
     if (!(err instanceof PlacesUnavailableError)) throw err;
-    ctx.logger.warn({ routeId: ROUTE_ID, code: err.code, status: err.status, errType: err.errType }, 'townwise.places_failed');
+    ctx.logger.warn({ routeId, code: err.code, status: err.status, errType: err.errType }, 'townwise.places_failed');
     return null;
   }
 }

@@ -401,6 +401,9 @@ describe('a search and a client tool in one message', () => {
     expect(await code(tc('member', true, true))).toBe('org_admin_only');
     expect(await code(tc('org_admin', true, true))).toBe('web_turn');
     expect(await code(tc('org_admin', true, false))).toBe('file_turn');
+    // D66: a turn that read researched events (their titles came from web pages) starts none either.
+    const found = { role: 'org_admin', turn: { readUntrusted: false, readWeb: false, readResearchedDays: new Set(['2026-06-17']) } } as unknown as ToolContext;
+    expect(await code(found)).toBe('found_turn');
   });
 });
 

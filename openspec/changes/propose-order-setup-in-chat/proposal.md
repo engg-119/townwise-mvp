@@ -1,6 +1,6 @@
 ## Why
 
-On 2026-11-17 the owner asked for this about Orders: "Townwise can also suggest what to order from each distributor. To set that up, feel free to upload any unstructured or structured data and Townwise AI should be able to process that data and extract insights from that data", and to make sure "the townwise ai page can interact with it". Reading a file into the ordering setup exists on Ordering setup (D41, "Read a file with TownwiseAI"), but the TownwiseAI chat cannot use it: its prompt sends the owner to that page, and a file attached to a conversation (D36) can be discussed but never turned into suppliers and items. D41 left this open as `[CONFIRM: the chat tool propose_order_setup is slice 2]`. This change is that slice, as spec decision D56.
+On 2026-11-17 the owner asked for this about Orders: "Townwise can also suggest what to order from each distributor. To set that up, feel free to upload any unstructured or structured data and Townwise AI should be able to process that data and extract insights from that data", and to make sure "the townwise ai page can interact with it". Reading a file into the ordering setup exists on Ordering setup (D41, "Read a file with TownwiseAI"), but the TownwiseAI chat cannot use it: its prompt sends the owner to that page, and a file attached to a conversation (D36) can be discussed but never turned into suppliers and items. D41 left this open as. This change is that slice, as spec decision D56.
 
 ## What Changes
 

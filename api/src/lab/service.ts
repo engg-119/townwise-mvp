@@ -15,11 +15,13 @@ import { runFileSha256, type FileIssue, type LabRunFile } from '../forecasts/fil
 import { engineOf } from '../forecasts/reader.ts';
 import { forecastThrough } from '../forecasts/tiers.ts';
 import { rowsOf } from '../handlers/forecast-runs.ts';
+import { mailFirstForecast } from '../mail/first-forecast.ts';
 import { LIVE_STATUSES, type CalibrationFailure, type CalibrationOutcome, type CalibrationRecord } from '../stores/calibrations.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { ForecastRunRecord } from '../stores/forecasts.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
+import type { Cause } from './causes.ts';
 import { currentChampion, decideGate, GATE, jumpSums, streakOf, type CurrentRun } from './gate.ts';
 import { guestSpan, recordedBacktest } from './input.ts';
 import { checkLabResult, type LabSuccess } from './result.ts';
@@ -28,11 +30,11 @@ import type { LabScorecard } from './scorecard.ts';
 
 export { HORIZON_DAYS } from './input.ts';
 
-/** What one calibration costs the organization's TownwiseAI month (the job's list price is about $0.03). [CONFIRM] */
+/** What one calibration costs the organization's TownwiseAI month (the job's list price is about $0.03). */
 export const CALIBRATION_CHARGE_MICRO_USD = 100_000;
-/** Calibrations an organization may start in a day (townwise:calibrations; a store outage denies). [CONFIRM] */
+/** Calibrations an organization may start in a day (townwise:calibrations; a store outage denies). */
 export const CALIBRATIONS_PER_ORG_PER_DAY = 4;
-/** A calibration still live this long after it was requested has failed (timeout); its callback closes at the same time. [CONFIRM] */
+/** A calibration still live this long after it was requested has failed (timeout); its callback closes at the same time. */
 export const CALIBRATION_TIMEOUT_MS = 1_200_000;
 /** A pattern change needs this many days of history after it, so the new pattern has weeks to learn from. [CONFIRM] */
 const REGIME_TAIL_DAYS = 56;
@@ -77,6 +79,8 @@ export interface StartRequest {
   readonly scope: OrgScope;
   readonly location: LocationRecord;
   readonly requester: StartRequester;
+  /** What started a system calibration (D65, lab/causes.ts); a person's start passes none. */
+  readonly causes?: readonly Cause[];
   readonly regimeStart: string | null;
   /** The town's local date. */
   readonly today: string;
@@ -204,7 +208,6 @@ export async function regimeStartFits(
  * answers model_not_run to every such baseline and the start would be charged for nothing; a pattern change date falls
  * inside it, at least 8 weeks before its last day; the month's TownwiseAI budget is not spent (a person's start only);
  * and no calibration of the location is live (a stale one is timed out first).
- * [CONFIRM: a person's calibration starts from 230 days and runs the baseline alone under 595, spec index item 159]
  */
 export async function checkStart(ctx: LabStartContext, req: StartRequest): Promise<StartRefusal | null> {
   if (ctx.labRunner === null) return 'lab_unavailable';
@@ -255,7 +258,7 @@ export async function launch(
   const now = ctx.now();
   const queued = await ctx.stores.calibrations.insertQueued(scope, {
     id: req.id, locationId: location.id, regimeStart: req.regimeStart, championRunId: champion?.id ?? null,
-    requestedBy: { userId: req.requester.userId, role: req.requester.role, via: req.requester.via },
+    requestedBy: { userId: req.requester.userId, role: req.requester.role, via: req.requester.via }, causes: req.causes,
     tokenExpiresAt: new Date(now.getTime() + CALIBRATION_TIMEOUT_MS), now,
   });
   if (queued === null) return { ok: false, code: 'in_progress' };
@@ -425,6 +428,9 @@ async function storeDraft(
   await finishCalibration(ctx, scope, calibration, { status: 'succeeded' }, {
     runId: run.id, gate: gated?.gate?.reason ?? null, heldOutWeeks: heldOutWeeksOf(result),
   });
+  // D65: a first forecast mails the org admins once, after the finish, so the mail step (which never throws) cannot stop
+  // it. It checks that the run is published now (a staff withdrawal meanwhile wins) and is the location's first.
+  if (gated?.gate?.published === true) await mailFirstForecast(ctx, scope, location.id, run.id);
   const current = await calibrations.find(scope, calibration.id);
   return { status: 200, body: { status: current?.status ?? 'succeeded' } };
 }

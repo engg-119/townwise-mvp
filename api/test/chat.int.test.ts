@@ -14,6 +14,7 @@ import type { BetaMessageParam, BetaToolResultBlockParam } from '@anthropic-ai/s
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import type { OrgScope } from '../src/access/policy.ts';
 import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
 import { TOOLS } from '../src/chat/tools/registry.ts';
 import type { ChatSummary, ConversationView } from '../src/handlers/chat.ts';
@@ -185,6 +186,7 @@ describe('a plain answer', () => {
       'list_data_items', 'read_data_item', 'propose_data_item', 'start_calibration', 'get_calibration', 'compare_forecast_models',
       'get_owner_calendar',
       'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule', 'propose_order_setup',
+      'correct_calendar_event',
     ]);
     expect(params?.tools?.every((tool) => 'eager_input_streaming' in tool && tool.eager_input_streaming === true)).toBe(true);
 
@@ -197,7 +199,7 @@ describe('a plain answer', () => {
 
     const list = await (await call(server, `/api/org/locations/${locationId}/chat`, { session: author.session })).json() as ChatSummary;
     expect(list.enabled).toBe(true);
-    expect(list.budget).toEqual({ month: '2026-06', usedUsd: 0.03, limitUsd: 20, exhausted: false });
+    expect(list.budget).toEqual({ month: '2026-06', usedUsd: 0.03, limitUsd: 20, exhausted: false, researchUsd: 0 });
     expect(list.conversations[0]).toEqual({ id, title: 'What changed in May?', updatedAt: server.clock.now().toISOString(), turnCount: 1, running: false });
 
     const view = await (await call(server, `/api/org/locations/${locationId}/chat/${id}`, { session: author.session })).json() as ConversationView;
@@ -351,6 +353,29 @@ describe('tools', () => {
     const [result] = toolResults(messagesOf(model.calls[1])[2]);
     expect(JSON.parse(result?.content as string)).toMatchObject({ location: { name: 'Solo Tavern Group', town: { name: 'Hanover', state: 'NH' } } });
     expect(JSON.stringify(model.calls[1]?.params.messages)).not.toContain('Solo Tavern Group, Hanover');
+  });
+
+  it('get_location_overview carries the model card’s updating sentence while a first forecast runs, in a result, never the prefix (D65)', async () => {
+    const building = await addLocation(server, { orgId, name: 'Cellar' });
+    await addSalesDay(server, { orgId, locationId: building, date: '2026-05-01', guests: 60, netSalesCents: null });
+    await addSalesDay(server, { orgId, locationId: building, date: '2026-05-02', guests: 70, netSalesCents: null });
+    const requestedAt = new Date(server.clock.now().getTime() - 6 * MINUTE);
+    await server.ctx.stores.calibrations.insertQueued({ orgId } as OrgScope, {
+      id: new Types.ObjectId().toHexString(), locationId: building, requestedBy: { userId: admin.session.userId, role: 'org_admin', via: 'chat' },
+      regimeStart: null, championRunId: null, tokenExpiresAt: new Date(requestedAt.getTime() + 20 * MINUTE), now: requestedAt,
+    });
+    model.script(
+      { kind: 'message', message: message([toolUse('t1', 'get_location_overview', {})]) },
+      { kind: 'message', message: message([text('It’s being built now.')]) },
+    );
+    const { events } = await turn({ content: 'Is my forecast ready?' }, author, building);
+    expect(events.at(-1)?.event).toBe('done');
+    const [result] = toolResults(messagesOf(model.calls[1])[2]);
+    const overview = JSON.parse(result?.content as string) as { calibration: string; calibrationWords: string };
+    expect(overview.calibration).toBe('not_calibrated');
+    // In the town's time (Eastern): the test clock's 12:00 UTC less 6 minutes, on the town's today.
+    expect(overview.calibrationWords).toBe('Building your first forecast, started 7:54 AM.');
+    expect(JSON.stringify(model.calls[1]?.params.system)).not.toContain('Building');
   });
 
   it('a valid propose_note streams a proposal, writes no note, and the proposal posts unchanged to the notes route', async () => {
@@ -748,6 +773,15 @@ describe('caps, budget and limits', () => {
     expect((await turn({ conversationId: almost, content: 'Last one' })).status).toBe(200);
   });
 
+  it('D66: the budget says what location research used of the month, in cents, inside usedUsd', async () => {
+    const usage = server.connection.collection('tw_chat_usage');
+    await usage.insertOne({
+      orgId: new Types.ObjectId(orgId), month: '2026-06', costMicroUsd: 4_255_000, researchMicroUsd: 3_554_999, updatedAt: server.clock.now(),
+    });
+    const summary = await (await call(server, `/api/org/locations/${locationId}/chat`, { session: author.session })).json() as ChatSummary;
+    expect(summary.budget).toEqual({ month: '2026-06', usedUsd: 4.26, limitUsd: 20, exhausted: false, researchUsd: 3.55 });
+  });
+
   it('a spent budget is 409 chat_budget_exhausted before any model call; a turn under it may overrun by its own cost', async () => {
     const usage = server.connection.collection('tw_chat_usage');
     await usage.insertOne({ orgId: new Types.ObjectId(orgId), month: '2026-06', costMicroUsd: 19_999_999, updatedAt: server.clock.now() });
@@ -760,7 +794,7 @@ describe('caps, budget and limits', () => {
     const refused = await turn({ content: 'Over budget' });
     expect(refused).toMatchObject({ status: 409, error: 'chat_budget_exhausted' });
     const summary = await (await call(server, `/api/org/locations/${locationId}/chat`, { session: author.session })).json() as ChatSummary;
-    expect(summary.budget).toEqual({ month: '2026-06', usedUsd: 20.03, limitUsd: 20, exhausted: true });
+    expect(summary.budget).toEqual({ month: '2026-06', usedUsd: 20.03, limitUsd: 20, exhausted: true, researchUsd: 0 });
   });
 
   it('a budget spent during a turn ends it with budget after its last complete step, and makes no further call', async () => {

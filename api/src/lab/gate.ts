@@ -1,8 +1,8 @@
-// The publish gate (G2): pure, so every threshold is one test. Every value but minHistoryDays (decided by the owner, 2026-11-10) is a [CONFIRM] in spec D27.
+// The publish gate (G2): pure, so every threshold is one test. Every value but minHistoryDays (decided by the owner, 2026-11-10) is spec D27's, approved by the owner on 2026-11-19.
 // Since D42 (14.6) one set of rules judges every draft, scheduled or started by a person: a first forecast by its
 // engine's own checks, a refit of the current lab run's engine by its absolute checks and the streak's tolerance, an
 // engine switch (which the lab decided on the same weeks) by its absolute checks (reason engine_switched), and a draft against an imported run on
-// held-out weeks as before; then the jump guard, then G1. The new values are [CONFIRM]s in spec D42.
+// held-out weeks as before; then the jump guard, then G1. The new values are spec D42's, approved by the owner on 2026-11-19.
 import { daysBetween, utcDay } from '../dates.ts';
 import { engineOf } from '../forecasts/reader.ts';
 import { forecastThrough } from '../forecasts/tiers.ts';

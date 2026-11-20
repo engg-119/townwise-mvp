@@ -24,7 +24,6 @@ import { actorOf } from './team.ts';
 
 export { MAX_RULES };
 
-/** [CONFIRM: 30 business rules per location, 200 characters each] */
 export const MAX_RULE_CHARS = 200;
 
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
@@ -176,7 +175,7 @@ async function wantRefitForRule(
   const first = starts[0];
   if (first === undefined) return;
   const touched: TouchedDates = { startDate: first, endDate: first };
-  await wantRefitFor(ctx, caller.scope, locationId, touched);
+  await wantRefitFor(ctx, caller.scope, locationId, touched, 'person_change');
 }
 
 /**

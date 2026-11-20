@@ -101,6 +101,10 @@ async function undoApproval(ctx: TownwiseContext, scope: OrgScope, requestId: st
   const { stores } = ctx;
   await stores.members.deleteSeat(scope, seatId);
   if (await stores.members.countSeats(scope) > 0) return;
+  // D66: research of those locations, runs and threads first (the weekly planner may have queued a run for the new,
+  // active organization meanwhile).
+  await stores.researchLocations.removeForOrg(scope);
+  await stores.researchRevisions.removeForOrg(scope);
   await stores.locations.removeForOrg(scope);
   await stores.audit.redact({ kind: 'org', orgId: scope.orgId, requestId });
   await stores.orgs.removeFromRequest(scope, requestId);
@@ -351,7 +355,6 @@ function idTaken(): AppError {
  * POST /api/admin/orgs { name, adminEmail, id? } (F10): the organization and an org admin invitation added by staff. No
  * location: the admin's first page asks for one. With `id`, a repeat of this request answers 200 with the organization
  * it made and writes no second org.created (repeatCreate); any other organization with that id is 409 conflict.
- * [CONFIRM: staff can create organizations without a request]
  */
 export async function createOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);
@@ -704,7 +707,6 @@ const emptyBody = z.object({});
 /**
  * POST /api/admin/people/:userId/sign-out-everywhere {} (F7, P22): every session of the person, through the kit's
  * revokeAllSessions. The event's organization is the person's active organization at the time, or none (spec 9.2).
- * [CONFIRM: sign out everywhere for staff]
  */
 export async function signOutEverywhere(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);

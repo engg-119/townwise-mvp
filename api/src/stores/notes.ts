@@ -17,7 +17,7 @@ export const MAX_LINK_UID_CHARS = 1_024;
 
 export const NOTES_COLLECTION = 'tw_notes';
 
-/** D49: a note's title, at most, in code points. [CONFIRM: 120 characters, matching the file reader's event titles] */
+/** D49: a note's title, at most, in code points. */
 export const MAX_NOTE_TITLE_CHARS = 120;
 
 export type NoteKind = 'closure' | 'private_event' | 'opening' | 'other';

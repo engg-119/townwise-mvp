@@ -20,6 +20,7 @@ import { webAria } from '../../../../../../../src/portal/ui/aria';
 import { Wrap } from '../../../../../../../src/portal/ui/layout';
 import { theme } from '../../../../../../../src/theme';
 import { allUploadsOff } from '../../../../../../../src/portal/locations/sales';
+import { takeAsk } from '../../../../../../../src/portal/research/ask';
 
 // P25 TownwiseAI (/locations/[locationId]/agent, members; spec 16.3, D26): the chat page and its panel, Questions
 // and activity (Questions for you, What it's been doing, the budget, How TownwiseAI works), which shows only on the new
@@ -36,7 +37,11 @@ import { allUploadsOff } from '../../../../../../../src/portal/locations/sales';
 // for what TownwiseAI says it reads and How TownwiseAI works' forecast line. `?order=YYYY-MM-DD` (and `&item=`, from
 // Orders) fills it with a question about that order, drafted only from the location's own live board (GET .../orders,
 // never the sample); an order or item the board doesn't have fills nothing. `?panel=questions` (Home's "N questions
-// from TownwiseAI") opens the panel on load, Questions for you first, and the address drops it.
+// from TownwiseAI") opens the panel on load, Questions for you first, and the address drops it. `?panel=activity` (D65:
+// the dashboard's, Home's and the model card's links to a forecast's runs) opens it with What it’s been doing first,
+// in view on web, and the address drops it too. `?ask=found` (the Calendar's Ask TownwiseAI on a found event, D66)
+// opens a new conversation with the draft the Calendar left in memory (src/portal/research/ask.ts), sending
+// nothing, and the address drops it.
 // A question's Something else… sends its message through the chat drawn here, and on web focus goes to the composer,
 // as after a chip. The turn opens a conversation, so the panel goes with the landing; a turn refused outright leaves
 // the landing and the panel, with the card's words and the reason in view.
@@ -56,7 +61,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   const panel = useAgentPanel(api, location.id, markOrgStale);
   const about = useLoad(useCallback(() => fetchEstimatesAbout(api, location.id), [api, location.id]));
   const params = useLocalSearchParams<{
-    about?: string | string[]; order?: string | string[]; item?: string | string[]; panel?: string | string[];
+    about?: string | string[]; order?: string | string[]; item?: string | string[]; panel?: string | string[]; ask?: string | string[];
   }>();
   const orderParam = Array.isArray(params.order) ? params.order[0] : params.order;
   const itemParam = Array.isArray(params.item) ? params.item[0] : params.item;
@@ -84,23 +89,46 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   // Open by default beside the landing from 641px, collapsed under the chips at 640px and below, until the person chooses.
   const [chosen, setChosen] = useState<boolean | null>(null);
   const panelOpen = chosen ?? !phone;
-  // ?panel=questions opens the panel once per arrival; the person can close it, and the address drops it. At 640px and
-  // below it opens with Questions for you first, until the person opens or closes the row.
-  const askedPanel = params.panel === 'questions';
-  const [openedFor, setOpenedFor] = useState(false);
+  // ?panel=questions and ?panel=activity open the panel once per arrival; the person can close it, and the address drops
+  // it. Questions open with Questions for you first at 640px and below, and activity with What it’s been doing first at
+  // every width, until the person opens or closes the panel.
+  const askedFor = params.panel === 'questions' || params.panel === 'activity' ? params.panel : null;
+  const askedPanel = askedFor !== null;
+  const [openedFor, setOpenedFor] = useState<'questions' | 'activity' | null>(null);
   const [questionsFirst, setQuestionsFirst] = useState(false);
-  if (askedPanel !== openedFor) {
-    setOpenedFor(askedPanel);
-    if (askedPanel) {
+  const [activityFirst, setActivityFirst] = useState(false);
+  if (askedFor !== openedFor) {
+    setOpenedFor(askedFor);
+    if (askedFor !== null) {
       setChosen(true);
-      setQuestionsFirst(true);
+      setQuestionsFirst(askedFor === 'questions');
+      setActivityFirst(askedFor === 'activity');
     }
   }
   // This screen's own navigation: the router's setParams goes to the focused route, which isn't ready while the page mounts.
-  const navigation = useNavigation<{ setParams: (params: { panel: undefined }) => void }>();
+  const navigation = useNavigation<{ setParams: (params: { panel: undefined } | { ask: undefined }) => void }>();
   useEffect(() => {
     if (askedPanel) navigation.setParams({ panel: undefined });
   }, [askedPanel, navigation]);
+  // Ask TownwiseAI on a found event: once the chat has loaded, a new conversation with the Calendar's draft.
+  const askFound = params.ask === 'found';
+  const chatReady = chat.state.status === 'ready';
+  const { newConversation } = chat;
+  // Once per arrival with `?ask=found`: a later Ask, with the page still mounted, is a new arrival.
+  const askTaken = useRef(false);
+  useEffect(() => {
+    if (!askFound) {
+      askTaken.current = false;
+      return;
+    }
+    if (!chatReady || askTaken.current) return;
+    askTaken.current = true;
+    navigation.setParams({ ask: undefined });
+    const text = takeAsk(location.id);
+    if (text === null) return;
+    newConversation();
+    setDraft(text);
+  }, [askFound, chatReady, location.id, navigation, newConversation, setDraft]);
   const chatView = useRef<AgentChatHandle>(null);
   // iOS: the keyboard avoider measures itself from its parent, so it is offset by the portal's top bar above it.
   const root = useRef<React.ComponentRef<typeof View>>(null);
@@ -141,6 +169,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
       about={about.state}
       onRetryAbout={about.reload}
       showQuestions={!landingShowsQuestions(chat.state, panel, phone)}
+      activityFirst={activityFirst}
     />
   );
 
@@ -162,6 +191,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
             onTogglePanel={() => {
               setChosen(!panelOpen);
               setQuestionsFirst(false);
+              setActivityFirst(false);
             }}
             openQuestions={questions}
             panelSections={sections}

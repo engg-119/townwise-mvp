@@ -12,7 +12,7 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the active days recorder, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access, the weekly refresh, the TownwiseAI turn sweep and the title backfill import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the active days recorder, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access, the weekly refresh, the TownwiseAI turn sweep, the title backfill and research’s planner and runner import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
@@ -32,10 +32,12 @@ describe('isolation (source)', () => {
     // chat/turn-sweeper.ts (resumable-chat-turns) finds the running turns whose lease passed, and the records past their
     // keep, in any organization.
     // files/note-titles.ts, the boot-time title backfill (D49), finds the notes from before titles in every organization.
+    // research/plan.ts (D66) lists the towns in use and the locations to research, and sweeps runs ready to merge;
+    // research/runner.ts claims location threads and merges and finds a dead lane's thread, in any organization.
     expect(importers).toEqual([
       'access/activity.ts', 'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/turn-sweeper.ts', 'files/ai-reader.ts', 'files/note-titles.ts', 'files/sweeper.ts', 'files/worker.ts',
       'handlers/admin.ts', 'handlers/deletion.ts',
-      'handlers/me.ts', 'handlers/overview.ts', 'lab/callback.ts', 'lab/schedule.ts',
+      'handlers/me.ts', 'handlers/overview.ts', 'lab/callback.ts', 'lab/schedule.ts', 'research/plan.ts', 'research/runner.ts',
     ]);
   });
 
@@ -118,6 +120,11 @@ describe('isolation (source)', () => {
   it('only access/policy.ts mints the weekly refresh’s scope, and only lab/schedule.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForWeeklyRefresh(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'lab/schedule.ts']);
+  });
+
+  it('D66: only access/policy.ts mints research’s scope, and only the research planner and runner ask for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForResearch(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'research/plan.ts', 'research/runner.ts']);
   });
 
   it('only access/policy.ts mints the title backfill’s scope, and only files/note-titles.ts asks for it', () => {
@@ -287,5 +294,66 @@ describe('isolation (source)', () => {
   it('only access/policy.ts mints the open-as-admin scope, and only access/resolve.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForOpenAsAdmin(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'access/resolve.ts']);
+  });
+
+  describe('D66, town research (design decisions 4, 9 and 14)', () => {
+    /** The files a file imports by a relative path, resolved from src/; `values` leaves out type-only imports. */
+    const importsOf = (file: { path: string; text: string }, values: boolean): string[] => [
+      ...file.text.matchAll(values ? /^import (?!type )[^;]*from '(\.[^']+)';/gm : /^import [^;]*from '(\.[^']+)';/gm),
+    ].map((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')));
+    const importersOf = (target: string): string[] => sourceFiles()
+      .filter((file) => importsOf(file, true).includes(target)).map((file) => file.path).sort();
+
+    it('pins who imports the research stores', () => {
+      // The registry builds them, and person deletion clears a deleted person's id from the edits (spec 10.7); the two
+      // stores share their sub-schemas and moves through research-shared.ts. stores/cross-tenant.ts finds location
+      // research's work across organizations (the claim, the merge claim, the stale sweep; task 3.2). The planner and the
+      // runner (tasks 3.3 and 3.4), the reader and the revisions (task 5 and 6) reach them through ctx.stores and join a
+      // list only by a value import.
+      expect(importersOf('stores/research-shared.ts')).toEqual([
+        'stores/cross-tenant.ts', 'stores/research-locations.ts', 'stores/research-revisions.ts', 'stores/research-towns.ts',
+      ]);
+      // cross-tenant.ts reads town event ids for revision retention (removeOrphanResearchRevisions).
+      expect(importersOf('stores/research-towns.ts')).toEqual(['stores/cross-tenant.ts', 'stores/index.ts']);
+      expect(importersOf('stores/research-spend.ts')).toEqual(['stores/index.ts']);
+      expect(importersOf('stores/research-locations.ts')).toEqual(['stores/cross-tenant.ts', 'stores/index.ts']);
+      expect(importersOf('stores/research-revisions.ts')).toEqual(['stores/cross-tenant.ts', 'stores/index.ts']);
+    });
+
+    it('nothing under research/ reaches notes, sales, owner calendars, chat conversations or turns, files or orders', () => {
+      // Research sends only public facts (decision 16), so it never holds what these keep. Type imports count too: a
+      // record's type in a research file means its data passes through. call.ts takes the model name and the failure
+      // mapping from chat/turn.ts, as lab/suggestions.ts does, never a conversation.
+      const privateStores = [
+        'notes', 'sales-days', 'uploads', 'upload-days', 'item-sales', 'owner-calendars', 'chat-conversations', 'chat-live-turns',
+        'chat-turns', 'chat-proposals', 'files', 'file-entries', 'files-usage', 'imports', 'orders', 'order-setups', 'order-counts',
+      ].map((name) => `stores/${name}.ts`);
+      // A read of one of their stores, dotted or destructured from `stores` (`ctx.stores.notes`, `{ notes } = ctx.stores`).
+      const names = 'notes|salesDays|uploads|uploadDays|itemSales|ownerCalendars|chatConversations|chatLiveTurns|chatTurns|chatProposals|files|fileEntries|filesUsage|imports|orders|orderSetups|orderCounts';
+      const accessors = new RegExp(`\\bstores\\??\\.(${names})\\b|\\{[^}]*\\b(${names})\\b[^}]*\\}\\s*=\\s*[\\w.]*\\bstores\\b`);
+      const research = sourceFiles().filter((file) => file.path.startsWith('research/'));
+      expect(research.length).toBeGreaterThan(0);
+      for (const file of research) {
+        const reached = importsOf(file, false).filter((path) => privateStores.includes(path) || /^(files|orders|calendar)\//.test(path));
+        expect({ file: file.path, reached, accessor: accessors.exec(file.text)?.[0] ?? null }).toEqual({ file: file.path, reached: [], accessor: null });
+      }
+    });
+
+    it('under research/ only read.ts and revisions.ts reach the edits, and the prompt, the calls and the runner reach neither', () => {
+      // A member's typed edit (a title, a `where`) never reaches Anthropic: prompts are built from base values (decision 4).
+      const research = sourceFiles().filter((file) => file.path.startsWith('research/'));
+      const reachesEdits = (file: { path: string; text: string }): boolean => importsOf(file, false).includes('stores/research-revisions.ts')
+        || /\bresearchRevisions\b|\btw_research_revisions\b/.test(file.text);
+      expect(research.filter(reachesEdits).map((file) => file.path).every((path) => ['research/read.ts', 'research/revisions.ts'].includes(path))).toBe(true);
+      // The planner's one touch is revision retention through cross-tenant.ts, which deletes by event id and reads no
+      // revision's text; nothing else in it names the edits.
+      const plan = research.find((each) => each.path === 'research/plan.ts');
+      expect([...new Set([...(plan?.text ?? '').matchAll(/\w+Revisions?\w*/g)].map((match) => match[0]))]).toEqual(['removeOrphanResearchRevisions']);
+      for (const path of ['research/prompt.ts', 'research/call.ts', 'research/runner.ts']) {
+        const file = research.find((each) => each.path === path);
+        const reached = file === undefined ? [] : importsOf(file, false).filter((each) => ['research/read.ts', 'research/revisions.ts', 'stores/research-revisions.ts'].includes(each));
+        expect({ path, reached, edits: file !== undefined && reachesEdits(file) }).toEqual({ path, reached: [], edits: false });
+      }
+    });
   });
 });

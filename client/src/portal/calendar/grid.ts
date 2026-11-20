@@ -5,6 +5,7 @@ import { shortDate } from '../analytics/words';
 import { formatDate } from '../format';
 import { addDays, daysBetween, monthRange } from '../locations/dates';
 import { hoursLine } from '../locations/noteRules';
+import { FOUND_LABEL, foundTime } from '../research/copy';
 import { compactEntries, dayEntries, type DayEntry } from './entries';
 import {
   captionOf, dayCell, dayView, rangeWords, stepMonth, type CalendarCell, type CalendarInput, type monthBounds,
@@ -91,8 +92,7 @@ export function weekRange(start: string, bounds: MonthBounds): DateRange {
  * the grid) lie inside it, so switching views reads nothing. Past it, the grid of the month that holds the view's first
  * day, or else its last (D64): the scrolling week moves a day at a time, and a grid keeps the reads still over a run of
  * stops rather than reading again at each. One of the two always holds the 7 days (a Monday-first grid runs at least 5
- * weeks past its month's 1st); the week's own days only where neither month is one of the 25. [CONFIRM: the week view
- * reading the grid of the month that holds its first or last day in view once it leaves the selected month's grid]
+ * weeks past its month's 1st); the week's own days only where neither month is one of the 25.
  */
 export function readRangeFor(view: 'month' | 'week', month: string, weekStart: string, bounds: MonthBounds): DateRange {
   const grid = gridRange(month, bounds);
@@ -141,8 +141,7 @@ export function gridHeight(width: number): number {
 }
 
 // The selected day (D64): its weekday column is 1.3 times as wide as the others in every row and the weekday head, so
-// it stands out and the grid's height never changes. [CONFIRM: the selected day in the month grid outlined in `mint`
-// 2px over the `state` fill with its weekday column 1.3 times as wide, easing over 150ms]
+// it stands out and the grid's height never changes.
 
 /** How much wider the selected day's column is than the others. */
 export const SELECTED_GROW = 1.3;
@@ -215,7 +214,7 @@ export function buildGrid(month: string, input: CalendarInput, bounds: MonthBoun
 }
 
 /** What a week card is: a holiday, town event, term or season, a note, a business rule, or an imported event. */
-export type WeekCardKind = TownEvent['kind'] | 'note' | 'rule' | 'imported';
+export type WeekCardKind = TownEvent['kind'] | 'note' | 'rule' | 'imported' | 'researched';
 
 /** One entry of a day in the week view: every compact entry gets a card, in the entries' order (weekCards). */
 export interface WeekCard {
@@ -250,6 +249,10 @@ function cardOf(entry: DayEntry): WeekCard {
     // A rule's end date may be null, so its schedule summary says when it runs rather than a span.
     case 'rule': return { ...card, kind: 'rule', hours: hoursLine(entry.rule.schedule ?? {}), sub: entry.rule.scheduleSummary ?? 'Your rule' };
     case 'imported': return { ...card, kind: 'imported', hours: hoursLine(entry.imported), sub: withSpan('Your calendar', entry.imported.startDate, entry.imported.endDate) };
+    case 'researched': {
+      const { researched } = entry;
+      return { ...card, kind: 'researched', hours: foundTime(researched), sub: withSpan(FOUND_LABEL, researched.start, researched.end) };
+    }
     default: {
       const { event } = entry;
       return { ...card, kind: event.kind, hours: null, sub: withSpan(event.kind === 'holiday' && event.scope === 'national' ? 'Federal holiday' : EVENT_WORDS[event.kind], event.start, event.end) };
@@ -268,7 +271,7 @@ function weekCards(date: string, input: CalendarInput): WeekCard[] {
 
 /** A card's 2px left rule, a theme token: a holiday or town event `white`, a note or rule `text2`, an imported event `mint`, a period `line`. */
 export const CARD_MARK: Readonly<Record<WeekCardKind, 'white' | 'text2' | 'mint' | 'line'>> = {
-  holiday: 'white', event: 'white', note: 'text2', rule: 'text2', imported: 'mint', term: 'line', season: 'line',
+  holiday: 'white', event: 'white', note: 'text2', rule: 'text2', imported: 'mint', term: 'line', season: 'line', researched: 'line',
 };
 
 /**

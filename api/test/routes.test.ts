@@ -112,6 +112,37 @@ describe('route table', () => {
     ]);
   });
 
+  it('D66: the research read is a member GET with no limiter, the Competition card one with the places limiter, both open as admin', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.research.get' || r.id === 'org.competition.get')
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([
+      { id: 'org.research.get', method: 'GET', path: '/org/locations/:locationId/research', policy: 'member', bodyLimit: 'none', limiter: undefined, openAsAdmin: true },
+      { id: 'org.competition.get', method: 'GET', path: '/org/locations/:locationId/competition', policy: 'member', bodyLimit: 'none', limiter: 'places', openAsAdmin: true },
+    ]);
+  });
+
+  it('D66: Research now is an org admin POST with a 1kb body and the research limiter, never open as admin; the switch an org admin PATCH open as admin', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.research.run' || r.id === 'org.research.switch')
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([
+      { id: 'org.research.run', method: 'POST', path: '/org/locations/:locationId/research/run', policy: 'org_admin', bodyLimit: '1kb', limiter: 'research', openAsAdmin: undefined },
+      { id: 'org.research.switch', method: 'PATCH', path: '/org/research', policy: 'org_admin', bodyLimit: '2kb', limiter: undefined, openAsAdmin: true },
+    ]);
+    // [CONFIRM: Research now for org admins, the location's threads only, 3 a day per person, not within 6 hours of the last run];
+    // every press spends money and sends to Anthropic, so a store outage denies.
+    expect(ROUTE_LIMITS.research).toEqual({ name: 'townwise:research', limit: 3, windowSeconds: 86400, whenStoreDown: 'deny' });
+    expect(TOWNWISE_ROUTES.filter((r) => r.limiter === 'research').map((r) => r.id)).toEqual(['org.research.run']);
+  });
+
+  it('D66: editing a researched event is a member PATCH with an 8kb body, no route limiter, open as admin', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.research.event_update')
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([{
+      id: 'org.research.event_update', method: 'PATCH', path: '/org/locations/:locationId/research/events/:eventId', policy: 'member',
+      bodyLimit: '8kb', limiter: undefined, openAsAdmin: true,
+    }]);
+  });
+
   it('U13A: people in town and how Townwise estimates are member reads with no body and no limiter', () => {
     const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.people.get' || r.id === 'org.estimates.about')
       .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
@@ -247,6 +278,8 @@ describe('route table', () => {
     'org.google_calendars.connect', 'org.google_calendars.list', 'org.google_calendars.disconnect',
     // D58: Sort with TownwiseAI sends customers' names to Anthropic, so staff never press it for an organization.
     'org.owner_calendars.bookings_sort',
+    // D66: Research now spends the organization's month and sends its restaurant to Anthropic, so staff never press it.
+    'org.research.run',
   ];
   it('D25: every route runs while open as admin except staff routes and the people, seat and request routes', () => {
     for (const r of TOWNWISE_ROUTES) {
@@ -405,7 +438,7 @@ describe('route table', () => {
       { id: 'org.google_calendars.list', method: 'GET', path: '/org/locations/:locationId/google-calendars', bodyLimit: 'none', ...row },
       { id: 'org.google_calendars.disconnect', method: 'DELETE', path: '/org/google-connection', bodyLimit: 'none', ...row },
     ]);
-    // [CONFIRM: 30 Google calendar calls an account an hour]; every call reaches Google, so a store outage denies.
+    // Every call reaches Google, so a store outage denies.
     expect(ROUTE_LIMITS.google_calendars).toEqual({ name: 'townwise:google-calendars', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' });
     expect(TOWNWISE_ROUTES.filter((r) => r.limiter === 'google_calendars').map((r) => r.id)).toEqual(rows.map((r) => r.id));
   });

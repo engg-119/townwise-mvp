@@ -67,7 +67,7 @@ test('a Changes TownwiseAI makes item says what it may add, that it changes and 
   if (changes === undefined) throw new Error('no Changes TownwiseAI makes item');
   for (const words of [
     'a note, a summary on Your data, or sales days you didn’t have',
-    'It never changes or deletes anything that exists, apart from using a calendar file’s labels for forecasts when every label on it is TownwiseAI’s own.',
+    'It never changes or deletes anything that exists, apart from using a calendar file’s labels for forecasts when every label on it is TownwiseAI’s own and correcting a researched event you asked it to.',
     'Each change shows in TownwiseAI’s activity with Undo',
     'listed on the TownwiseAI page’s log of its changes',
     'so a change someone undid is never made again',
@@ -80,7 +80,7 @@ test('a Changes TownwiseAI makes item says what it may add, that it changes and 
 test('the Anthropic item names the files TownwiseAI reads on its own beside the weekly suggestions', () => {
   renderPrivacy();
   const anthropic = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem').find((item) => item.textContent.startsWith('Anthropic,'));
-  expect(anthropic?.textContent).toContain('Apart from TownwiseAI’s weekly suggestions and, where it works on its own, the files and pasted text it reads on its own');
+  expect(anthropic?.textContent).toContain('Apart from TownwiseAI’s weekly suggestions, town research (which runs every week with nobody using TownwiseAI; see Town research, under Your organization and team) and, where it works on its own, the files and pasted text it reads on its own');
   expect(anthropic?.textContent).toContain('When TownwiseAI reads a file, on its own or because you let it, the whole file is sent to it');
   expect(anthropic?.textContent).toContain('TownwiseAI never reads a sales file Townwise read into days unless you let it read one.');
 });

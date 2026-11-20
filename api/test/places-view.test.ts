@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createStaticMapSigner, signPath, STATIC_MAP_STYLES, viewMapPath } from '../src/places/static-map.ts';
-import { fitView, MAX_VIEW_ZOOM, VIEW_PADDING, type LatLng } from '../src/places/view.ts';
+import { fitView, latLngAt, MAX_VIEW_ZOOM, spreadPositions, VIEW_PADDING, type LatLng } from '../src/places/view.ts';
 
 const HANOVER = { lat: 43.7022, lng: -72.2896 };
 const LEBANON = { lat: 43.6426, lng: -72.2517 };
@@ -105,5 +105,49 @@ describe('viewMapPath', () => {
 
   it('throws on no pins', () => {
     expect(() => viewMapPath({ center: HANOVER, zoom: 12 }, [], KEY, 'dark')).toThrow();
+  });
+});
+
+describe('the Competition map (UI review: letters a block apart)', () => {
+  const CENTER = { lat: 43.7019, lng: -72.2896 };
+  /** A point `north` and `east` meters from the center. */
+  const off = (north: number, east: number): LatLng => ({
+    lat: CENTER.lat + north / 111_320, lng: CENTER.lng + east / (111_320 * Math.cos((CENTER.lat * Math.PI) / 180)),
+  });
+  const NEIGHBORS = [off(30, 0), off(-40, 20), off(0, 60), off(70, -50), off(-90, -30), off(50, 80), off(-20, -95), off(95, 10)];
+
+  it('fits competitors 30 to 100 m away at street level when the cap allows, not at 15', () => {
+    expect(fitView([CENTER, ...NEIGHBORS], 640, 320).zoom).toBe(15);
+    expect(fitView([CENTER, ...NEIGHBORS], 640, 320, 18).zoom).toBe(17);
+    expect(fitView([CENTER, off(30, 40), off(-35, -45)], 640, 320, 18).zoom).toBe(18);
+  });
+
+  it('moves pins closer than the spacing apart, inside the margins, and leaves spread ones alone', () => {
+    const same = [CENTER, CENTER, off(1, 1), CENTER];
+    const view = fitView(same, 640, 320, 18);
+    const spread = spreadPositions(view.positions, 640, 320, 26);
+    for (let i = 0; i < spread.length; i += 1) {
+      const a = spread[i] ?? { x: 0, y: 0 };
+      expect(a.x * 640).toBeGreaterThanOrEqual(VIEW_PADDING.side);
+      expect(a.y * 320).toBeGreaterThanOrEqual(VIEW_PADDING.top);
+      expect(a.y * 320).toBeLessThanOrEqual(320 - VIEW_PADDING.bottom);
+      for (let j = i + 1; j < spread.length; j += 1) {
+        const b = spread[j] ?? { x: 0, y: 0 };
+        expect(Math.hypot((a.x - b.x) * 640, (a.y - b.y) * 320)).toBeGreaterThanOrEqual(26 - 1e-6);
+      }
+    }
+    const apart = fitView([CENTER, ...NEIGHBORS], 640, 320, 18);
+    expect(spreadPositions(apart.positions.slice(1), 640, 320, 26)).toEqual(apart.positions.slice(1));
+  });
+
+  it('places a pin where Google draws its point: latLngAt reverses the view', () => {
+    const view = fitView([CENTER, ...NEIGHBORS], 640, 320, 18);
+    NEIGHBORS.forEach((point, i) => {
+      const back = latLngAt(view, view.positions[i + 1] ?? { x: 0, y: 0 }, 640, 320);
+      const google = drawnAt(back, view.center, view.zoom);
+      expect(Math.abs(google.x - (view.positions[i + 1]?.x ?? NaN)) * 640).toBeLessThan(0.1);
+      expect(Math.abs(google.y - (view.positions[i + 1]?.y ?? NaN)) * 320).toBeLessThan(0.1);
+      expect(Math.abs(back.lat - point.lat)).toBeLessThan(1e-5);
+    });
   });
 });

@@ -14,7 +14,7 @@ import type { MeResponse, OrgResponse } from './schemas';
 //   End view-as and Check again (spec 4.3);
 // - `api`: the kit client, except that the access errors of 4.3 re-read GET /api/me so the layout routes again;
 // - the organization (GET /api/org), loaded once and shared by the frame, Locations and the location pages, and
-//   cleared whenever the access is read again;
+//   cleared whenever the access is read again; refreshed in place, with no loading state, while a forecast updates (D65);
 // - one-time page notices that survive a redirect ("You joined …", "View-as ended at …"), shown as toasts (D55);
 // - the last location opened in this sign-in, which the top bar's sections open from pages outside a location. It
 //   lives in this state only, never in storage, and is cleared with the organization.
@@ -60,6 +60,11 @@ export interface Portal {
   /** Starts loading the organization unless it is loading or loaded. */
   ensureOrg: () => void;
   reloadOrg: () => void;
+  /**
+   * D65: reads the organization again in place, keeping what the pages show (no loading state), for the poll while a
+   * forecast updates. An answer older than one already shown is dropped. Rejects when the read fails; the org stays.
+   */
+  refreshOrg: () => Promise<void>;
   /** Counts the requests list's changes; the console nav reads the pending count again when it moves. */
   pendingTick: number;
   /** Called after an approve or reject: the console nav's pending count reads again. */
@@ -95,6 +100,9 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
   const [pendingTick, setPendingTick] = useState(0);
   const orgTicket = useRef(0);
   const orgStarted = useRef(false);
+  /** Numbers each read of the organization; `orgShown` is the newest whose answer was applied. */
+  const orgRead = useRef(0);
+  const orgShown = useRef(0);
   const [lastLocationId, setLastLocationId] = useState<string | null>(null);
 
   const applyMe = useCallback((next: MeResponse) => {
@@ -180,10 +188,14 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
     if (orgStarted.current) return;
     orgStarted.current = true;
     const ticket = orgTicket.current;
+    orgRead.current += 1;
+    const read = orgRead.current;
     setOrg({ status: 'loading' });
+    // A refresh that started after this read and already answered is newer: this answer is dropped.
+    const current = (): boolean => ticket === orgTicket.current && read > orgShown.current;
     fetchOrg(api).then(
-      (data) => { if (ticket === orgTicket.current) setOrg({ status: 'ready', data }); },
-      (error: unknown) => { if (ticket === orgTicket.current) setOrg({ status: 'failed', error }); },
+      (data) => { if (current()) { orgShown.current = read; setOrg({ status: 'ready', data }); } },
+      (error: unknown) => { if (current()) setOrg({ status: 'failed', error }); },
     );
   }, [api]);
 
@@ -192,6 +204,17 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
     orgStarted.current = false;
     ensureOrg();
   }, [ensureOrg]);
+
+  const refreshOrg = useCallback(async (): Promise<void> => {
+    const ticket = orgTicket.current;
+    orgRead.current += 1;
+    const read = orgRead.current;
+    const data = await fetchOrg(api);
+    // Cleared since (a new GET /api/me, a reload), or a newer read already answered: the answer is dropped.
+    if (ticket !== orgTicket.current || read < orgShown.current) return;
+    orgShown.current = read;
+    setOrg({ status: 'ready', data });
+  }, [api]);
 
   const refreshPending = useCallback(() => { setPendingTick((value) => value + 1); }, []);
 
@@ -211,10 +234,10 @@ export function PortalProvider(props: { children: React.ReactNode }): React.JSX.
 
   const me = meState.status === 'ready' ? meState.me : null;
   const portal = useMemo<Portal | null>(() => (me === null ? null : {
-    me, api, applyMe, refreshMe, notice, showNotice, markNoticeShown, org, ensureOrg, reloadOrg,
+    me, api, applyMe, refreshMe, notice, showNotice, markNoticeShown, org, ensureOrg, reloadOrg, refreshOrg,
     pendingTick, refreshPending, lastLocationId, openedLocation,
   }), [
-    me, api, applyMe, refreshMe, notice, showNotice, markNoticeShown, org, ensureOrg, reloadOrg, pendingTick, refreshPending,
+    me, api, applyMe, refreshMe, notice, showNotice, markNoticeShown, org, ensureOrg, reloadOrg, refreshOrg, pendingTick, refreshPending,
     lastLocationId, openedLocation,
   ]);
 

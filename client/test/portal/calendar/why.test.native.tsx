@@ -44,6 +44,9 @@ async function renderDay(reasons: ForecastReason[], fields: Partial<ForecastDay>
       onEdit={jest.fn()}
       onDelete={jest.fn()}
       onMakeNote={jest.fn()}
+      onEditFound={jest.fn()}
+      onFoundAction={jest.fn()}
+      onAskFound={jest.fn()}
     />,
   );
 }

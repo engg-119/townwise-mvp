@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { trainedOnWords, type EstimatesAbout } from '../../portal/estimates/api';
 import { formatDate } from '../../portal/format';
 import type { LoadState } from '../../portal/hooks';
+import { researchBudgetLine, researchDoneLine } from '../../portal/research/copy';
 import { locationHref } from '../../portal/routing';
 import { RuleSuggestionCard } from '../../portal/rules/RuleSuggestionCard';
 import { SUGGESTED_COPY, toDecideLine } from '../../portal/rules/suggestionWords';
@@ -13,8 +14,9 @@ import { ErrorNotice, LoadingLine, StatusTag } from '../../portal/ui/feedback';
 import { Eyebrow, Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { changeLine, savesLine } from '../agentChanges';
-import type { ActivityItem, Budget } from '../api';
+import type { ActivityItem, Budget, ForecastMadeItem } from '../api';
 import { dayText, formatCount, KIND_LABEL, rangeText, weekdayName } from '../format';
+import { runDetailLine, runOutcomeLine } from '../forecastRuns';
 import { readsLine, type ToolContext } from '../tools';
 import { openQuestions, openRuleSuggestions, type AgentPanelState, type SendToChat } from '../useAgentPanel';
 import { ActivityChange, AgentAutoSwitch, NoteSuggestionsSection, WaitingLine } from './AgentChanges';
@@ -34,6 +36,11 @@ import { SuggestionsSection } from './SuggestionCard';
 // above the activity a line counts what it wasn't sure of and links to the log of every change, the switch for working
 // on its own sits after the weekly suggestions' switches, the events a file read wasn't sure of wait under it in "Not
 // sure from your files", and How TownwiseAI works says it saves what it's sure of while that switch is on.
+// D65 (openspec change forecast-training-status): each finished forecast run is an activity line in the owner's words
+// (forecastRuns.ts), with what started it and the days it used under it; no accuracy and no guest figure.
+// D66 (openspec change town-research-agent, design decision 15): each research run of the town and of the location that
+// ended is an activity line (research/copy.ts researchDoneLine), a correction TownwiseAI made is a change line with
+// Undo, and the budget adds what research used of the month, in dollars.
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -60,7 +67,8 @@ function questionSubject(questionId: string): string | null {
   return null;
 }
 
-export function activityLine(item: ActivityItem): string {
+/** An activity item's line; `town` names the town in a town research run's line (D66). */
+export function activityLine(item: ActivityItem, town = 'your town'): string {
   switch (item.kind) {
     case 'upload_applied':
       return `Read your upload for ${rangeText(item.firstDate, item.lastDate)}, ${formatCount(item.dayCount)} ${item.dayCount === 1 ? 'day' : 'days'}.`;
@@ -85,7 +93,24 @@ export function activityLine(item: ActivityItem): string {
     // D59: a change TownwiseAI saved on its own; the panel draws it with Undo (ActivityChange).
     case 'agent_change':
       return changeLine(item);
+    // D65: a finished forecast run; the panel draws its cause and days under it (ForecastRun).
+    case 'forecast_made':
+      return runOutcomeLine(item);
+    // D66: a research run of the town or of the location that ended.
+    case 'research_done':
+      return researchDoneLine(item, town);
   }
+}
+
+/** D65: a finished forecast run: what happened, then a small line with what started it and the days it used. */
+function ForecastRun(props: { item: ForecastMadeItem }): React.JSX.Element {
+  const detail = runDetailLine(props.item);
+  return (
+    <View style={styles.item}>
+      <Text style={styles.itemText}>{activityLine(props.item)}</Text>
+      {detail === null ? null : <Text style={styles.muted}>{detail}</Text>}
+    </View>
+  );
 }
 
 function QuestionsSection(props: {
@@ -125,7 +150,7 @@ function QuestionsSection(props: {
       {body}
       <View style={styles.planned}>
         <StatusTag label="Planned" kind="planned" />
-        <Text style={styles.muted}>TownwiseAI’s own research (unusual nights, town events it finds) is planned.</Text>
+        <Text style={styles.muted}>TownwiseAI’s own research into unusual nights is planned.</Text>
       </View>
     </View>
   );
@@ -157,8 +182,19 @@ function RuleSuggestionsSection(props: { panel: AgentPanelState; locationId: str
   );
 }
 
-function ActivitySection(props: { panel: AgentPanelState; locationId: string; readOnlyId: string | null }): React.JSX.Element {
+/** What it’s been doing, so `?panel=activity` can bring it into view on web. */
+export const ACTIVITY_ID = 'agent-activity';
+
+function ActivitySection(props: { panel: AgentPanelState; locationId: string; readOnlyId: string | null; town: string; inView?: boolean }): React.JSX.Element {
   const { state } = props.panel;
+  // D65's `?panel=activity`: on web the section scrolls into view once (at 640px and below the row sits under the
+  // landing's chips, out of view); on native it is first in the opened panel.
+  const { inView } = props;
+  useEffect(() => {
+    if (inView !== true || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const section = document.getElementById(ACTIVITY_ID);
+    if (section !== null && typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'start' });
+  }, [inView]);
   let body: React.ReactNode;
   if (state.status === 'loading') body = <LoadingLine text="Loading activity" minHeight={80} />;
   else if (state.status === 'failed') body = <ErrorNotice message="Couldn’t load what TownwiseAI has been doing." onRetry={props.panel.reload} />;
@@ -173,7 +209,9 @@ function ActivitySection(props: { panel: AgentPanelState; locationId: string; re
               <Text style={styles.when}>{when}</Text>
               {item.kind === 'agent_change'
                 ? <ActivityChange item={item} locationId={props.locationId} readOnlyId={props.readOnlyId} onOthersChanged={props.panel.reload} />
-                : <Text style={styles.itemText}>{activityLine(item)}</Text>}
+                : item.kind === 'forecast_made'
+                  ? <ForecastRun item={item} />
+                  : <Text style={styles.itemText}>{activityLine(item, props.town)}</Text>}
             </View>
           );
         })}
@@ -181,7 +219,7 @@ function ActivitySection(props: { panel: AgentPanelState; locationId: string; re
     );
   }
   return (
-    <View style={styles.section}>
+    <View nativeID={ACTIVITY_ID} testID="agent-activity" style={styles.section}>
       <View style={styles.head}>
         <Eyebrow>Newest first</Eyebrow>
         <Heading>What it’s been doing</Heading>
@@ -210,11 +248,13 @@ export function budgetLines(budget: Budget): { line: string; warning: string | n
 function BudgetSection(props: { budget: Budget | null }): React.JSX.Element | null {
   if (props.budget === null) return null;
   const { line, warning } = budgetLines(props.budget);
+  const research = researchBudgetLine(props.budget.researchUsd);
   return (
     <View style={styles.section}>
       <Heading>This month’s budget</Heading>
       <Text style={styles.body}>{line}</Text>
       {warning === null ? null : <Text style={styles.body}>{warning}</Text>}
+      {research === null ? null : <Text style={styles.body}>{research}</Text>}
     </View>
   );
 }
@@ -289,6 +329,8 @@ export function AgentSidePanel(props: {
   onRetryAbout: () => void;
   /** False while the chat lists the questions itself (its landing, at 640px and below), so they aren't drawn twice. */
   showQuestions?: boolean;
+  /** D65: opened from `?panel=activity`: What it’s been doing comes first, in view, until the person opens or closes the panel. */
+  activityFirst?: boolean;
 }): React.JSX.Element {
   const ready = props.panel.state.status === 'ready' ? props.panel.state.data : null;
   // D59: the organization's choice once switched here, until the panel loads it again.
@@ -296,8 +338,10 @@ export function AgentSidePanel(props: {
   // Working on its own only while the organization's switch is on and it can run here (TOWNWISE_AGENT_AUTO): off while
   // the panel loads, fails or comes from an API before it.
   const working = (switched ?? ready?.agentAuto?.on ?? false) && ready?.agentAuto?.available === true;
+  const activity = <ActivitySection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} town={props.ctx.town} inView={props.activityFirst === true} />;
   return (
     <View style={styles.panel}>
+      {props.activityFirst === true ? activity : null}
       <RuleSuggestionsSection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} />
       {props.showQuestions === false ? null : (
         <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} chat={props.chat} send={props.send} />
@@ -305,7 +349,7 @@ export function AgentSidePanel(props: {
       <SuggestionsSection panel={props.panel} town={props.ctx.town} readOnlyId={props.readOnlyId} />
       {ready === null ? null : <AgentAutoSwitch agentAuto={ready.agentAuto} readOnlyId={props.readOnlyId} on={switched} onSwitched={setSwitched} />}
       {ready === null ? null : <NoteSuggestionsSection suggestions={ready.noteSuggestions} locationId={props.locationId} readOnlyId={props.readOnlyId} />}
-      <ActivitySection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} />
+      {props.activityFirst === true ? null : activity}
       <BudgetSection budget={props.budget} />
       <HowItWorks
         ctx={props.ctx}

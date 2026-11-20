@@ -8,12 +8,13 @@ import { dayContext, ruleSchedules } from '../analytics/days';
 import { metricsWithData } from '../analytics/filters';
 import { byDate, decodeHistory } from '../analytics/history';
 import {
-  forecastRange, homeCalendarRange, lastWeekComparison, lastWeekRange, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput,
+  forecastRange, homeCalendarRange, homeFound, lastWeekComparison, lastWeekRange, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput,
 } from '../analytics/week';
 import { fetchOwnerCalendarEvents, type OwnerCalendarEvent } from '../calendar/api';
 import { ALL_FILTERS, type CalendarInput } from '../calendar/model';
 import { fetchForecast } from '../estimates/api';
-import { useBreakpoint, useLoad } from '../hooks';
+import { useRefreshable } from '../console/useRefreshable';
+import { useBreakpoint, useLoad, useWhenDone } from '../hooks';
 import { fetchNotes, type Note } from '../locations/api';
 import { localToday } from '../locations/dates';
 import { shownLocationName } from '../locations/naming';
@@ -21,13 +22,15 @@ import { formatCount } from '../format';
 import { LoadFailure } from '../locations/parts';
 import { fetchOrderBoard } from '../orders/api';
 import { usePortal, useReadOnly } from '../PortalProvider';
-import { locationHref } from '../routing';
+import { activityHref, locationHref } from '../routing';
 import { fetchRules, type Rule } from '../rules/api';
+import { updatingOf, type Calibration } from '../schemas';
 import { useLocation } from '../shell/LocationShell';
 import { HomeSkeleton, Skeleton, SkeletonText } from '../skeleton';
 import { Actions, LinkButton } from '../ui/Button';
 import { ReadOnlyLine, StatusTag } from '../ui/feedback';
 import { Mono, Small } from '../ui/text';
+import { firstForecastLine, notPublishedLine } from '../upload/copy';
 import { BarOrder } from './BarOrder';
 import { BlockRow, GUTTER } from './Block';
 import { Glance } from './Glance';
@@ -55,10 +58,16 @@ import { ThisWeek } from './ThisWeek';
 // location's own calendars over the forecast's range (D49: this month and This week's days past it, under the events
 // route's 92 days; none while they load or if the read fails), and writes nothing, so view-as shows it unchanged with
 // its upload links disabled. This week, This month (its grid, tooltip and day detail) and the month's list read one
-// CalendarInput, the Calendar's, through the shared entries helper (calendar/entries.ts).
+// CalendarInput, the Calendar's, through the shared entries helper (calendar/entries.ts). D66: This week alone adds the
+// events town research found, last on each day, leaving Unconfirmed and competitors' ones to the Calendar (week.ts homeFound).
 // "Today" is the device's date; This week in {Town} is the seven days from today, today first, and Last week the
 // seven days before today. While onboarding's needsHistory is true, its HistoryStep
 // takes the place of the blocks that need days, and when it has read the history Home loads again.
+// D65 (openspec change forecast-training-status, design decisions 3 and 4): with no published forecast, the lead's In
+// progress line says when the first forecast is next or being built, from the location's `calibration.updating`
+// (the location layout re-reads it every 30 seconds meanwhile); when that run ends Home reads its forecast again in
+// place, so a published forecast replaces the line with no reload. A first forecast that wasn't published says why,
+// what happens next and links to TownwiseAI's activity, from the server's `lastRun`, whenever the owner comes back.
 
 const READ_ONLY_ID = 'home-ro';
 const NO_RULES: readonly Rule[] = [];
@@ -106,16 +115,40 @@ function QuestionsLink(props: { locationId: string }): React.JSX.Element | null 
   return <LinkButton href={`${locationHref(locationId, 'agent')}?panel=questions`} label={questionsLabel(count)} />;
 }
 
+/**
+ * The lead's line while no forecast is published: the first forecast next or building (D65), else why the last one
+ * wasn't published with the next step and a link to its run, else the plain In progress line. The not-published notice
+ * is plain words with no StatusTag (15.6): nothing runs until the next upload, so "In progress" would contradict it.
+ */
+function NoForecast(props: { calibration: Calibration; locationId: string; locationName: string }): React.JSX.Element {
+  const { calibration, locationName } = props;
+  const first = firstForecastLine(calibration, locationName);
+  if (first !== null) return <Tagline kind="progress" text={first} />;
+  const notice = notPublishedLine(calibration, locationName);
+  if (notice === null) return <Tagline kind="progress" text={forecastLine(locationName)} />;
+  return (
+    <View testID="home-not-published" style={styles.notice}>
+      <Small>{notice.next === null ? notice.text : `${notice.text} ${notice.next}`}</Small>
+      <LinkButton href={activityHref(props.locationId)} label="See what TownwiseAI did" />
+    </View>
+  );
+}
+
 function HomeView(props: {
-  data: Data; rules: readonly Rule[]; today: string; locationId: string; locationName: string; needs: boolean; readOnlyId: string | null;
-  readOnlyText: string; onHistory: () => void;
+  data: Data; rules: readonly Rule[]; today: string; locationId: string; locationName: string; calibration: Calibration; needs: boolean;
+  readOnlyId: string | null; readOnlyText: string; onHistory: () => void;
 }): React.JSX.Element {
   const { data, rules, today, locationId, needs, readOnlyId } = props;
   const { api } = usePortal();
   // This month's published forecast, on its own: while it loads or when it fails, Home shows no forecast figure; when it
   // fails the lead keeps the not-published line, and while it loads (UI review 2026-11-19) the lead shows a skeleton in
   // that line's place, never words it may take back. It covers This week's seven days too, which can run into next month.
-  const forecastRead = useLoad(useCallback(() => fetchForecast(api, locationId, forecastRange(today)), [api, locationId, today])).state;
+  // When a run of the location this page saw updating ends (D65), it is read again in place: the page keeps what it
+  // shows until the answer lands, so a refresh shows no skeleton.
+  const forecastLoad = useRefreshable(useCallback(() => fetchForecast(api, locationId, forecastRange(today)), [api, locationId, today]));
+  const forecastRead = forecastLoad.state;
+  const { refresh: refreshForecast } = forecastLoad;
+  useWhenDone(updatingOf(props.calibration) !== null, () => { void refreshForecast(); });
   const forecast = forecastRead.status === 'ready' ? forecastRead.data : null;
   const forecastLoading = forecastRead.status === 'loading';
   // A published run that doesn't cover this month is still published, so the line would be wrong there.
@@ -146,7 +179,10 @@ function HomeView(props: {
     today, covered: forecastRange(today), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported,
     filters: ALL_FILTERS,
   }), [today, forecast, input.byDate, calendar.events, notes, rules, imported]);
-  const week = useMemo(() => thisWeek(input, entries), [input, entries]);
+  // D66: This Week alone reads found events, last on each day and without Unconfirmed or competitors' ones (homeFound):
+  // its days, and its chart's columns and chosen day, which show in place of the days whenever the chart draws.
+  const weekInput = useMemo<CalendarInput>(() => ({ ...entries, found: homeFound(calendar.found) }), [entries, calendar.found]);
+  const week = useMemo(() => thisWeek(input, weekInput), [input, weekInput]);
   const lastWeek = useMemo(() => lastWeekComparison(input, lastWeekForecast), [input, lastWeekForecast]);
   const share = useMemo(() => lateWeekShare(input), [input]);
   const facts = useMemo(() => monthFacts(input), [input]);
@@ -165,7 +201,7 @@ function HomeView(props: {
           <Mono>{leadLine(history.coverage.lastDate, calendar, history.uploadsOff === true)}</Mono>
           {forecastLoading ? (
             <Skeleton name="home-lead-forecast" label="Loading the forecast"><SkeletonText width="80%" /></Skeleton>
-          ) : notPublished ? <Tagline kind="progress" text={forecastLine(props.locationName)} /> : null}
+          ) : notPublished ? <NoForecast calibration={props.calibration} locationId={locationId} locationName={props.locationName} /> : null}
           <QuestionsLink locationId={locationId} />
         </View>
         <Actions><LinkButton variant="outline" href={locationHref(locationId, 'agent')} label="Ask TownwiseAI" /></Actions>
@@ -187,7 +223,7 @@ function HomeView(props: {
         />
       )}
       <ThisWeek
-        week={week} calendar={calendar} metric={metric} history={hasDays} forecast={forecast?.available === true ? forecast : null} entries={entries}
+        week={week} calendar={calendar} metric={metric} history={hasDays} forecast={forecast?.available === true ? forecast : null} entries={weekInput}
         locationId={locationId}
       />
       <BlockRow
@@ -259,6 +295,7 @@ export function Home(): React.JSX.Element {
       today={today}
       locationId={location.id}
       locationName={shownLocationName(location, org)}
+      calibration={location.calibration}
       // The step also leaves once Home's own fresh history has days, whichever of the two reloads answers first.
       needs={needsHistory(org, org.locations) && state.data.history.coverage.dayCount === 0 && state.data.history.uploadsOff !== true}
       onHistory={reload}
@@ -274,4 +311,5 @@ const styles = StyleSheet.create({
   leadWide: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', columnGap: theme.space.gutter },
   leadText: { gap: theme.space[2], flexShrink: 1, minWidth: 0 },
   tagline: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 8 },
+  notice: { gap: theme.space[1], alignItems: 'flex-start' },
 });

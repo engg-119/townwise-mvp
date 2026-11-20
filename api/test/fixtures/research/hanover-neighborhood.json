@@ -1,0 +1,625 @@
+{
+  "about": "D66 live eval recording (research-eval.ts --record), Hanover neighborhood thread, web fetch off, Google names not allowed. Encrypted fields and signatures stripped; the location's name redacted. Public pages only.",
+  "thread": "neighborhood",
+  "fetch": false,
+  "placesToAi": false,
+  "now": "2026-11-19T21:49:49.068Z",
+  "today": "2026-11-19",
+  "window": {
+    "from": "2026-11-19",
+    "to": "2027-05-18"
+  },
+  "reservedMicroUsd": 3527000,
+  "responses": [
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2UnzCQEKBWVDGKai8K",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01Xgr9edbfRBNY5ATrJ9U6eR",
+          "name": "web_search",
+          "input": {
+            "query": "Redacted Bakery Hanover NH holiday hours 2026"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01Xgr9edbfRBNY5ATrJ9U6eR",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Redacted, Hanover - 2026 Reviews & Info",
+              "url": "https://www.tripadvisor.co.uk/Restaurant_Review-g0-d0-Reviews-Redacted-Hanover_New_Hampshire.html",
+              "page_age": "877 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Redacted - Hanover, NH",
+              "url": "https://joe.coffee/locations/nh/hanover/Redacted-hanover/",
+              "page_age": "231 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Redacted, Hanover - Menu, Prices & Restaurant ...",
+              "url": "https://www.tripadvisor.com/Restaurant_Review-g0-d0-Reviews-or435-Redacted-Hanover_New_Hampshire.html",
+              "page_age": "877 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Redacted, Hanover - Menu, Prices & Restaurant ...",
+              "url": "https://www.tripadvisor.com/Restaurant_Review-g0-d0-Reviews-Redacted-Hanover_New_Hampshire.html",
+              "page_age": "877 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Redacted, Hanover - 2026 Reviews & Info",
+              "url": "https://www.tripadvisor.ca/Restaurant_Review-g0-d0-Reviews-Redacted-Hanover_New_Hampshire.html",
+              "page_age": "877 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Redacted - Updated November 2026 - 460 Reviews ...",
+              "url": "https://www.yelp.com/biz/Redacted-hanover",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Redacted - Updated July 2026 - 266 Photos & ...",
+              "url": "https://www.yelp.com/biz/Redacted-hanover?start=100",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Redacted - Updated April 2026 - 265 Photos & ...",
+              "url": "https://www.yelp.com/biz/Redacted-hanover?start=160",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Redacted - Updated September 2026 - 266 Photos ...",
+              "url": "https://www.yelp.com/biz/Redacted-hanover?start=60",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Redacted - Updated May 2026 - 267 Photos & 452 ...",
+              "url": "https://m.yelp.com/biz/Redacted-hanover?start=120&ylist=114-in-0-reston",
+              "page_age": null
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01K5aS4W5wn2E8Xp2bPTTXAb",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH South Main Street closure 2027 Dartmouth Winter Carnival"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01K5aS4W5wn2E8Xp2bPTTXAb",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Allen Street closure stirs controversy - The Dartmouth",
+              "url": "https://www.thedartmouth.com/article/2024/07/friel-allen-street-closure-local-businesses",
+              "page_age": "860 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover mulls $14.9M project, South Main Street parking cut - Valley ...",
+              "url": "https://vnews.com/2026/03/26/hanover-infrastructure-upgrade-plan/",
+              "page_age": "232 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "A walk down Main Street: Reflecting on recent changes - The Dartmouth",
+              "url": "https://www.thedartmouth.com/article/2024/11/a-walk-down-main-street-reflecting-on-recent-changes",
+              "page_age": "748 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Selectboard considers tiered parking rates for South Main Street ...",
+              "url": "https://www.thedartmouth.com/article/2026/10/jones-park-selectboard-considers-tiered-parking-rates-for-south-main-street",
+              "page_age": "27 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover developer to renovate Main Street building for housing ...",
+              "url": "https://vnews.com/2025/08/02/hanover-dartmouth-alum-renovates-building/",
+              "page_age": "472 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "The Changing Face of Hanover: A Mix Of Businesses Makes Downtown ...",
+              "url": "https://www.greateruppervalley.com/2024/11/19/512908/the-changing-face-of-hanover-a-mix-of-businesses-makes-downtown-vibrant",
+              "page_age": "730 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Winter Carnival",
+              "url": "https://home.dartmouth.edu/about/winter-carnival",
+              "page_age": "1744 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "The Dartmouth Winter Carnival in Hanover, New Hampshire",
+              "url": "https://newengland.com/travel/new-hampshire/thaw-abiding-the-dartmouth-winter-carnival-in-hanover-new-hampshire/",
+              "page_age": "657 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "DARTMOUTH BOOKSTORE - CLOSED - Updated September 2026 - 13 Reviews ...",
+              "url": "https://www.yelp.com/biz/dartmouth-bookstore-hanover",
+              "page_age": null
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "text",
+          "text": "I found five dated items for Redacted at Redacted between Nov. 19, 2026 and May 18, 2027. I didn't find any trivia, live music, tastings or special events run by Redacted itself, and no cancellations or postponements. The two holiday closures come from Yelp's \"Upcoming Special Hours\" list, not from Redacted own site, so it's worth checking them with the restaurant.\n\nEVENT: Redacted closed for Thanksgiving, Thursday, November 26, 2026, all day, at Redacted, hosted by Redacted; once a year. Yelp lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Upcoming Special Hours: Thu, Nov 26, 2026: Closed · Fri, Dec 25, 2026: Closed\n\nRedacted - Try Our New Menu - Redacted, Hanover, N...",
+              "url": "https://www.yelp.com/biz/Redacted-hanover",
+              "title": "Redacted - Updated November 2026 - 460 Reviews ..."
+            }
+          ],
+          "type": "text",
+          "text": "Upcoming Special Hours: Thu, Nov 26, 2026: Closed"
+        },
+        {
+          "type": "text",
+          "text": ". On a normal day the restaurant is open "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "## Hours\nMonday 6:30 AM - 3 PM\n\nTuesday 6:30 AM - 3 PM\n\nWednesday 6:30 AM - 3 PM\n\nThursday 6:30 AM - 3 PM\n\nFriday 6:30 AM - 3 PM\n\nSaturday 6:30 AM - 3...",
+              "url": "https://joe.coffee/locations/nh/hanover/Redacted-hanover/",
+              "title": "Redacted - Hanover, NH"
+            }
+          ],
+          "type": "text",
+          "text": "6:30 AM - 3 PM"
+        },
+        {
+          "type": "text",
+          "text": ".\n\nEVENT: Redacted closed for Christmas, Friday, December 25, 2026, all day, at Redacted, hosted by Redacted; once a year. The same Yelp listing shows "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Upcoming Special Hours: Thu, Nov 26, 2026: Closed · Fri, Dec 25, 2026: Closed\n\nRedacted - Try Our New Menu - Redacted, Hanover, N...",
+              "url": "https://www.yelp.com/biz/Redacted-hanover",
+              "title": "Redacted - Updated November 2026 - 460 Reviews ..."
+            }
+          ],
+          "type": "text",
+          "text": "Fri, Dec 25, 2026: Closed"
+        },
+        {
+          "type": "text",
+          "text": ".\n\nEVENT: New tiered parking rates on South Main Street, planned to start Monday, January 11, 2027, along South Main Street, run by the Town of Hanover; a one-time change that then stays in place. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "# Selectboard considers tiered parking rates for South Main Street\n## Under the proposed system, parking would cost $2.00 per hour for the first three...",
+              "url": "https://www.thedartmouth.com/article/2026/10/jones-park-selectboard-considers-tiered-parking-rates-for-south-main-street",
+              "title": "Selectboard considers tiered parking rates for South Main Street ..."
+            }
+          ],
+          "type": "text",
+          "text": "Under the proposed system, parking would cost $2.00 per hour for the first three hours, then $5.00 per hour for each additional hour."
+        },
+        {
+          "type": "text",
+          "text": " "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "The tentative implementation date is Jan. 11, 2027, with planned reviews scheduled for six months and one year after implementation.\n\n",
+              "url": "https://www.thedartmouth.com/article/2026/10/jones-park-selectboard-considers-tiered-parking-rates-for-south-main-street",
+              "title": "Selectboard considers tiered parking rates for South Main Street ..."
+            }
+          ],
+          "type": "text",
+          "text": "The tentative implementation date is Jan. 11, 2027, with planned reviews scheduled for six months and one year after implementation."
+        },
+        {
+          "type": "text",
+          "text": " "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "The town is also installing nine new parking kiosks on Main Street by Jan. 11, 2027, after purchasing them in July. ",
+              "url": "https://www.thedartmouth.com/article/2026/10/jones-park-selectboard-considers-tiered-parking-rates-for-south-main-street",
+              "title": "Selectboard considers tiered parking rates for South Main Street ..."
+            }
+          ],
+          "type": "text",
+          "text": "The town is also installing nine new parking kiosks on Main Street by Jan. 11, 2027"
+        },
+        {
+          "type": "text",
+          "text": ". As of October 2026 this was still a proposal before the Selectboard.\n\nEVENT: Davison Block renovation at 5-15 South Main Street, on Redacted street, from April 2026 through October 2027 (ongoing for the whole window), hosted by Davison Hanover LLC; continuous. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Livadas and a group of investors own the building located at 5-15 South Main St. under Davison Hanover LLC. ",
+              "url": "https://vnews.com/2025/08/02/hanover-dartmouth-alum-renovates-building/",
+              "title": "Hanover developer to renovate Main Street building for housing ..."
+            }
+          ],
+          "type": "text",
+          "text": "Livadas and a group of investors own the building located at 5-15 South Main St. under Davison Hanover LLC."
+        },
+        {
+          "type": "text",
+          "text": " In August 2025, the plan was that "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "The developer’s filings with the town indicate construction will begin next April and end in October 2027.",
+              "url": "https://vnews.com/2025/08/02/hanover-dartmouth-alum-renovates-building/",
+              "title": "Hanover developer to renovate Main Street building for housing ..."
+            }
+          ],
+          "type": "text",
+          "text": "construction will begin next April and end in October 2027."
+        },
+        {
+          "type": "text",
+          "text": " I couldn't confirm that work actually started on time.\n\nEVENT: Crosby Street closure for Dartmouth heating construction, now through July 27, 2027 (the whole window), in downtown Hanover, run by Dartmouth College; continuous. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Renovation on Crosby Street, for example, has closed the street until July 27, 2027, as part of the College’s ongoing transition from steam to a hot w...",
+              "url": "https://www.thedartmouth.com/article/2026/10/jones-park-selectboard-considers-tiered-parking-rates-for-south-main-street",
+              "title": "Selectboard considers tiered parking rates for South Main Street ..."
+            }
+          ],
+          "type": "text",
+          "text": "Renovation on Crosby Street, for example, has closed the street until July 27, 2027, as part of the College's ongoing transition from steam to a hot water-based heating and cooling system."
+        },
+        {
+          "type": "text",
+          "text": " The town says this construction is making downtown parking problems worse."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 254,
+        "cache_creation_input_tokens": 16914,
+        "cache_read_input_tokens": 12706,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 3056,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 1343,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "server_tool_use": {
+          "web_search_requests": 2,
+          "web_fetch_requests": 0
+        },
+        "iterations": [
+          {
+            "input_tokens": 250,
+            "output_tokens": 73,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 3056,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 3056,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 110,
+            "cache_read_input_tokens": 3056,
+            "cache_creation_input_tokens": 6594,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 6594,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 1160,
+            "cache_read_input_tokens": 9650,
+            "cache_creation_input_tokens": 7264,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 7264,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 162
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    },
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2VoT1bzjCCg69cdtaC",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"events\":[{\"title\":\"Redacted closed for Thanksgiving\",\"kind\":\"closure\",\"category\":\"dining\",\"startDate\":\"2026-11-26\",\"endDate\":\"2026-11-26\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":null,\"hostRef\":\"Redacted\",\"competitor\":null,\"sourceIds\":[\"S6\"],\"dateQuote\":\"Thu, Nov 26, 2026: Closed\",\"confidence\":\"medium\"},{\"title\":\"Redacted closed for Christmas\",\"kind\":\"closure\",\"category\":\"dining\",\"startDate\":\"2026-12-25\",\"endDate\":\"2026-12-25\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":null,\"hostRef\":\"Redacted\",\"competitor\":null,\"sourceIds\":[\"S6\"],\"dateQuote\":\"Fri, Dec 25, 2026: Closed\",\"confidence\":\"medium\"},{\"title\":\"New tiered parking rates begin on South Main Street\",\"kind\":\"event\",\"category\":\"civic\",\"startDate\":\"2027-01-11\",\"endDate\":\"2027-01-11\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":null,\"hostRef\":\"town\",\"competitor\":null,\"sourceIds\":[\"S14\"],\"dateQuote\":\"The tentative implementation date is Jan. 11, 2027\",\"confidence\":\"medium\"},{\"title\":\"Davison Block renovation at 5-15 South Main Street\",\"kind\":\"season\",\"category\":\"other\",\"startDate\":\"2026-11-19\",\"endDate\":\"2027-05-18\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":null,\"hostRef\":\"davison\",\"competitor\":null,\"sourceIds\":[\"S15\"],\"dateQuote\":\"construction will begin next April and end in October 2027\",\"confidence\":\"low\"},{\"title\":\"Crosby Street closure for Dartmouth heating construction\",\"kind\":\"closure\",\"category\":\"civic\",\"startDate\":\"2026-11-19\",\"endDate\":\"2027-05-18\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":null,\"hostRef\":\"dartmouth\",\"competitor\":null,\"sourceIds\":[\"S14\"],\"dateQuote\":\"has closed the street until July 27, 2027\",\"confidence\":\"medium\"}],\"entities\":[{\"ref\":\"Redacted\",\"type\":\"business\",\"name\":\"Redacted\",\"sourceIds\":[\"S6\"]},{\"ref\":\"town\",\"type\":\"organization\",\"name\":\"Town of Hanover\",\"sourceIds\":[\"S14\"]},{\"ref\":\"davison\",\"type\":\"organization\",\"name\":\"Davison Hanover LLC\",\"sourceIds\":[\"S15\"]},{\"ref\":\"dartmouth\",\"type\":\"school\",\"name\":\"Dartmouth College\",\"sourceIds\":[\"S14\"]}]}"
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 4562,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 949,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "iterations": [
+          {
+            "input_tokens": 4562,
+            "output_tokens": 949,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    }
+  ],
+  "expected": {
+    "kind": "recorded",
+    "costMicroUsd": 172216,
+    "searches": 2,
+    "fetches": 0,
+    "continuations": 0,
+    "sources": 19,
+    "verified": {
+      "events": [
+        {
+          "title": "Redacted closed for Thanksgiving",
+          "kind": "closure",
+          "category": "dining",
+          "start": "2026-11-26",
+          "end": "2026-11-26",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": null,
+          "hostRef": "Redacted",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Redacted - Updated November 2026 - 460 Reviews ...",
+              "url": "https://www.yelp.com/biz/Redacted-hanover"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Redacted closed for Christmas",
+          "kind": "closure",
+          "category": "dining",
+          "start": "2026-12-25",
+          "end": "2026-12-25",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": null,
+          "hostRef": "Redacted",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Redacted - Updated November 2026 - 460 Reviews ...",
+              "url": "https://www.yelp.com/biz/Redacted-hanover"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "New tiered parking rates begin on South Main Street",
+          "kind": "event",
+          "category": "civic",
+          "start": "2027-01-11",
+          "end": "2027-01-11",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": null,
+          "hostRef": "town",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Selectboard considers tiered parking rates for South Main Street ...",
+              "url": "https://www.thedartmouth.com/article/2026/10/jones-park-selectboard-considers-tiered-parking-rates-for-south-main-street"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Davison Block renovation at 5-15 South Main Street",
+          "kind": "season",
+          "category": "other",
+          "start": "2026-11-19",
+          "end": "2027-05-18",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": null,
+          "hostRef": "davison",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Hanover developer to renovate Main Street building for housing ...",
+              "url": "https://vnews.com/2025/08/02/hanover-dartmouth-alum-renovates-building/"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        },
+        {
+          "title": "Crosby Street closure for Dartmouth heating construction",
+          "kind": "closure",
+          "category": "civic",
+          "start": "2026-11-19",
+          "end": "2027-05-18",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": null,
+          "hostRef": "dartmouth",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Selectboard considers tiered parking rates for South Main Street ...",
+              "url": "https://www.thedartmouth.com/article/2026/10/jones-park-selectboard-considers-tiered-parking-rates-for-south-main-street"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        }
+      ],
+      "entities": [
+        {
+          "ref": "Redacted",
+          "type": "business",
+          "name": "Redacted",
+          "sources": [
+            {
+              "label": "Redacted - Updated November 2026 - 460 Reviews ...",
+              "url": "https://www.yelp.com/biz/Redacted-hanover"
+            }
+          ]
+        },
+        {
+          "ref": "town",
+          "type": "organization",
+          "name": "Town of Hanover",
+          "sources": [
+            {
+              "label": "Selectboard considers tiered parking rates for South Main Street ...",
+              "url": "https://www.thedartmouth.com/article/2026/10/jones-park-selectboard-considers-tiered-parking-rates-for-south-main-street"
+            }
+          ]
+        },
+        {
+          "ref": "davison",
+          "type": "organization",
+          "name": "Davison Hanover LLC",
+          "sources": [
+            {
+              "label": "Hanover developer to renovate Main Street building for housing ...",
+              "url": "https://vnews.com/2025/08/02/hanover-dartmouth-alum-renovates-building/"
+            }
+          ]
+        },
+        {
+          "ref": "dartmouth",
+          "type": "school",
+          "name": "Dartmouth College",
+          "sources": [
+            {
+              "label": "Selectboard considers tiered parking rates for South Main Street ...",
+              "url": "https://www.thedartmouth.com/article/2026/10/jones-park-selectboard-considers-tiered-parking-rates-for-south-main-street"
+            }
+          ]
+        }
+      ],
+      "drops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "no_source": 0,
+        "unknown_source": 0,
+        "bad_dates": 0,
+        "bad_title": 0,
+        "bad_competitor": 0
+      },
+      "entityDrops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "bad_ref": 0,
+        "bad_name": 0,
+        "no_source": 0
+      }
+    }
+  }
+}

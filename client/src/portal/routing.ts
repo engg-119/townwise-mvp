@@ -184,6 +184,11 @@ export function locationHref(locationId: string, tab: TabKey = 'home'): string {
   return `/locations/${encodeURIComponent(locationId)}${TAB_SUFFIX[tab]}`;
 }
 
+/** D65: TownwiseAI's page with its panel open at What it’s been doing, where a location's forecast runs are listed. */
+export function activityHref(locationId: string): string {
+  return `${locationHref(locationId, 'agent')}?panel=activity`;
+}
+
 /** The Calendar (P28), opened at `day` (YYYY-MM-DD) when given, as Home's This month does. */
 export function calendarHref(locationId: string, day?: string): string {
   const href = locationHref(locationId, 'calendar');

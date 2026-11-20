@@ -10,11 +10,14 @@
 // under that id, then the claim is marked saved with its ledger row; a claim whose note was not applied is taken back.
 // The note's author and the audit actor are the person, as for a read they pressed. Logs carry ids and the outcome
 // only, never the note.
+// D66 (design decision 12): nor when the note falls on a day of a researched event this turn read (turn.
+// readResearchedDays): such an event came from a web page nobody typed into Townwise. A note on any other day is saved as
+// before, so reading a calendar with research in it does not stop a plainly stated closure.
 import { agentAutoOn, applyChange } from '../../agent/apply.ts';
 import { MAX_NOTES, readNoteContent } from '../../handlers/notes.ts';
 import type { NoteContent } from '../../stores/notes.ts';
 import type { ChatTool, ToolContext } from './registry.ts';
-import { DATE } from './shared.ts';
+import { DATE, daysOn } from './shared.ts';
 
 /** Spec text: "Shown to the owner as a proposal. They decide whether to add it." */
 export const PROPOSAL_RESULT = 'Shown to the owner as a proposal. They decide whether to add it.';
@@ -37,6 +40,8 @@ async function saveStated(tc: ToolContext, note: NoteContent, callId: string): P
   const userId = actor.actorUserId;
   // Staff open as admin act as 'superadmin' (handlers/team.ts actorOf), and view-as sends no turn.
   if (tc.turn.readUntrusted || tc.turn.readNotTyped || actor.actorRole === 'superadmin' || actor.viewAsGrantId !== null) return null;
+  const researched = tc.turn.readResearchedDays;
+  if (researched !== undefined && daysOn(note.startDate, note.endDate, note.weekdays).some((day) => researched.has(day))) return null;
   if (!await agentAutoOn(ctx, scope.orgId)) return null;
   if (await ctx.stores.notes.count(scope, location.id) >= MAX_NOTES) return null;
   const key = { conversationId: tc.conversationId, proposalId: callId };

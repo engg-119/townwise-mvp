@@ -17,9 +17,10 @@ export const AGENT_CHANGES_COLLECTION = 'tw_agent_changes';
 /**
  * What TownwiseAI may do (design decision 6). `booking.label` (slice 2) is one row per file calendar sorted on import: its
  * target is the calendar, and it covers every label that sort set. `rule.add` (slice 3) is a closure or hours rule the
- * weekly pass or the sales history was sure of.
+ * weekly pass or the sales history was sure of. `event.correct` (D66, town-research-agent design decision 12) is a
+ * revision correcting a researched event at the location, asked for in chat: its target is the revision.
  */
-export type AgentChangeAction = 'note.add' | 'item.add' | 'sales_days.add' | 'rule.add' | 'booking.label';
+export type AgentChangeAction = 'note.add' | 'item.add' | 'sales_days.add' | 'rule.add' | 'booking.label' | 'event.correct';
 /**
  * Where the change came from: `file` (slice 1), `calendar` (slice 2), and (slice 3) `weekly` (the weekly pass's notes,
  * rules and spotted calendar events) and `sales` (a closed weekday the sales history shows, D46), and (slice 4) `chat` (a
@@ -33,7 +34,9 @@ export type AgentConfidence = 'high' | 'medium' | 'low';
 /** At most this many characters of why (design decision 5). */
 export const MAX_WHY_CHARS = 200;
 
-export const AGENT_CHANGE_ACTIONS: readonly AgentChangeAction[] = ['note.add', 'item.add', 'sales_days.add', 'rule.add', 'booking.label'];
+export const AGENT_CHANGE_ACTIONS: readonly AgentChangeAction[] = [
+  'note.add', 'item.add', 'sales_days.add', 'rule.add', 'booking.label', 'event.correct',
+];
 
 interface ChangeFields {
   orgId: Types.ObjectId;
@@ -42,7 +45,7 @@ interface ChangeFields {
   /** The file (or later the calendar or conversation) it came from; null when none. */
   sourceId: string | null;
   action: AgentChangeAction;
-  /** The note, item or upload it added, under the id planned before any write. */
+  /** The note, item, upload or (D66) research revision it added, under the id planned before any write. */
   targetId: Types.ObjectId;
   dedupeKey: string;
   confidence: AgentConfidence;

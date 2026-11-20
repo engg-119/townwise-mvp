@@ -3,16 +3,26 @@
 // applied is left out; Undo is offered only on an applied change whose target is still as it was, to a caller the
 // action's role allows, never under view-as; a `sales_days.add` change shows once, in place of its upload; and the
 // log's view carries the why outside view-as only; (slice 3) a rule TownwiseAI added is undoable while unchanged.
-// Synthetic records.
+// D65 (openspec change forecast-training-status, design decision 6): each finished forecast run as `forecast_made`, a
+// live one past its 20 minutes as a failed run, with codes, dates and day counts only, the newest 5 kept through the cut.
+// D66 (openspec change town-research-agent, design decision 15): research runs as `research_done`, the town's with its
+// status and counts only, and none while research is off for the organization. Synthetic records.
 import { describe, expect, it } from 'vitest';
 
 import type { MemberPrincipal, OrgScope } from '../src/access/policy.ts';
-import { activityFor, agentChangeSource, ACTIVITY_SOURCES, answerSource, type ActivityInput } from '../src/agent/activity.ts';
+import {
+  activityFor, agentChangeSource, ACTIVITY_SOURCES, answerSource, forecastMadeSource, MAX_ACTIVITY, researchSource, type ActivityInput,
+  type ActivitySource,
+} from '../src/agent/activity.ts';
 import { changeView, mayUndo, pastedSources, targetStates, undoable, type Target, type TargetState } from '../src/agent/changes.ts';
 import type { TownwiseContext } from '../src/app.ts';
 import type { AnswerRecord } from '../src/stores/agent-answers.ts';
 import type { AgentChangeRecord } from '../src/stores/agent-changes.ts';
+import type { CalibrationRecord } from '../src/stores/calibrations.ts';
+import type { RunState } from '../src/stores/forecasts.ts';
 import type { NoteRecord } from '../src/stores/notes.ts';
+import type { RunRecordBase, ThreadStatus } from '../src/stores/research-shared.ts';
+import { calibrationRecord } from './helpers/calibration-record.ts';
 
 const SCOPE = { orgId: 'a'.repeat(24) } as unknown as OrgScope;
 const LOCATION = 'b'.repeat(24);
@@ -89,7 +99,7 @@ describe('TownwiseAI’s changes in its activity (D59)', () => {
       expect.objectContaining({ changeId: undone.id, status: 'undone', undoable: false }),
     ]);
     expect(JSON.stringify(items)).not.toContain(SENTINEL);
-    expect(ACTIVITY_SOURCES.at(-1)).toBe(agentChangeSource);
+    expect(ACTIVITY_SOURCES).toContain(agentChangeSource);
   });
 
   // UI review 2026-11-19: a change read from text pasted on Your data says so; one from an uploaded text file doesn't.
@@ -211,6 +221,283 @@ describe('who may undo, and the log’s view (D59)', () => {
     });
     expect(changeView(VIEW_AS, row, states)).toMatchObject({ why: null, undoable: false });
     expect(changeView(MEMBER, { ...row, status: 'applying' }, states)).toMatchObject({ targetId: null, undoable: false });
+  });
+});
+
+describe('finished forecast runs in its activity (D65)', () => {
+  const NOW = new Date('2026-11-23T09:00:00.000Z');
+  const MINUTE = 60_000;
+
+  /** A context whose stores answer these calibrations (newest first, as the store reads them), their runs and the first published run. */
+  function runsContext(
+    records: readonly CalibrationRecord[],
+    { runs = {}, first = null, changes = [], current = [] }: {
+      runs?: Record<string, RunState>; first?: { runId: string; publishedAt: Date } | null; changes?: readonly AgentChangeRecord[];
+      current?: readonly { id: string }[];
+    } = {},
+  ): { ctx: TownwiseContext; reads: { runIds: string[][]; firsts: number } } {
+    const reads = { runIds: [] as string[][], firsts: 0 };
+    const base = contextWith(changes);
+    const ctx = {
+      ...base,
+      now: () => NOW,
+      stores: {
+        ...base.stores,
+        calibrations: { list: (_scope: OrgScope, limit: number) => Promise.resolve(records.slice(0, limit)) },
+        forecasts: {
+          runStates: (_scope: OrgScope, runIds: readonly string[]) => {
+            reads.runIds.push([...runIds]);
+            return Promise.resolve(new Map(runIds.flatMap((id) => (runs[id] === undefined ? [] : [[id, runs[id]] as const]))));
+          },
+          firstPublished: () => {
+            reads.firsts += 1;
+            return Promise.resolve(first);
+          },
+          published: () => Promise.resolve(current),
+        },
+      },
+    } as unknown as TownwiseContext;
+    return { ctx, reads };
+  }
+
+  const minutesAgo = (minutes: number): Date => new Date(NOW.getTime() - minutes * MINUTE);
+  const draft: RunState = { status: 'draft', publishedAt: null, publishedBy: null };
+
+  it('lists a run the gate kept with its causes and days, and nothing else; the source is the last one', async () => {
+    const kept = calibrationRecord({
+      id: 'k1', requestedBy: { userId: null, role: 'system', via: 'scheduled' }, causes: ['sales'], runId: 'r1',
+      gate: { published: false, reason: 'not_better' }, dayCount: 1041, dataFrom: '2024-01-01', dataThrough: '2026-11-21', newDays: 6,
+      scorecardJson: '{"mae":12.5}', requestedAt: minutesAgo(50), finishedAt: minutesAgo(44),
+    });
+    const { ctx } = runsContext([kept], {
+      runs: { r1: draft }, first: { runId: 'r0', publishedAt: new Date('2026-01-05T10:00:00.000Z') }, current: [{ id: 'r0' }],
+    });
+    const items = await activityFor(input(ctx, ADMIN), [forecastMadeSource]);
+    expect(items).toEqual([{
+      at: minutesAgo(44).toISOString(), kind: 'forecast_made', calibrationId: 'k1', causes: ['sales'], outcome: 'kept',
+      reason: 'not_more_accurate', firstForecast: false, currentForecast: true, dayCount: 1041, firstDate: '2024-01-01', lastDate: '2026-11-21', newDays: 6,
+    }]);
+    // No accuracy and no figure of the scorecard.
+    expect(JSON.stringify(items)).not.toContain('12.5');
+    expect(ACTIVITY_SOURCES.at(-2)).toBe(forecastMadeSource);
+  });
+
+  it('merges with uploads by when each finished, reading the runs once and the first run once', async () => {
+    const older = calibrationRecord({ id: 'o1', status: 'failed', failure: 'timeout', requestedAt: minutesAgo(300), finishedAt: minutesAgo(280) });
+    const newer = calibrationRecord({
+      id: 'n1', runId: 'r2', gate: { published: true, reason: 'published' }, requestedAt: minutesAgo(30), finishedAt: minutesAgo(24),
+    });
+    const { ctx, reads } = runsContext([newer, older], {
+      runs: { r2: { status: 'published', publishedAt: minutesAgo(24), publishedBy: null } }, first: { runId: 'r2', publishedAt: minutesAgo(24) },
+    });
+    const upload: ActivitySource = () => Promise.resolve([{
+      at: minutesAgo(100).toISOString(), kind: 'upload_applied', firstDate: '2026-11-01', lastDate: '2026-11-21', dayCount: 21,
+    }]);
+    const items = await activityFor(input(ctx, ADMIN), [upload, forecastMadeSource]);
+    expect(items.map((item) => [item.kind, item.kind === 'forecast_made' ? [item.calibrationId, item.outcome, item.reason, item.firstForecast] : null]))
+      .toEqual([
+        ['forecast_made', ['n1', 'published', 'published', true]],
+        ['upload_applied', null],
+        ['forecast_made', ['o1', 'not_run', 'failed', true]],
+      ]);
+    expect(reads).toEqual({ runIds: [['r2']], firsts: 1 });
+  });
+
+  it('leaves a live run under its 20 minutes out, and lists one past them as failed at its request plus 20 minutes, read only', async () => {
+    const running = calibrationRecord({ id: 'l1', status: 'running', finishedAt: null, requestedAt: minutesAgo(19) });
+    const stale = calibrationRecord({ id: 'l0', status: 'queued', finishedAt: null, requestedAt: minutesAgo(21) });
+    const { ctx } = runsContext([running, stale]);
+    expect(await activityFor(input(ctx, ADMIN), [forecastMadeSource])).toEqual([expect.objectContaining({
+      at: minutesAgo(1).toISOString(), calibrationId: 'l0', outcome: 'not_run', reason: 'failed', firstForecast: true,
+    })]);
+    // Only live ones under 20 minutes: nothing is read beyond the calibrations.
+    const { ctx: quiet, reads } = runsContext([running]);
+    expect(await activityFor(input(quiet, ADMIN), [forecastMadeSource])).toEqual([]);
+    expect(reads).toEqual({ runIds: [], firsts: 0 });
+  });
+
+  it('keeps the newest 5 runs through the cut when 20 TownwiseAI changes are newer', async () => {
+    const changes = Array.from({ length: MAX_ACTIVITY }, (_, i) => change({ appliedAt: minutesAgo(10 + i) }));
+    const runs = Array.from({ length: 7 }, (_, i) => calibrationRecord({
+      id: `run${String(i)}`, status: 'failed', failure: 'job_failed', requestedAt: minutesAgo(200 + i * 60), finishedAt: minutesAgo(190 + i * 60),
+    }));
+    const { ctx } = runsContext(runs, { changes });
+    const items = await activityFor(input(ctx, ADMIN), [agentChangeSource, forecastMadeSource]);
+    expect(items).toHaveLength(MAX_ACTIVITY);
+    expect(items.flatMap((item) => (item.kind === 'forecast_made' ? [item.calibrationId] : [])))
+      .toEqual(['run0', 'run1', 'run2', 'run3', 'run4']);
+    // The newest 15 changes fill the rest, newest first, and the runs come after them.
+    expect(items.slice(0, 15).every((item) => item.kind === 'agent_change')).toBe(true);
+    // With room to spare, older runs past the 5 are listed too.
+    const { ctx: roomy } = runsContext(runs);
+    expect(await activityFor(input(roomy, ADMIN), [forecastMadeSource])).toHaveLength(7);
+  });
+
+  it('a run is the first forecast only when no other run was published at or before it finished', async () => {
+    const finished = minutesAgo(44);
+    const record = calibrationRecord({ id: 'f1', runId: 'r5', gate: { published: false, reason: 'baseline_not_beaten' }, finishedAt: finished });
+    const first = async (published: { runId: string; publishedAt: Date } | null): Promise<unknown> => {
+      const { ctx } = runsContext([record], { runs: { r5: draft }, first: published });
+      const [item] = await activityFor(input(ctx, ADMIN), [forecastMadeSource]);
+      return item?.kind === 'forecast_made' ? [item.reason, item.firstForecast] : null;
+    };
+    expect(await first(null)).toEqual(['not_beat_average', true]);
+    // A run published (and since lapsed or withdrawn) before: not a first forecast.
+    expect(await first({ runId: 'r0', publishedAt: new Date('2026-03-01T10:00:00.000Z') })).toEqual(['not_beat_average', false]);
+    expect(await first({ runId: 'r0', publishedAt: finished })).toEqual(['not_beat_average', false]);
+    // Another run published after it finished, or its own run: still the first.
+    expect(await first({ runId: 'r0', publishedAt: new Date(finished.getTime() + 1) })).toEqual(['not_beat_average', true]);
+    expect(await first({ runId: 'r5', publishedAt: new Date(finished.getTime() + MINUTE) })).toEqual(['not_beat_average', true]);
+  });
+
+  it('says on every item whether the location has a published run now: none once every run was withdrawn', async () => {
+    const failed = calibrationRecord({ id: 'w1', status: 'failed', failure: 'job_failed', requestedAt: minutesAgo(30), finishedAt: minutesAgo(24) });
+    const withdrawnFirst = { runId: 'r0', publishedAt: new Date('2026-11-01T10:00:00.000Z') };
+    const { ctx } = runsContext([failed], { first: withdrawnFirst });
+    expect(await activityFor(input(ctx, ADMIN), [forecastMadeSource])).toEqual([expect.objectContaining({
+      calibrationId: 'w1', reason: 'failed', firstForecast: false, currentForecast: false,
+    })]);
+    const { ctx: current } = runsContext([failed], { first: withdrawnFirst, current: [{ id: 'r9' }] });
+    expect(await activityFor(input(current, ADMIN), [forecastMadeSource])).toEqual([expect.objectContaining({
+      calibrationId: 'w1', firstForecast: false, currentForecast: true,
+    })]);
+  });
+
+  it('answers the same items under view-as as to the owner, and with no caller, with codes, dates and counts only', async () => {
+    const staffRun = calibrationRecord({
+      id: 's1', requestedBy: { userId: 'staff-1', role: 'superadmin', via: 'chat' }, runId: 'r6', gate: { published: false, reason: 'jump_held' },
+      dayCount: 400, dataFrom: '2025-10-01', newDays: null,
+    });
+    const { ctx } = runsContext([staffRun], { runs: { r6: { status: 'published', publishedAt: NOW, publishedBy: 'staff-1' } } });
+    const owner = await activityFor(input(ctx, ADMIN), [forecastMadeSource]);
+    expect(await activityFor(input(ctx, VIEW_AS), [forecastMadeSource])).toEqual(owner);
+    expect(await activityFor(input(ctx), [forecastMadeSource])).toEqual(owner);
+    expect(owner).toEqual([{
+      at: '2026-11-23T08:16:00.000Z', kind: 'forecast_made', calibrationId: 's1', causes: ['staff'], outcome: 'published',
+      reason: 'published_by_staff', firstForecast: true, currentForecast: false, dayCount: 400, firstDate: '2025-10-01', lastDate: '2026-11-15', newDays: null,
+    }]);
+    expect(JSON.stringify(owner)).not.toContain('staff-1');
+  });
+});
+
+describe('research runs in TownwiseAI’s activity (D66)', () => {
+  const at = (hour: number) => new Date(`2026-06-0${String(hour)}T12:00:00.000Z`);
+  let runIds = 0;
+  function run(over: Partial<RunRecordBase> = {}): RunRecordBase & { trigger: 'press' } {
+    runIds += 1;
+    return {
+      id: String(runIds).padStart(24, 'r'), key: `k${String(runIds)}`, status: 'done', code: null, threads: ['neighborhood', 'competitors'],
+      counts: { found: 9, added: 3, updated: 2, dropped: 1 }, costMicroUsd: 5_000, createdAt: at(1), startedAt: at(1), finishedAt: at(1),
+      trigger: 'press', ...over,
+    };
+  }
+
+  interface Fakes {
+    on?: boolean; research?: boolean; townId?: string | null;
+    own?: RunRecordBase[]; town?: RunRecordBase[];
+    events?: { origin: string; firstRunId: string; title: string }[];
+    threads?: Record<string, ThreadStatus[]>;
+  }
+  function researchContext(fakes: Fakes, reads: string[] = []): TownwiseContext {
+    const threadsOf = (id: string) => {
+      reads.push(`threads:${id}`);
+      return Promise.resolve((fakes.threads?.[id] ?? []).map((status) => ({ status })));
+    };
+    return {
+      config: { research: fakes.research ?? true },
+      logger: { warn: () => undefined },
+      stores: {
+        orgs: { findById: () => Promise.resolve({ research: { on: fakes.on ?? true } }) },
+        locations: { find: () => Promise.resolve({ id: LOCATION, town: { townId: fakes.townId === undefined ? 'hanover-nh' : fakes.townId } }) },
+        researchLocations: {
+          reportedRuns: () => { reads.push('own'); return Promise.resolve(fakes.own ?? []); },
+          competitorsAdded: (_scope: OrgScope, _locationId: string, runIds: readonly string[]) => {
+            reads.push('competitors');
+            const counts = new Map<string, number>();
+            for (const row of fakes.events ?? []) {
+              if (row.origin === 'competitor' && runIds.includes(row.firstRunId)) counts.set(row.firstRunId, (counts.get(row.firstRunId) ?? 0) + 1);
+            }
+            return Promise.resolve(counts);
+          },
+          threadsOf: (_scope: OrgScope, id: string) => threadsOf(id),
+        },
+        researchTowns: {
+          reportedRuns: (townKey: string) => { reads.push(`town:${townKey}`); return Promise.resolve(fakes.town ?? []); },
+          threadsOf,
+        },
+      },
+    } as unknown as TownwiseContext;
+  }
+
+  it('lists the location’s and the town’s ended runs, newest first, with counts, failed topics and competitors’ new events', async () => {
+    const press = run({ finishedAt: at(5) });
+    const partial = run({ status: 'partial', finishedAt: at(3), counts: { found: 4, added: 1, updated: 0, dropped: 0 } });
+    const townDone = run({ finishedAt: at(4), threads: ['schools', 'sports', 'civic'] });
+    const townBudget = run({ status: 'budget', finishedAt: at(2), threads: ['schools', 'sports', 'civic'], counts: { found: 0, added: 0, updated: 0, dropped: 0 } });
+    const reads: string[] = [];
+    const ctx = researchContext({
+      own: [press, partial], town: [townDone, townBudget],
+      events: [
+        { origin: 'competitor', firstRunId: press.id, title: 'Sentinel Trivia' }, { origin: 'competitor', firstRunId: press.id, title: 'Sentinel Jazz' },
+        { origin: 'neighborhood', firstRunId: press.id, title: 'Sentinel Fair' }, { origin: 'competitor', firstRunId: 'gone-run', title: 'Sentinel Old' },
+      ],
+      threads: { [partial.id]: ['recorded', 'failed'] },
+    }, reads);
+    const items = await activityFor(input(ctx, MEMBER), [researchSource]);
+    expect(items).toEqual([
+      {
+        at: at(5).toISOString(), kind: 'research_done', subject: 'location', status: 'done', found: 9, added: 3, competitors: 2, threadsFailed: 0, threadsBudget: 0,
+        finishedAt: at(5).toISOString(),
+      },
+      // A town run is shared: its status and counts only, never what started it or when, and no competitors.
+      {
+        at: at(4).toISOString(), kind: 'research_done', subject: 'town', status: 'done', found: 9, added: 3, competitors: null, threadsFailed: 0, threadsBudget: 0,
+        finishedAt: at(4).toISOString(),
+      },
+      {
+        at: at(3).toISOString(), kind: 'research_done', subject: 'location', status: 'partial', found: 4, added: 1, competitors: 0, threadsFailed: 1, threadsBudget: 0,
+        finishedAt: at(3).toISOString(),
+      },
+      {
+        at: at(2).toISOString(), kind: 'research_done', subject: 'town', status: 'budget', found: 0, added: 0, competitors: null, threadsFailed: 3, threadsBudget: 3,
+        finishedAt: at(2).toISOString(),
+      },
+    ]);
+    // Only the partial run's threads are read; the town is the location's own.
+    expect(reads.filter((read) => read.startsWith('threads:'))).toEqual([`threads:${partial.id}`]);
+    expect(reads).toContain('town:hanover-nh');
+    expect(JSON.stringify(items)).not.toContain('Sentinel');
+    expect(JSON.stringify(items)).not.toContain('press');
+    expect(ACTIVITY_SOURCES.at(-1)).toBe(researchSource);
+  });
+
+  it('shows nothing while TOWNWISE_RESEARCH or the organization’s switch is off, and reads no run', async () => {
+    for (const fakes of [{ on: false }, { research: false }]) {
+      const reads: string[] = [];
+      const ctx = researchContext({ ...fakes, own: [run()], town: [run()] }, reads);
+      expect(await activityFor(input(ctx, MEMBER), [researchSource])).toEqual([]);
+      expect(reads).toEqual([]);
+    }
+  });
+
+  it('reads no town run for a town outside the twelve', async () => {
+    const reads: string[] = [];
+    const ctx = researchContext({ townId: null, own: [] }, reads);
+    expect(await activityFor(input(ctx, MEMBER), [researchSource])).toEqual([]);
+    expect(reads.filter((read) => read.startsWith('town:'))).toEqual([]);
+  });
+
+  it('a partial run whose unfinished topics were all skipped for budget says so apart from failed ones', async () => {
+    const partial = run({ status: 'partial', threads: ['neighborhood', 'competitors', 'town_overview'] });
+    const ctx = researchContext({ own: [partial], threads: { [partial.id]: ['recorded', 'budget', 'budget'] } });
+    const items = await activityFor(input(ctx, MEMBER), [researchSource]);
+    expect(items).toEqual([expect.objectContaining({ status: 'partial', threadsFailed: 2, threadsBudget: 2 })]);
+  });
+
+  it('a failed run counts every topic as not finished', async () => {
+    const failed = run({ status: 'failed', counts: { found: 0, added: 0, updated: 0, dropped: 0 } });
+    const items = await activityFor(input(researchContext({ own: [failed] }), MEMBER), [researchSource]);
+    expect(items).toEqual([expect.objectContaining({ subject: 'location', status: 'failed', threadsFailed: 2, competitors: 0 })]);
   });
 });
 

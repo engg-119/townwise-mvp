@@ -3,6 +3,7 @@
 // entries without a title or URL, and the current published run with its engine. The numbers are synthetic. The last
 // test holds the API's input to the lab's own validator through a golden file.
 import { readFileSync, writeFileSync } from 'node:fs';
+import { posix } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -740,6 +741,30 @@ describe('the input the API builds, against the lab', () => {
     const text = `${JSON.stringify(input, null, 1)}\n`;
     if (process.env.TOWNWISE_UPDATE_LAB_GOLDEN === '1') writeFileSync(GOLDEN, text);
     expect(readFileSync(GOLDEN, 'utf8')).toBe(text);
+  });
+
+  /**
+   * D66 (task 5.2; spec 13.1): researched events stay out of the lab. The lab input is built from town-calendar.ts and
+   * the location's own records, and nothing it reaches by a value import reads a research module or a research store,
+   * so rows research stored (town or location, edited or not) cannot change it: the golden file stays byte-identical
+   * with them present. The walk follows value imports from lab/input.ts and town-calendar.ts through src/.
+   */
+  it('reaches no research module or research store, so stored researched rows leave the golden byte-identical (D66)', () => {
+    const src = new URL('../src/', import.meta.url);
+    const seen = new Set<string>();
+    const queue = ['lab/input.ts', 'town-calendar.ts'];
+    while (queue.length > 0) {
+      const path = queue.pop() ?? '';
+      if (seen.has(path)) continue;
+      seen.add(path);
+      const text = readFileSync(new URL(path, src), 'utf8');
+      for (const match of text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)) {
+        queue.push(posix.normalize(posix.join(posix.dirname(path), match[1] ?? '')));
+      }
+    }
+    expect(seen.size).toBeGreaterThan(5);
+    expect([...seen].filter((path) => path.startsWith('research/') || path.startsWith('stores/research-'))).toEqual([]);
+    expect(readFileSync(GOLDEN, 'utf8')).toBe(`${JSON.stringify(apiInput(), null, 1)}\n`);
   });
 
   /**

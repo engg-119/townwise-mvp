@@ -95,7 +95,7 @@ export const configSchema = z.object({
    * set false, by the owner's directive (2026-11-16); inert while TOWNWISE_LAB_RUNNER is off.
    */
   TOWNWISE_WEEKLY_FORECASTS: z.stringbool().default(true),
-  /** D42: roughly how many scheduled calibrations may start in one week across all organizations. [CONFIRM] */
+  /** D42: roughly how many scheduled calibrations may start in one week across all organizations. */
   TOWNWISE_WEEKLY_FORECAST_CAP: z.coerce.number().int().min(0).max(10_000).default(200),
   /**
    * TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions): whether the weekly worker makes one
@@ -109,6 +109,38 @@ export const configSchema = z.object({
    * 2026-11-16; approved by the owner on 2026-11-19); an organization's own switch (`agentAuto`) must be on too.
    */
   TOWNWISE_AGENT_AUTO: z.stringbool().default(true),
+  /**
+   * D66 (openspec change town-research-agent, design decision 17): the town research agent's kill switch. On unless set
+   * false (the owner's rule of 2026-11-16); it also needs ANTHROPIC_API_KEY and TOWNWISE_CHAT_WEB_SEARCH, and an
+   * organization's own switch (`research`). Off, no research runs and nothing researched is read. [CONFIRM: research on
+   * by default]
+   */
+  TOWNWISE_RESEARCH: z.stringbool().default(true),
+  /**
+   * D66 decision 7: what town research (a system cost, no organization's) may spend in a month, in US dollars, split
+   * evenly between the towns in use; 0 turns town research off. [CONFIRM: town research is system cost, at most $40 a
+   * month by default (about 3 towns weekly at the measured cost, since a town's slice must hold its month's spend and
+   * one thread's reservation), split evenly between the towns in use]
+   */
+  TOWNWISE_RESEARCH_TOWN_MONTHLY_USD: z.coerce.number().min(0).max(1000).default(40),
+  /**
+   * D66 decision 7: the share of an organization's TownwiseAI month that automatic (weekly and early) location research
+   * may spend, in US dollars; 0 stops automatic location research (Research now still runs). [CONFIRM: location
+   * research spends the TownwiseAI month; automatic runs use at most $6 of it an organization and leave $5]
+   */
+  TOWNWISE_RESEARCH_ORG_MONTHLY_USD: z.coerce.number().min(0).max(1000).default(6),
+  /**
+   * D66 decision 17: whether research threads may fetch pages (Anthropic's web fetch tool). Off unless set: turned on
+   * only if the live eval shows it pays, and then web fetch must be allowed for the Anthropic organization in Claude
+   * Console. [CONFIRM: 8 searches a town thread, 5 a location thread; page fetch off until the live eval shows it pays]
+   */
+  TOWNWISE_RESEARCH_WEB_FETCH: z.stringbool().default(false),
+  /**
+   * D66 decision 10: whether Google Places names, types, websites and addresses may go to Anthropic in a research
+   * prompt. Off by default, so an environment that leaves it unset fails closed; api/production.env sets true, since
+   * the terms question was decided 2026-11-19 by the owner: allowed ("yes that is allowed").
+   */
+  TOWNWISE_RESEARCH_PLACES_TO_AI: z.stringbool().default(false),
   /**
    * Development only: the secret a local lab job calls back with, shared by the API and the weekly worker so a job the
    * worker started can call back to the API (both refuse it in production, as they refuse TOWNWISE_LAB_RUNNER=local).
@@ -158,6 +190,16 @@ export interface ResolvedTownwiseConfig {
   readonly weeklySuggestions: boolean;
   /** D59: TOWNWISE_AGENT_AUTO, the deploy-level switch for TownwiseAI working on its own. */
   readonly agentAuto: boolean;
+  /** D66: TOWNWISE_RESEARCH, research's deploy-level switch (the runner also needs the Anthropic key and web search). */
+  readonly research: boolean;
+  /** D66: TOWNWISE_RESEARCH_TOWN_MONTHLY_USD. */
+  readonly researchTownMonthlyUsd: number;
+  /** D66: TOWNWISE_RESEARCH_ORG_MONTHLY_USD. */
+  readonly researchOrgMonthlyUsd: number;
+  /** D66: TOWNWISE_RESEARCH_WEB_FETCH. */
+  readonly researchWebFetch: boolean;
+  /** D66: TOWNWISE_RESEARCH_PLACES_TO_AI. */
+  readonly researchPlacesToAi: boolean;
 }
 
 /** The URL's origin, or null when it has a path, query, fragment or credentials. */
@@ -301,5 +343,10 @@ export function resolveTownwiseConfig(
     weeklyForecastCap: config.TOWNWISE_WEEKLY_FORECAST_CAP,
     weeklySuggestions: config.TOWNWISE_WEEKLY_SUGGESTIONS,
     agentAuto: config.TOWNWISE_AGENT_AUTO,
+    research: config.TOWNWISE_RESEARCH,
+    researchTownMonthlyUsd: config.TOWNWISE_RESEARCH_TOWN_MONTHLY_USD,
+    researchOrgMonthlyUsd: config.TOWNWISE_RESEARCH_ORG_MONTHLY_USD,
+    researchWebFetch: config.TOWNWISE_RESEARCH_WEB_FETCH,
+    researchPlacesToAi: config.TOWNWISE_RESEARCH_PLACES_TO_AI,
   };
 }

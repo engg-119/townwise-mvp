@@ -8,14 +8,13 @@
 // from a run that supplied every day of the week; they are the run's own week rows, never sums of days. Past days
 // carry the stored guests and whether they landed in the range. Live accuracy is scored per run, over the passed days
 // that run supplied, so one run is never credited with another's hits and misses; a closed or likely-closed day (spec
-// D32, ../closed-days.ts) is a closure, not a miss, and is left out. [CONFIRM: live accuracy leaves out closed and
-// likely-closed days] Numbers are raw, as stored; callers round for display. From the town's today on, the location's
-// notes and its business rules with a schedule (D31) adjust each day on read (adjust.ts); past days and run rows stay
-// as the model made them. A week's low, mid and high shift by each of its days' adjusted middle less the model's (a
-// newly closed or booked day takes its model middle off, notes' and rules' guests add; never below 0), and its openDays
-// by the days opened less the days closed; a week is left out only when a changed day has no model middle to take off.
-// [CONFIRM: a week's range shifted by its days' note and rule changes] From today on, each run reason also says whether
-// it usually brings more or fewer guests (effects.ts), from the same reads: the stored days, read once, reach back over
+// D32, ../closed-days.ts) is a closure, not a miss, and is left out. Numbers are raw, as stored; callers round for
+// display. From the town's today on, the location's notes and its business rules with a schedule (D31) adjust each
+// day on read (adjust.ts); past days and run rows stay as the model made them. A week's low, mid and high shift by
+// each of its days' adjusted middle less the model's (a newly closed or booked day takes its model middle off, notes'
+// and rules' guests add; never below 0), and its openDays by the days opened less the days closed; a week is left out
+// only when a changed day has no model middle to take off. From today on, each run reason also says whether it
+// usually brings more or fewer guests (effects.ts), from the same reads: the stored days, read once, reach back over
 // the 52 weeks the effects need when the range reaches today and over the 8 weeks before the first scored day that
 // likely closed reads, and one read of the notes and rules marks the closed days for the effects and the accuracy. The
 // town calendar's term entries are made once for the labels and the effects. A read also scores its own days, each

@@ -6,8 +6,8 @@ import type { Request } from 'express';
 
 import type { ListedBlob } from '../files/blobs.ts';
 import type {
-  ClaimedAiRead, ClaimedCalendar, ClaimedCalendarSort, ClaimedGoogleConnection, ClaimedImport, JoinedSeat, LabCallbackClaim,
-  LiveScheduledCalibration, RefitCandidate, StaleChatTurn, StaleStartingWeek, StaleSuggestionPass, SweptFile, SweptImport, UntitledAiNote, WeeklyCandidate,
+  ClaimedAiRead, ClaimedCalendar, ClaimedCalendarSort, ClaimedGoogleConnection, ClaimedImport, ClaimedLocationResearchMerge,
+  ClaimedLocationResearchThread, JoinedSeat, LabCallbackClaim, LiveScheduledCalibration, ResearchLocationCandidate, StaleLocationResearchThread, RefitCandidate, StaleChatTurn, StaleStartingWeek, StaleSuggestionPass, SweptFile, SweptImport, UntitledAiNote, WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import type { OrgRecord, OrgStore } from '../stores/orgs.ts';
 import type { OpenAsAdminGrantRecord } from '../stores/view-as-grants.ts';
@@ -82,6 +82,17 @@ export function scopeForGoogleCheck(claim: ClaimedGoogleConnection): OrgScope {
  */
 export function scopeForWeeklyRefresh(
   found: WeeklyCandidate | LiveScheduledCalibration | StaleStartingWeek | StaleSuggestionPass | RefitCandidate,
+): OrgScope {
+  return mint(found.orgId);
+}
+
+/**
+ * D66, town research only (research/plan.ts and research/runner.ts), for the organization of a location the planner
+ * considers, a location thread the runner claimed or found stale, or a location run whose merge it claimed, each found
+ * by a cross-tenant lookup. Both recheck the organization and the location before every write (design decision 14).
+ */
+export function scopeForResearch(
+  found: ResearchLocationCandidate | ClaimedLocationResearchThread | StaleLocationResearchThread | ClaimedLocationResearchMerge,
 ): OrgScope {
   return mint(found.orgId);
 }

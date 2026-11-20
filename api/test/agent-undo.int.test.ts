@@ -3,18 +3,22 @@
 // answers 409 changed_since and the row reads adopted; one deleted since answers 200; a retry after a stop at each step
 // finishes it; sales days need an org admin and a summary item its file's adder or an org admin; another location's id
 // answers 404, view-as is refused, and a change still being applied answers 409; (slice 3) a rule TownwiseAI added is
-// undone by any member while unchanged, and one an org admin edited since is theirs. Synthetic notes and days only.
+// undone by any member while unchanged, and one an org admin edited since is theirs; (D66) a correction of a researched
+// event is undone by a revert revision (nothing deleted, no refit), one a member edited since is theirs, an Undo racing
+// a member's edit stores exactly one of them, and the correction can be asked for again in a later turn. Synthetic
+// notes, days and events only.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
-import { applyChange, TOWNWISE_AI_AUTHOR } from '../src/agent/apply.ts';
+import { applyChange, eventCorrectionCandidate, TOWNWISE_AI_AUTHOR } from '../src/agent/apply.ts';
 import { TOWNWISE_AI_ACTOR } from '../src/audit.ts';
 import type { AgentChangeView } from '../src/agent/changes.ts';
 import type { AgentPanel } from '../src/handlers/agent.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
+import { foldRevisions } from '../src/research/revisions.ts';
 import { addGrant, addLocation, addSalesDay, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
   call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
@@ -287,3 +291,116 @@ describe('Undo of a rule TownwiseAI added (D59 slice 3)', () => {
   });
 });
 
+
+describe('Undo of a correction of a researched event (D66)', () => {
+  const BASE = { title: 'Trivia night', start: '2026-12-02', end: '2026-12-02', weekdays: null, startTime: '19:00', where: null };
+
+  /** A correction TownwiseAI applied in chat, moving a made-up event to Dec 3. Resolves the change and the event. */
+  async function appliedCorrection(t: Team, input: { eventId?: string; basedOn?: string; conversationId?: string } = {}) {
+    const eventId = input.eventId ?? `l-${id()}`;
+    const result = await applyChange(server.ctx, t.scope, eventCorrectionCandidate(server.ctx, t.scope, {
+      locationId: t.locationId, conversationId: input.conversationId ?? id(), callId: `toolu_${randomUUID().slice(0, 8)}`, eventId, op: 'edit',
+      fields: { start: '2026-12-03', end: '2026-12-03' }, basedOn: input.basedOn ?? 'base', why: `${SENTINEL} the person says it moved`,
+      onBehalfOf: t.member.userId, actor: TOWNWISE_AI_ACTOR,
+    }));
+    expect(result.outcome).toBe('applied');
+    return { changeId: result.change?.id ?? '', revisionId: result.change?.targetId ?? '', eventId };
+  }
+
+  async function folded(t: Team, eventId: string) {
+    return foldRevisions(eventId, BASE, await server.ctx.stores.researchRevisions.list(t.scope, t.locationId));
+  }
+
+  async function edit(t: Team, eventId: string, basedOn: string) {
+    return server.ctx.stores.researchRevisions.append(t.scope, {
+      locationId: t.locationId, eventId, op: 'edit', fields: { title: 'Trivia and quiz night' }, reverts: null, basedOn,
+      by: { kind: 'person', userId: t.admin.userId }, now: server.clock.now(),
+    });
+  }
+
+  it('any member undoes it with a revert based on it: nothing deleted, the values from before, recorded once, no refit', async () => {
+    const t = await team();
+    await addSalesDay(server, { orgId: t.orgId, locationId: t.locationId, date: '2026-12-31', guests: 90, netSalesCents: null });
+    const { changeId, revisionId, eventId } = await appliedCorrection(t);
+    expect((await folded(t, eventId)).values.start).toBe('2026-12-03');
+    expect((await panel(t, t.other)).activity.find((item) => item.kind === 'agent_change')).toMatchObject({ changeId, action: 'event.correct', undoable: true });
+    const res = await undo(t, t.other, changeId);
+    expect(res.status).toBe(200);
+    expect((await res.json() as { change: AgentChangeView }).change).toMatchObject({ id: changeId, status: 'undone', undoable: false, action: 'event.correct' });
+    const revisions = await server.ctx.stores.researchRevisions.list(t.scope, t.locationId);
+    expect(revisions.map((each) => [each.op, each.basedOn, each.reverts, each.by])).toEqual([
+      ['edit', 'base', null, expect.objectContaining({ kind: 'chat' })],
+      ['revert', revisionId, revisionId, { kind: 'person', userId: t.other.userId }],
+    ]);
+    expect(await folded(t, eventId)).toMatchObject({ values: BASE, hidden: false, edited: false });
+    expect(await rowOf(changeId)).toMatchObject({ status: 'undone', statusBy: t.other.userId });
+    // A retry answers the same, appends nothing and records nothing more.
+    expect((await undo(t, t.other, changeId)).status).toBe(200);
+    expect(await server.ctx.stores.researchRevisions.count(t.scope, t.locationId)).toBe(2);
+    expect((await undoneEvents(t)).map((event) => event.details)).toEqual([{ locationId: t.locationId, action: 'event.correct', sourceKind: 'chat' }]);
+    expect(server.logs.join('\n')).not.toContain(SENTINEL);
+    expect((await server.connection.collection('tw_locations').findOne({ _id: oid(t.locationId) }))?.refit).toBeUndefined();
+  });
+
+  it('a retry finishes an undo that stopped after its revert', async () => {
+    const t = await team();
+    const { changeId, revisionId, eventId } = await appliedCorrection(t);
+    await server.ctx.stores.agentChanges.markUndoing(t.scope, t.locationId, changeId, { by: t.member.userId, now: server.clock.now() });
+    await server.ctx.stores.researchRevisions.append(t.scope, {
+      locationId: t.locationId, eventId, op: 'revert', fields: null, reverts: revisionId, basedOn: revisionId,
+      by: { kind: 'person', userId: t.member.userId }, now: server.clock.now(),
+    });
+    expect((await undo(t, t.member, changeId)).status).toBe(200);
+    expect(await rowOf(changeId)).toMatchObject({ status: 'undone' });
+    expect(await server.ctx.stores.researchRevisions.count(t.scope, t.locationId)).toBe(2);
+  });
+
+  it('a member’s edit since makes it theirs: 409 changed_since, adopted, Undo no longer offered, and the edit stays', async () => {
+    const t = await team();
+    const { changeId, revisionId, eventId } = await appliedCorrection(t);
+    expect(await edit(t, eventId, revisionId)).not.toBeNull();
+    expect((await panel(t, t.member)).activity.find((item) => item.kind === 'agent_change')).toMatchObject({ changeId, undoable: false });
+    expect(await errorOf(await undo(t, t.member, changeId))).toEqual({ status: 409, error: 'changed_since' });
+    expect(await rowOf(changeId)).toMatchObject({ status: 'adopted' });
+    expect(await folded(t, eventId)).toMatchObject({ values: { ...BASE, start: '2026-12-03', end: '2026-12-03', title: 'Trivia and quiz night' } });
+    expect(await server.ctx.stores.researchRevisions.count(t.scope, t.locationId)).toBe(2);
+    expect(await undoneEvents(t)).toEqual([]);
+  });
+
+  it('an Undo racing a member’s edit stores exactly one of them', async () => {
+    const t = await team();
+    const { changeId, revisionId, eventId } = await appliedCorrection(t);
+    const [res, edited] = await Promise.all([undo(t, t.member, changeId), edit(t, eventId, revisionId)]);
+    const children = (await server.ctx.stores.researchRevisions.list(t.scope, t.locationId)).filter((each) => each.basedOn === revisionId);
+    expect(children).toHaveLength(1);
+    if (res.status === 200) {
+      expect(edited).toBeNull();
+      expect(children[0]?.op).toBe('revert');
+      expect(await rowOf(changeId)).toMatchObject({ status: 'undone' });
+    } else {
+      expect(await errorOf(res)).toEqual({ status: 409, error: 'changed_since' });
+      expect(edited?.id).toBe(children[0]?.id);
+      expect(await rowOf(changeId)).toMatchObject({ status: 'adopted' });
+    }
+  });
+
+  it('one whose revision went (a place change’s cleanup) answers 200 and reads undone', async () => {
+    const t = await team();
+    const { changeId } = await appliedCorrection(t);
+    await server.ctx.stores.researchRevisions.removeStale(t.scope, t.locationId, { locationEventIds: [], townRows: true });
+    expect((await panel(t, t.member)).activity.find((item) => item.kind === 'agent_change')).toMatchObject({ changeId, undoable: false });
+    expect((await undo(t, t.member, changeId)).status).toBe(200);
+    expect(await rowOf(changeId)).toMatchObject({ status: 'undone' });
+  });
+
+  it('asked again in a later turn after Undo, it is applied again', async () => {
+    const t = await team();
+    const conversationId = id();
+    const { changeId, eventId } = await appliedCorrection(t, { conversationId });
+    expect((await undo(t, t.member, changeId)).status).toBe(200);
+    const head = (await folded(t, eventId)).head;
+    const again = await appliedCorrection(t, { conversationId, eventId, basedOn: head });
+    expect(again.changeId).not.toBe(changeId);
+    expect((await folded(t, eventId)).values.start).toBe('2026-12-03');
+  });
+});

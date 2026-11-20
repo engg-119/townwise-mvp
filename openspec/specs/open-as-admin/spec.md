@@ -4,7 +4,7 @@
 TBD - created by archiving change open-as-admin-after-join. Update Purpose after archive.
 ## Requirements
 ### Requirement: Staff open an active organization as its admin, joined or not
-The system SHALL let Townwise staff start open as admin on any active organization, whether or not anyone has joined it, and SHALL answer 409 `org_suspended` for a suspended one, writing nothing. [CONFIRM: staff can open an organization as its admin before and after its people join, with full read and write except people, until the end of their sign-in session]
+The system SHALL let Townwise staff start open as admin on any active organization, whether or not anyone has joined it, and SHALL answer 409 `org_suspended` for a suspended one, writing nothing.
 
 #### Scenario: An organization someone joined
 - **WHEN** staff start open as admin on an active organization whose invited admin has joined

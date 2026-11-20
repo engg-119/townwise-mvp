@@ -4,6 +4,7 @@ import type { ApiClient } from '../api/client';
 import { ApiError } from '../api/client';
 import { withOrgId } from '../portal/api';
 import { noteSchema, type Note } from '../portal/locations/api';
+import { CORRECTED_LINE } from '../portal/research/copy';
 import { KIND_LABEL, rangeText, weekdaysText } from './format';
 
 // D59 (openspec change auto-apply-agent-reads): TownwiseAI working on its own, as the client reads it: the
@@ -14,7 +15,8 @@ import { KIND_LABEL, rangeText, weekdaysText } from './format';
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const NOTE_KIND = z.enum(['closure', 'private_event', 'opening', 'other']);
-export const CHANGE_ACTIONS = ['note.add', 'item.add', 'sales_days.add', 'rule.add', 'booking.label'] as const;
+/** D66: `event.correct`, a correction TownwiseAI made to an event town research found (no dates, kind or count). */
+export const CHANGE_ACTIONS = ['note.add', 'item.add', 'sales_days.add', 'rule.add', 'booking.label', 'event.correct'] as const;
 const actionSchema = z.enum(CHANGE_ACTIONS);
 const statusSchema = z.enum(['applying', 'applied', 'undoing', 'undone', 'adopted']);
 /** Slice 3 adds `sales`: a closed weekday the sales history showed. */
@@ -115,7 +117,7 @@ function pageOf(action: AgentChange['action']): string {
  * events, used for forecasts", or (slice 3) "a business rule: Closure on Mondays, from Jun 8, 2026", its weekdays named
  * so a weekday rule does not read as every day.
  */
-function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'weekdays'>): string {
+function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'weekdays'> & { action: Exclude<AgentChange['action'], 'event.correct'> }): string {
   const dates = change.startDate === null || change.endDate === null ? '' : rangeText(change.startDate, change.endDate);
   const which = weekdaysText(change.weekdays);
   const on = which === null ? '' : ` on ${which.replace(/ only$/, '')}`;
@@ -148,8 +150,11 @@ export function changeLine(
   change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'status'>
     & Partial<Pick<AgentChange, 'weekdays' | 'sourcePasted'>>,
 ): string {
+  // D66: a correction adds nothing; it changes an event town research found, and its words say so.
   const source = change.sourceKind === 'file' && change.sourcePasted === true ? PASTED_WORDS : SOURCE_WORDS[change.sourceKind];
-  const added = `Added ${whatOf({ ...change, weekdays: change.weekdays ?? null })}, ${source}.`;
+  const added = change.action === 'event.correct'
+    ? CORRECTED_LINE
+    : `Added ${whatOf({ ...change, action: change.action, weekdays: change.weekdays ?? null })}, ${source}.`;
   if (change.status === 'undone') return `${added} Undone.`;
   if (change.status === 'adopted') return `${added} You changed it since, so it’s yours.`;
   return added;
@@ -170,6 +175,8 @@ export function undoErrorText(error: unknown, action: AgentChange['action'], adm
     if (error.code === 'changed_since' && action === 'rule.add' && !admin) {
       return 'Someone changed this since, so it’s no longer TownwiseAI’s to undo. Ask an org admin to delete it from Business rules if you don’t want it.';
     }
+    // D66: someone's edit of the event is based on the correction, so Undo would undo theirs too.
+    if (error.code === 'changed_since' && action === 'event.correct') return 'Someone changed this event since, so it’s no longer TownwiseAI’s to undo. Change it on the Calendar.';
     if (error.code === 'changed_since') return `You changed this since, so it’s yours now. Delete it from ${pageOf(action)} if you don’t want it.`;
     if (error.code === 'view_as_read_only') return 'View-as is read-only, so you can’t undo this.';
     if (error.code === 'forbidden') {

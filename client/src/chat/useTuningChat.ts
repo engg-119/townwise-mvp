@@ -13,6 +13,7 @@ import { undoChange, undoErrorFinal, undoErrorText } from './agentChanges';
 import { draftKey, readDraft, writeDraft } from './drafts';
 import { forgetChat, lastChatKey, recallChat, rememberChat, type LastChatStore } from './lastChat';
 import { lastChatStore, onPageLeave } from './lastChatStore';
+import { correctionOf, type CorrectionCard } from './corrections';
 import { isHiddenTool, type SourceLink, type ToolStep } from './tools';
 import { siblingAt, withTurn, type TreeNode } from './tree';
 import type { Visual } from './visuals/schema';
@@ -107,7 +108,9 @@ export type MessagePart =
   /** A chart, table or totals Townwise drew from its own data (show_visual); `id` is the call's id. */
   | { type: 'visual'; key: string; id: string; visual: Visual }
   | { type: 'item'; key: string; card: ItemCard }
-  | { type: 'order'; key: string; card: OrderCard };
+  | { type: 'order'; key: string; card: OrderCard }
+  /** D66: a correct_calendar_event call that changed an event, or proposed the change for one tap (corrections.ts). */
+  | { type: 'correction'; key: string; card: CorrectionCard };
 
 export interface ChatMessage {
   key: string;
@@ -393,6 +396,15 @@ function withItem(message: ChatMessage, card: ItemCard, key: string): ChatMessag
 function withOrder(message: ChatMessage, card: OrderCard, key: string): ChatMessage {
   if (message.parts.some((part) => part.type === 'order' && part.card.id === card.id)) return message;
   return { ...message, parts: [...message.parts, { type: 'order', key, card }] };
+}
+
+/** D66: a correction call's card, in place of its running row (a call is one or the other). */
+function withCorrection(message: ChatMessage, card: CorrectionCard, key: string): ChatMessage {
+  if (message.parts.some((part) => part.type === 'correction' && part.card.id === card.id)) return message;
+  const parts = message.parts
+    .map((part) => (part.type === 'tools' ? { ...part, steps: part.steps.filter((step) => step.id !== card.id) } : part))
+    .filter((part) => part.type !== 'tools' || part.steps.length > 0);
+  return { ...message, parts: [...parts, { type: 'correction', key, card }] };
 }
 
 function endLive(state: TuningChatState, end: Pick<ChatMessage, 'state' | 'note'>, now: number): ChatMessage[] {
@@ -743,6 +755,11 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       }
       // propose_note, show_visual and suggest_next show as their card, visual and next questions.
       if (isHiddenTool(event.name)) return state;
+      {
+        // D66: a correction that changed an event, or proposed the change, is its card once done; otherwise a row.
+        const correction = correctionOf(event);
+        if (correction !== null) return { ...state, messages: withLive(state, (message) => withCorrection(message, correction, key)) };
+      }
       return { ...state, messages: withLive(state, (message) => withTool(message, event, key)) };
     case 'proposal': {
       // D59 slice 4: a note TownwiseAI saved itself reads saved, with Undo for the person who stated it.
@@ -1545,6 +1562,11 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         }
         // As while it streamed: a hidden tool's call shows nothing (a propose_note call that got an error, say).
         if (isHiddenTool(part.name)) continue;
+        const correction = correctionOf(part);
+        if (correction !== null) {
+          message.parts.push({ type: 'correction', key: nextKey(), card: correction });
+          continue;
+        }
         const step: ToolStep = { id: part.id, name: part.name, state: part.state, input: part.input, result: part.result };
         if (last?.type === 'tools') last.steps.push(step);
         else message.parts.push({ type: 'tools', key: nextKey(), steps: [step] });

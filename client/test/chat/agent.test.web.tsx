@@ -11,6 +11,7 @@ import { COLLAPSE_MS } from '../../src/chat/ui/Collapse.web';
 import { ATTACH_FILES, WAIT_ID } from '../../src/chat/ui/ComposerFiles.web';
 import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { localToday } from '../../src/portal/locations/dates';
+import { handOffAsk, takeAsk } from '../../src/portal/research/ask';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
 import { theme } from '../../src/theme';
@@ -1193,6 +1194,24 @@ test('F7: ?about= fills the composer with the day, sends nothing, and keeps the 
   fireEvent.keyDown(input, { key: 'Enter' });
   await waitFor(() => { expect(api.turns).toHaveLength(1); });
   expect(turn(api).body).toEqual({ content: aboutDraft(date, date) });
+});
+
+test('D66: ?ask=found fills a new conversation’s composer with the Calendar’s draft, sends nothing, and drops it from the address', async () => {
+  const api = fakeChatApi();
+  handOffAsk('l1', 'Is Trivia night on Sat, Nov 21 right?');
+  renderAt('/locations/l1/agent?ask=found', api);
+  const input = await screen.findByLabelText(COMPOSER_LABEL);
+  await waitFor(() => { expect((input as HTMLTextAreaElement).value).toBe('Is Trivia night on Sat, Nov 21 right?'); });
+  expect(api.turns).toHaveLength(0);
+  await waitFor(() => { expect(window.location.search).not.toContain('ask='); });
+  // Taken once: nothing is left for a later visit.
+  expect(takeAsk('l1')).toBeNull();
+});
+
+test('D66: ?ask=found with no draft left (a reload in between) leaves the composer empty', async () => {
+  renderAt('/locations/l1/agent?ask=found', fakeChatApi());
+  const input = await screen.findByLabelText(COMPOSER_LABEL);
+  expect((input as HTMLTextAreaElement).value).toBe('');
 });
 
 test('F7: a malformed ?about= leaves the composer empty', async () => {

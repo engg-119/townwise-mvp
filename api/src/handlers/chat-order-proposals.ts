@@ -110,7 +110,7 @@ export async function getOrderProposal(ctx: TownwiseContext, req: Request, res: 
     // Never `saved`: a setup card's only stored state is set aside.
     const state = { kind: 'setup', status: status === 'dismissed' ? 'dismissed' : 'open', readWeb: shown.setup.readWeb } as const;
     // Under view-as, counts only: the names and notes come from a file, and staff see no file-derived text there
-    // (handlers/data.ts hides a read's event titles the same way). [CONFIRM: under view-as the setup card shows counts only]
+    // (handlers/data.ts hides a read's event titles the same way).
     const { read } = shown.setup;
     res.status(200).json({ proposal: caller.viewAs === null ? { ...state, read } : { ...state, counts: { suppliers: read.suppliers.length, items: read.items.length } } });
     return;

@@ -1,6 +1,9 @@
 // GET /api/org/locations/:locationId/calendar?from=&to= (spec 10.10, 13.1): the public calendar of the location's
 // town, researched town events and US federal holidays, from src/town-calendar.ts. Public data, computed and stored
 // nowhere. Location-scoped, so a town outside the twelve still gets its holidays. A read: it logs nothing.
+// D66 (design decision 13): `found` adds what the research agent found for the location (research/read.ts), after the
+// location's own edits, hidden ones left out; `[]` while research is off for the organization, null when that read
+// fails. It is additive: `events`, `researched` and `covers` keep their meaning, and the forecast never reads `found`.
 import { parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -8,6 +11,7 @@ import { z } from 'zod';
 import type { TownwiseContext } from '../app.ts';
 import type { Principal } from '../access/policy.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../dates.ts';
+import { researchedEventsFor } from '../research/read.ts';
 import { townCalendarCovers, townEvents } from '../town-calendar.ts';
 import { loadLocation, memberOf } from './locations.ts';
 
@@ -28,10 +32,12 @@ export async function getLocationCalendar(ctx: TownwiseContext, req: Request, re
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const { town } = location;
   const covers = townCalendarCovers(town.townId);
+  const found = await researchedEventsFor(ctx, scope, location, range);
   res.status(200).json({
     town: { townId: town.townId, name: town.name, state: town.state },
     researched: covers !== null,
     covers,
     events: townEvents(town.townId, range),
+    found,
   });
 }

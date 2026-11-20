@@ -18,6 +18,8 @@ import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { endUnusedGoogleAccess, googleAccessDeps, markLocationForCheck } from '../calendar/google-access.ts';
 import { calibrationFor, type Calibration } from '../calibration.ts';
 import { placeIdSchema } from '../place-id.ts';
+import { queueEarlyRun, researchRuns, townStamp } from '../research/plan.ts';
+import { researchReadable } from '../research/read.ts';
 import { PlacesUnavailableError, type PlaceDetails } from '../places/google.ts';
 import type { AuditDetails } from '../stores/audit-events.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -33,9 +35,14 @@ export interface LocationSummary {
   notesCount: number; lastUploadAt: string | null;
   /** D28: days that turned-off uploads hold, which `coverage` leaves out. */
   offDayCount: number;
+  /**
+   * D66 (design decision 15): set while the location's research run is running or merging (a thread waiting to retry
+   * included), from the run's status; null otherwise, and while research is off for the organization. Additive.
+   */
+  researching: { stage: 'running'; since: string } | null;
 }
 
-/** Spec 6.4. [CONFIRM: 25 locations] */
+/** Spec 6.4. */
 export const MAX_LOCATIONS = 25;
 
 const nameSchema = z.string().trim().min(1).max(80);
@@ -144,18 +151,24 @@ export async function loadLocation(ctx: TownwiseContext, scope: OrgScope, rawId:
  * reading the location's newest published run for its calibration state (D42).
  */
 export async function summarizer(ctx: TownwiseContext, scope: OrgScope): Promise<(location: LocationRecord) => Promise<LocationSummary>> {
-  const [coverage, notes, uploads, offDays] = await Promise.all([
+  const [coverage, notes, uploads, offDays, liveRuns, readable] = await Promise.all([
     ctx.stores.salesDays.coverageByLocation(scope),
     ctx.stores.notes.countByLocation(scope),
     ctx.stores.uploads.lastUploadByLocation(scope),
     ctx.stores.salesDays.offDayCountByLocation(scope),
+    ctx.stores.researchLocations.liveRuns(scope),
+    researchReadable(ctx, scope),
   ]);
+  const researching = new Map(liveRuns
+    .filter((run) => readable && (run.status === 'running' || run.status === 'merging'))
+    .map((run) => [run.locationId, { stage: 'running' as const, since: (run.startedAt ?? run.createdAt).toISOString() }]));
   return async (location) => {
     const covered = coverage.get(location.id) ?? NO_COVERAGE;
     return {
       id: location.id, name: location.name, town: location.town, placeId: location.placeId, coverage: covered,
       calibration: await calibrationFor(ctx, scope, location, covered), notesCount: notes.get(location.id) ?? 0,
       lastUploadAt: uploads.get(location.id)?.toISOString() ?? null, offDayCount: offDays.get(location.id) ?? 0,
+      researching: researching.get(location.id) ?? null,
     };
   };
 }
@@ -293,6 +306,10 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.forecastWeeks.removeForLocation(scope, locationId);
   // U13B: forecasts staff imported for it, even with no sales data left.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
+  // D66: its research runs and threads first (a lane's heartbeat then misses and its merge finds no run), then what
+  // research found for it and its people's edits. Town rows stay: they hold no organization's data.
+  await ctx.stores.researchLocations.removeForLocation(scope, locationId);
+  await ctx.stores.researchRevisions.removeForLocation(scope, locationId);
   // The owner's calendars and their events.
   await ctx.stores.ownerCalendars.removeForLocation(scope, locationId);
   // Orders: saved edits, confirmed rules, the setup, item sales and counts go with the location.
@@ -302,7 +319,39 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.orderCounts.removeForLocation(scope, locationId);
   // A connection that still backs a calendar of another location stays.
   for (const connectionId of connections) await endUnusedGoogleAccess(google, scope, connectionId, 'location_deleted');
+  // D66: a merge or an edit already past its location check can still write after the sweep above, so it runs again
+  // (the merge also removes its own rows once it finds the location gone, design decision 8).
+  await ctx.stores.researchLocations.removeForLocation(scope, locationId);
+  await ctx.stores.researchRevisions.removeForLocation(scope, locationId);
   return true;
+}
+
+/**
+ * D66 (design decisions 2 and 9): after a location is created, or its place or town changed, by an org admin's own
+ * request. A place or town change first ends the location's live research run `off` (`place_changed`) and deletes its
+ * research rows stamped with the old place or town and their edits, in open as admin too, since they no longer describe
+ * the location. Then, only while research runs here and the caller is not staff with the organization open as admin
+ * (the weekly planner picks those up later), it queues the early run, which checks the organization is active with
+ * research on. Staff setup (checkedCreate and checkedUpdate) never comes here. A failure is logged by code and never
+ * fails the request.
+ */
+async function researchAfterWrite(
+  ctx: TownwiseContext, admin: MemberPrincipal, location: LocationRecord, before: LocationRecord | null,
+): Promise<void> {
+  const { scope } = admin;
+  const moved = before !== null && (before.placeId !== location.placeId || townStamp(before.town) !== townStamp(location.town));
+  try {
+    if (moved) {
+      await ctx.stores.researchLocations.endLive(scope, location.id, { code: 'place_changed', now: ctx.now() });
+      const left = await ctx.stores.researchLocations.removeOtherStamps(scope, location.id, { placeId: location.placeId, town: townStamp(location.town) });
+      await ctx.stores.researchRevisions.removeStale(scope, location.id, { locationEventIds: left, townRows: townStamp(before.town) !== townStamp(location.town) });
+    }
+    if ((before !== null && !moved) || admin.openAsAdmin !== null) return;
+    if (!researchRuns({ research: ctx.config.research, chatWebSearch: ctx.config.chatWebSearch, anthropicKey: ctx.chat !== null })) return;
+    await queueEarlyRun(ctx, scope, location);
+  } catch (err) {
+    ctx.logger.warn({ orgId: scope.orgId, locationId: location.id, errType: err instanceof Error ? err.name : 'unknown' }, 'townwise.research_enqueue_failed');
+  }
 }
 
 /** POST /api/org/locations (P10). `orgId`, the organization the page shows, is required in open as admin (D25). */
@@ -321,6 +370,7 @@ export async function createLocation(ctx: TownwiseContext, req: Request, res: Re
     target: { type: 'location', id: location.id },
     details: locationDetails(location),
   });
+  await researchAfterWrite(ctx, admin, location, null);
   const summarize = await summarizer(ctx, scope);
   res.status(201).json({ location: await summarize(location) });
 }
@@ -339,6 +389,7 @@ export async function updateLocation(ctx: TownwiseContext, req: Request, res: Re
     target: { type: 'location', id: updated.id },
     details: locationDetails(updated),
   });
+  await researchAfterWrite(ctx, admin, updated, location);
   const summarize = await summarizer(ctx, scope);
   res.status(200).json({ location: await summarize(updated) });
 }

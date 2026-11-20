@@ -87,10 +87,20 @@ export const AUDIT_DETAIL_KEYS = {
   // D59, TownwiseAI working on its own: the org admin's switch, and each change it saved or someone undid, by its typed
   // action and source kind. Never a title, a why, a file name, a date or a figure.
   'org.agent_auto_switched': ['on'],
+  // D66, the research agent: the organization's switch, by its state only.
+  'org.research_switched': ['on'],
   'agent.change_applied': ['locationId', 'action', 'sourceKind'],
   'agent.change_undone': ['locationId', 'action', 'sourceKind'],
   // D59 slice 5: a run in which the location's calendars answered open suggestions, by count. Never a title, uid or date.
   'agent.calendar_answered': ['locationId', 'count'],
+  // D66, a person's edit, hide or restore of a researched event at one location (design decision 11): the location's and
+  // the event's ids only, never a title, a place or a date.
+  'research.event_edited': ['locationId', 'eventId'],
+  'research.event_hidden': ['locationId', 'eventId'],
+  'research.event_restored': ['locationId', 'eventId'],
+  // D66, staff taking a wrong shared town row down for everyone (scripts/research-suppress.ts): the town's key, the
+  // event's id and a code, never a title.
+  'research.town_event_suppressed': ['townKey', 'eventId', 'code'],
   // Orders: ids, dates, counts and a card's kind (change, rule or setup), never an item or supplier name, a servings
   // figure, a quantity, or the owner's reason or situation. A setup card (D56) is only ever dismissed: nothing saves
   // from it, so it never writes order.card_saved.
@@ -146,7 +156,9 @@ export type AuditTargetType =
   // A person's Google access for calendars (connect-google-calendar).
   | 'google_connection'
   // D42, the weekly refresh's schedule.
-  | 'forecast_schedule';
+  | 'forecast_schedule'
+  // D66, a researched event (`t-<hex>` or `l-<hex>`).
+  | 'research_event';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {

@@ -5,7 +5,7 @@
 // read for those four and, when present, `status` only: a `cancelled` row is left out, and the other columns
 // (descriptions, locations, organizers, attendees, emails, attachments, colors, calendar ids, Google URLs) are never
 // read, so none of them is kept. A value with an offset or `Z` is an instant, the town's wall date and time; one with no
-// offset is the wall time it says [CONFIRM: a calendar CSV time with no offset is the town's wall time]; a bare
+// offset is the wall time it says; a bare
 // YYYY-MM-DD is a date; the `timezone` column is not used. Then spanOf's dates and hours, titleOf's title (no
 // unescaping) and FILE_WINDOW. A row whose start cannot be read is skipped and counted. Each row is a single event, a
 // repeating series' instances included (the export lists each), so skippedRepeating is 0. The uid is the trimmed

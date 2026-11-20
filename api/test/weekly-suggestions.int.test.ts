@@ -9,6 +9,9 @@
 // D59 slice 3 (openspec change auto-apply-agent-reads): while TownwiseAI works on its own, the pass saves a note or a
 // closure rule rated high as TownwiseAI's (at most 2 rules a week), stores it accepted so the panel never lists it, leaves
 // the rest open, and adds a closed weekday the sales history is sure of; with the switch off it saves nothing.
+// D66 (openspec change town-research-agent, task 5.6): the pass sends the location's researched events (medium or high,
+// not cancelled) with scope researched; a high note citing one waits open while TownwiseAI works on its own, its card
+// naming the event, and nothing reaches tw_agent_changes; with the organization's research switch off none is sent.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -20,9 +23,10 @@ import type { AgentPanel } from '../src/handlers/agent.ts';
 import type { NoteView } from '../src/handlers/notes.ts';
 import type { DecideResult, SuggestionView } from '../src/handlers/weekly-suggestions.ts';
 import { SUGGESTIONS_SEEN_MS } from '../src/lab/schedule.ts';
-import { suggestFor } from '../src/lab/suggestions.ts';
+import { suggestFor, SUGGESTIONS_RESEARCHED_PROMPT } from '../src/lab/suggestions.ts';
 import { createAgentSuggestionStore, type FollowContent, type NewSuggestion, type SuggestionRecord } from '../src/stores/agent-suggestions.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
+import type { EventInsertBase } from '../src/stores/research-shared.ts';
 import { message, messagesOf, scriptedModel, text } from './helpers/chat-model.ts';
 import { addGrant, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
@@ -1334,5 +1338,94 @@ describe('suggestions TownwiseAI is sure of (D59 slice 3)', () => {
     const undo = await call(server, `/api/org/locations/${t.locationId}/agent/changes/${String(change?._id)}/undo`, { session: t.member, method: 'POST' });
     expect(undo.status).toBe(200);
     expect(await server.connection.collection('tw_business_rules').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+  });
+});
+
+describe('researched events in the weekly pass (D66, task 5.6)', () => {
+  afterEach(async () => {
+    await server.connection.collection('tw_town_events').deleteMany({});
+  });
+
+  const RUN = new Types.ObjectId().toHexString();
+
+  function row(over: Partial<EventInsertBase> = {}): EventInsertBase {
+    const seen = server.clock.now();
+    return {
+      title: 'Riverside Street Fair', titleKey: 'riverside street fair', kind: 'event', category: 'festival', start: '2026-07-11',
+      end: '2026-07-11', weekdays: null, startTime: null, status: 'scheduled', venueId: null, hostId: null, confidence: 'high',
+      sources: [{ label: 'Town news', url: 'https://news.example/fair' }], firstRunId: RUN, lastRunId: RUN,
+      firstSeenAt: seen, lastSeenAt: seen, seenCount: 1, ...over,
+    };
+  }
+
+  /** The location's own researched rows (a fair, a low-confidence one, a cancelled one) and a town row; the fair's view id. */
+  async function seed(t: Team): Promise<{ fair: string; town: string }> {
+    const location = await server.ctx.stores.locations.find(t.scope, t.locationId);
+    if (location === null) throw new Error('no location');
+    const own = (over: Partial<EventInsertBase>) => server.ctx.stores.researchLocations.insertEvent(t.scope, t.locationId, {
+      ...row(over), placeId: location.placeId, town: 'hanover-nh', origin: 'neighborhood', competitorEntityId: null, competitorPlaceId: null,
+    });
+    const fair = await own({});
+    await own({ title: 'Maybe Market', titleKey: 'maybe market', start: '2026-07-12', end: '2026-07-12', confidence: 'low' });
+    await own({ title: 'Called Off Concert', titleKey: 'called off concert', start: '2026-07-13', end: '2026-07-13', status: 'cancelled' });
+    const town = await server.ctx.stores.researchTowns.insertEvent('hanover-nh', row({
+      title: 'Green Summer Regatta', titleKey: 'green summer regatta', start: '2026-07-18', end: '2026-07-18', confidence: 'medium',
+    }));
+    return { fair: `l-${fair.id}`, town: `t-${town.id}` };
+  }
+
+  async function passWith(t: Team, items: unknown[]) {
+    const chat = scriptedModel();
+    chat.script({ kind: 'message', message: message([text(JSON.stringify({ suggestions: items }))]) });
+    const location = await server.ctx.stores.locations.find(t.scope, t.locationId);
+    if (location === null) throw new Error('no location');
+    const outcome = await suggestFor({ config: server.ctx.config, now: server.ctx.now, stores: server.ctx.stores, logger: server.ctx.logger, chat }, t.scope, location, '2026-06-01');
+    const [sent] = messagesOf(chat.calls[0]);
+    const body = JSON.parse(typeof sent?.content === 'string' ? sent.content : '') as { calendar: { id: string; scope: string; title: string }[] };
+    return { outcome, calendar: body.calendar, system: chat.calls[0]?.params.system };
+  }
+
+  function closureCiting(ids: string[]) {
+    return {
+      type: 'note', ruleText: null, kind: 'closure', startDate: '2026-07-11', endDate: '2026-07-11', weekdays: null, effect: 'closed',
+      expectedGuests: null, detail: null, startTime: null, endTime: null, why: 'The street fair fills the block on Sat, Jul 11.', calendarIds: ids,
+      confidence: 'high',
+    };
+  }
+
+  it('sends the researched events, and a high note citing one waits open with its card naming it, with nothing in tw_agent_changes', async () => {
+    const t = await team();
+    expect(server.ctx.config.agentAuto).toBe(true);
+    const { fair, town } = await seed(t);
+    const { outcome, calendar, system } = await passWith(t, [closureCiting([fair])]);
+    const researched = calendar.filter((entry) => entry.scope === 'researched');
+    expect(researched.map((entry) => [entry.id, entry.title])).toEqual([[fair, 'Riverside Street Fair'], [town, 'Green Summer Regatta']]);
+    expect(calendar.findIndex((entry) => entry.scope === 'researched')).toBe(calendar.length - 2);
+    expect(system).toEqual(expect.stringContaining(SUGGESTIONS_RESEARCHED_PROMPT));
+    expect(outcome).toEqual({ status: 'suggested', suggested: 1, ownerEvents: 0, applied: 0 });
+    expect(await server.connection.collection('tw_agent_changes').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+    expect(await server.connection.collection('tw_notes').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+    const [card] = (await panel(t, t.member)).suggestions;
+    expect(card).toMatchObject({ type: 'note', calendar: [{ id: fair, title: 'Riverside Street Fair', start: '2026-07-11', end: '2026-07-11' }] });
+  });
+
+  it('never saves on its own a high note on a researched event’s day citing no id, or only a holiday (decision 12)', async () => {
+    const t = await team();
+    await seed(t);
+    const { outcome } = await passWith(t, [closureCiting([]), { ...closureCiting(['us:independence:2026']), startDate: '2026-07-18', endDate: '2026-07-18' }]);
+    expect(outcome).toMatchObject({ status: 'suggested', suggested: 2, applied: 0 });
+    expect(await server.connection.collection('tw_agent_changes').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+    expect(await server.connection.collection('tw_notes').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+  });
+
+  it('with the organization’s research switch off, sends none and the prompt is as before', async () => {
+    const t = await team();
+    const { fair } = await seed(t);
+    await server.ctx.stores.orgs.setResearch(t.scope, { on: false, at: server.clock.now(), by: t.admin.userId });
+    const { outcome, calendar, system } = await passWith(t, [closureCiting([fair])]);
+    expect(calendar.filter((entry) => entry.scope === 'researched')).toEqual([]);
+    expect(system).not.toEqual(expect.stringContaining(SUGGESTIONS_RESEARCHED_PROMPT));
+    // The id was not sent, so the note keeps no calendar id, and TownwiseAI saves it as before.
+    expect(outcome).toMatchObject({ applied: 1 });
   });
 });

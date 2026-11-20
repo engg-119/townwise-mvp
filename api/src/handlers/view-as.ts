@@ -20,7 +20,7 @@ import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { GrantEndReason, GrantRecord } from '../stores/view-as-grants.ts';
 import { meResponse } from './me.ts';
 
-/** D8. [CONFIRM: 30 minutes] */
+/** D8. */
 const VIEW_AS_MS = 30 * 60 * 1000;
 
 const startBody = z.object({ userId: objectId, reason: z.string().trim().min(5).max(200) });

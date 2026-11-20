@@ -46,7 +46,7 @@ function forecastsParagraph(): string {
 test('the Forecasts paragraph says forecasts are on by default, refit weekly from the location’s own days, and which engine made one', () => {
   const text = forecastsParagraph();
   expect(text).toContain('Forecasts are on for every organization; if you don’t want them, ask Townwise staff to turn yours off.');
-  expect(text).toContain('Once a location’s sales history spans at least 230 days, Townwise forecasts its daily guests up to a year ahead, the first three months as a forecast and the rest as a wider outlook and keeps that forecast current by itself');
+  expect(text).toContain('Once a location’s sales history spans at least 230 days, Townwise forecasts its daily guests up to a year ahead, the first three months as a forecast and the rest as a wider outlook, and keeps that forecast current by itself');
   expect(text).toContain('each week, if anything has changed since the last fit, a background job on Townwise’s own servers refits it from that location’s own daily guest counts, the closures, private events and bookings in its notes and business rules, and the public town calendar. The job sees no other location’s days.');
   expect(text).toContain('Each forecast is made by Townwise’s trained demand model or, when the location’s history is too short for that model or a simpler baseline did better on its past weeks, by that baseline, built from its recent weeks and the town calendar; the app says which made it.');
   expect(text).toContain('A new forecast goes live only when it passes Townwise’s accuracy checks.');

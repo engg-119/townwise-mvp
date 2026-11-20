@@ -473,7 +473,7 @@ describe('buildWeek', () => {
     });
     expect(cards(input).map((card) => [card.kind, card.sub])).toEqual([['rule', 'Closed on Nov 21, 2026'], ['term', 'Term'], ['season', 'Season']]);
     expect(cards({ ...input, filters: { ...ALL_FILTERS, terms: false } }).map((card) => card.kind)).toEqual(['rule']);
-    const off = { holidays: false, events: false, terms: false, notes: false, imported: false };
+    const off = { holidays: false, events: false, terms: false, notes: false, imported: false, researched: false };
     expect(cards({ ...input, filters: off })).toEqual([expect.objectContaining({ kind: 'rule', title: 'Closed for the staff party', hours: null })]);
   });
 

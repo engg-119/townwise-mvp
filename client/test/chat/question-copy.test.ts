@@ -144,6 +144,15 @@ describe('activity', () => {
     expect(activityLine(answered('likely_closed_2026-05-23', 'not_sure'))).toBe('You weren’t sure about Sat, May 23, 2026.');
     expect(activityLine(answered('later_1', 'other'))).toBe('You answered a question in the chat.');
   });
+
+  test('D65: a finished forecast run reads as what happened to it, never with a figure', () => {
+    const item: ActivityItem = {
+      at: '2026-06-01T08:15:00.000Z', kind: 'forecast_made', calibrationId: '0000000000000000000000e7', causes: ['sales'], outcome: 'kept',
+      reason: 'not_beat_average', firstForecast: true, dayCount: 412, firstDate: '2025-03-01', lastDate: '2026-05-31', newDays: null,
+    };
+    expect(activityLine(item)).toBe('Not published: it wasn’t more accurate than a simple weekday average.');
+    expect(activityLine({ ...item, outcome: 'not_run', reason: 'failed', firstForecast: false })).toBe('Couldn’t run. Your forecast didn’t change.');
+  });
 });
 
 // D71: a past private event's guests. Sat, Apr 4, 2026; and Fridays and Saturdays from Apr 3 to Apr 25, 2026.

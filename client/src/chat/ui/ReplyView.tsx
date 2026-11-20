@@ -13,6 +13,7 @@ import type { TreeNode } from '../tree';
 import { stepsOf, type ChatMessage, type MessagePart, type TuningChat } from '../useTuningChat';
 import { VisualView } from '../visuals/Visual';
 import { focusLost, Hidden } from './controls';
+import { CorrectionCard } from './CorrectionCard';
 import { described } from './described';
 import { ItemProposalCard } from './ItemProposalCard';
 import { OrderProposalCard } from './OrderProposalCard';
@@ -39,9 +40,9 @@ import { useWorkedOpen, type WorkedOpen } from './workedOpen';
 
 type BodyPart = Exclude<MessagePart, ProcessPart>;
 
-/** A visual or a proposal card (a note's, an item's or an order's): what bodyParts holds until the reply ends. */
+/** A visual or a card (a note's, an item's or an order's proposal, or a calendar correction): what bodyParts holds until the reply ends. */
 function isHeld(part: BodyPart): boolean {
-  return part.type === 'visual' || part.type === 'proposal' || part.type === 'item' || part.type === 'order';
+  return part.type === 'visual' || part.type === 'proposal' || part.type === 'item' || part.type === 'order' || part.type === 'correction';
 }
 
 /** Deep equality of two JSON values, such as two visuals' specs. */
@@ -159,6 +160,7 @@ export function ReplyView(props: {
         if (part.type === 'visual') held = <VisualView visual={part.visual} />;
         else if (part.type === 'item') held = <ItemProposalCard card={part.card} locationId={props.locationId} actions={chat} readOnlyId={props.readOnlyId} />;
         else if (part.type === 'order') held = <OrderProposalCard card={part.card} locationId={props.locationId} readOnlyId={props.readOnlyId} />;
+        else if (part.type === 'correction') held = <CorrectionCard card={part.card} locationId={props.locationId} readOnlyId={props.readOnlyId} />;
         else held = <ProposalCard card={part.card} locationId={props.locationId} actions={chat} readOnlyId={props.readOnlyId} />;
         return streamedHere ? <FadeIn key={part.key}>{held}</FadeIn> : <Fragment key={part.key}>{held}</Fragment>;
       })}

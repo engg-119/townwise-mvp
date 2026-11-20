@@ -1,12 +1,16 @@
 import { ApiError } from '../../api/client';
 import { errorCopy, hasCode, COPY as SHARED } from '../errors';
-import { formatCount, formatDate, plural } from '../format';
-import type { Calibration, Role } from '../schemas';
+import { shortDate } from '../analytics/words';
+import { formatCount, formatDate, formatTime, plural } from '../format';
+import { localToday } from '../locations/dates';
+import { lastRunOf, updatingOf, type Calibration, type OwnerReason, type Role } from '../schemas';
 import type { ColumnProfile } from './columns';
 import { LIST_LIMIT, type CheckResult, type DaysResult, type ExclusionReason, type Mapping, type RowTally } from './days';
 
 // The upload page's words (spec 11.2, P13 and the Portal-Upload board), and the small formatters they need.
-// Counts read as singular when they are one. No line ever carries a cell value or a file name.
+// Counts read as singular when they are one. No line ever carries a cell value or a file name. Beside the calibration
+// state's words, D65's (openspec change forecast-training-status, design decisions 3 and 4): the sentences each page
+// shows while a forecast is updating, and Home's notice when a first forecast was not published.
 
 export const COPY = {
   heading: 'Upload sales history',
@@ -177,6 +181,100 @@ export function calibrationLine(calibration: Calibration): string {
     return 'Upload your sales history to start. The upload sends Townwise only the date, guest count and net sales for each day.';
   }
   return `Your sales history is in: ${plural(calibration.dayCount, 'day', 'days')}, ${formatDate(calibration.firstDate)} to ${formatDate(calibration.lastDate)}.`;
+}
+
+/**
+ * D65 design decision 3: when an updating calibration started, "2:14 PM" in the viewer's time zone, with the short date
+ * when that isn't the viewer's today, "Sun, Nov 15, 11:58 PM".
+ */
+export function startedAt(since: string, now: Date = new Date()): string {
+  const time = formatTime(since);
+  const at = new Date(since);
+  if (Number.isNaN(at.getTime())) return time;
+  const day = localToday(at);
+  return day === localToday(now) ? time : `${shortDate(day).replace(/, \d{4}$/, '')}, ${time}`;
+}
+
+/**
+ * D65, the model card's updating sentence (P24), null while nothing updates. "Building" only while a first forecast
+ * runs, with no day count: the coverage's days include likely-closed ones, so the count would disagree with the card's
+ * "Based on N days with a guest count" and the run's own days in the history. `waiting` states no time and promises no
+ * publish (14.1). The API's overview tool says the same (calibrationWords).
+ */
+export function updatingLine(calibration: Calibration, now: Date = new Date()): string | null {
+  const updating = updatingOf(calibration);
+  if (updating === null) return null;
+  if (updating.stage === 'waiting') return 'Your first forecast is next. Townwise starts building it soon.';
+  const started = startedAt(updating.since, now);
+  if (calibration.state === 'not_calibrated') return `Building your first forecast, started ${started}.`;
+  if (calibration.state === 'no_sales_data' || calibration.newerDays === 0) return `Updating your forecast, started ${started}.`;
+  return `Updating your forecast with ${plural(calibration.newerDays, 'new day', 'new days')}, started ${started}.`;
+}
+
+/** D65, the dashboard's Calibration cell, its second line in plain words (15.6); null while nothing updates. */
+export function dashboardUpdatingLine(calibration: Calibration): string | null {
+  const updating = updatingOf(calibration);
+  if (updating === null) return null;
+  if (updating.stage === 'waiting') return 'First forecast next';
+  return calibration.state === 'not_calibrated' ? 'Building the first forecast' : 'Updating now';
+}
+
+/** D65, the upload's result (11.2 step 4); null while nothing updates. */
+export function uploadUpdatingLine(calibration: Calibration, now: Date = new Date()): string | null {
+  const updating = updatingOf(calibration);
+  if (updating === null) return null;
+  if (updating.stage === 'waiting') return 'Townwise starts on the first forecast soon.';
+  return calibration.state === 'not_calibrated' ? updatingLine(calibration, now) : 'Townwise is updating the forecast with these days.';
+}
+
+/**
+ * D65, Home's In progress line (P11) for a location with no published run while its first forecast is next or being
+ * built; null otherwise, when Home keeps its no-forecast line. `name` is the shown name.
+ */
+export function firstForecastLine(calibration: Calibration, name: string): string | null {
+  const updating = updatingOf(calibration);
+  if (calibration.state !== 'not_calibrated' || updating === null) return null;
+  return updating.stage === 'waiting'
+    ? `The first forecast for ${name} is next. Townwise starts building it soon.`
+    : `Building the first forecast for ${name}. Home shows it here once it’s published.`;
+}
+
+/**
+ * D65 design decision 7: why a first forecast was not published, as the clause after "wasn’t published:". Home's
+ * notice reads it, and TownwiseAI's activity words a first forecast's reason from it too. A published run has none.
+ * No clause states a minimum history (14.1), says "current" or "didn’t change" (there is no forecast to keep), or
+ * promises a retry.
+ */
+export const FIRST_FORECAST_REASONS: Readonly<Record<Exclude<OwnerReason, 'published' | 'published_by_staff'>, string>> = {
+  not_more_accurate: 'it wasn’t accurate enough on the weeks it was tested on.',
+  not_beat_average: 'it wasn’t more accurate than a simple weekday average.',
+  failed_checks: 'it didn’t pass Townwise’s accuracy checks.',
+  held_for_review: 'it differs a lot from your last forecast, so Townwise staff check it first.',
+  too_soon: 'there weren’t enough weeks to test it on.',
+  needs_more_history: 'Townwise needs more history.',
+  forecasts_off: 'forecasts are off for your organization.',
+  newer_forecast: 'a newer forecast was published while it ran.',
+  staff_withdrew: 'Townwise staff withdrew it before it was published.',
+  not_judged: 'it matched a forecast Townwise had already made.',
+  failed: 'it couldn’t run.',
+};
+
+/**
+ * D65 design decision 4, Home's notice: a `not_calibrated` location that isn't updating and whose last run wasn't
+ * published, from the server's `lastRun`, so it shows whenever the owner comes back. "The first forecast" only while
+ * that run was to be the first (`lastRun.firstForecast`); once a forecast was published and since withdrawn, the
+ * history shows that first forecast, so the notice says "The newest forecast". The next step is left out for
+ * `forecasts_off`, whose reason already says why. Null otherwise: with no last run Home keeps its plain line, and a
+ * last run that was published (every run since withdrawn) wasn't "not published".
+ */
+export function notPublishedLine(calibration: Calibration, name: string): { text: string; next: string | null } | null {
+  const last = lastRunOf(calibration);
+  if (calibration.state !== 'not_calibrated' || updatingOf(calibration) !== null || last === null) return null;
+  if (last.reason === 'published' || last.reason === 'published_by_staff') return null;
+  return {
+    text: `The ${last.firstForecast === false ? 'newest' : 'first'} forecast for ${name} wasn’t published: ${FIRST_FORECAST_REASONS[last.reason]}`,
+    next: last.reason === 'forecasts_off' ? null : 'Townwise tries again after your next sales upload.',
+  };
 }
 
 const KIND: Readonly<Record<ColumnProfile['kind'], string>> = { dates: 'dates', numbers: 'numbers', text: 'text', empty: 'empty' };

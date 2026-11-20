@@ -41,9 +41,9 @@ import { loadLocation, memberOf } from './locations.ts';
 import { ownerCalendarView, type OwnerCalendarView } from './owner-calendars.ts';
 import { actorOf } from './team.ts';
 
-/** Each calendar's sorts: 3 an hour. [CONFIRM: 3 sorts a calendar an hour] */
+/** Each calendar's sorts: 3 an hour. */
 export const BOOKING_SORT_BUDGET = { name: 'townwise:calendar-booking-sorts', limit: 3, windowSeconds: 3600 } as const;
-/** At most this many notes one confirm makes. [CONFIRM: confirming makes a linked note for each upcoming buyout or party event, at most 100 a confirm] */
+/** At most this many notes one confirm makes. */
 export const MAX_CONFIRM_NOTES = 100;
 const sortBudgets = new WeakMap<TownwiseContext['redis'], RateLimiter>();
 

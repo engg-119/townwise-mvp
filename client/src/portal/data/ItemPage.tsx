@@ -21,7 +21,7 @@ import { Section, Stack } from '../ui/layout';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Small } from '../ui/text';
 import { AI } from './aiCopy';
-import { getItem, removeItem, setEnabled, type DataItem } from './api';
+import { getItem, isCalendarFile, removeItem, setEnabled, type DataItem } from './api';
 import {
   DATA, dataError, deletedFileLine, deletedUploadLine, deleteFileBody, deleteUploadBody, isReference, itemName, shownName, turnedOffLine,
   turnedOnLine,
@@ -56,7 +56,9 @@ import { RenameForm } from './item/RenameForm';
 //
 // Editing (web, `item.canEdit`: an item kept for reference, for the person who added it or an org admin): Rename opens
 // an inline form (item/RenameForm), and Edit, shown once what opened can be edited (item/edit.ts), puts the editor in
-// the viewer's place; one that is too big says why instead. While a rename or a save runs, the other actions wait. A
+// the viewer's place; one that is too big says why instead. A calendar file whose import found a calendar has no
+// `canEdit` (item 144: an edit would import a second calendar) and says how to change it instead. While a rename or a
+// save runs, the other actions wait. A
 // saved edit lands on the edited item's new ref, or on the copy, with `?saved=` in the address; the page reads that
 // once into its own state, says “Saved.” there and drops it from the address, so a reload doesn't say it again.
 // Focus moves to the line that says how an action ended (MessageFocus), since each one takes its opener away.
@@ -352,6 +354,7 @@ function Item(props: {
         {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{DATA.nativeDownload}</Small> : null}
         <ActionRow actions={actions} />
         {editing && mode === null && editable?.fits === false ? <Small>{tooBigToEditLine(editable.kind)}</Small> : null}
+        {CAN_EDIT && !props.viewAs && item.calendar != null && isCalendarFile(item) ? <Small>{EDIT.calendarFile}</Small> : null}
         {error === null ? null : <Messages live="alert" items={[dataError(error)]} />}
         {mode === 'rename' ? (
           <RenameForm

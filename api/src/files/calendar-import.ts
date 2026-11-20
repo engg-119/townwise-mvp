@@ -105,7 +105,7 @@ export type AttachedCalendar =
   | { readonly outcome: 'removed' | 'not_imported' }
   | { readonly outcome: 'refused'; readonly code: CalendarImportCode; readonly retry: boolean };
 
-/** How recent a calendar's import is for a turn to call it just added. [CONFIRM: 30 minutes] */
+/** How recent a calendar's import is for a turn to call it just added. */
 export const JUST_ADDED_MS = 30 * 60 * 1000;
 
 /**

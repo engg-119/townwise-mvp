@@ -48,7 +48,7 @@ export const TOWNWISE_AI_ACTOR = {
 /** D59: a change TownwiseAI saved, by its typed action. */
 const AGENT_ACTION_WORDS: Readonly<Record<string, string>> = {
   'note.add': 'a note', 'item.add': 'a summary of a file', 'sales_days.add': 'missing sales days', 'rule.add': 'a business rule',
-  'booking.label': 'a booking label',
+  'booking.label': 'a booking label', 'event.correct': 'a correction to a researched event',
 };
 
 /**
@@ -280,8 +280,13 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'org.calendar_titles_ai_changed':
       return d.on === true ? 'Turned sending calendar event titles to TownwiseAI on' : 'Turned sending calendar event titles to TownwiseAI off';
     case 'org.agent_auto_switched': return d.on === true ? 'Turned TownwiseAI working on its own on' : 'Turned TownwiseAI working on its own off';
+    case 'org.research_switched': return d.on === true ? 'Turned town research on' : 'Turned town research off';
     case 'agent.change_applied': return `TownwiseAI added ${AGENT_ACTION_WORDS[text(d.action)] ?? 'something'}${d.sourceKind === 'file' ? ' from a file' : ''}`;
     case 'agent.change_undone': return `Undid ${AGENT_ACTION_WORDS[text(d.action)] ?? 'something'} TownwiseAI added${d.sourceKind === 'file' ? ' from a file' : ''}`;
+    case 'research.event_edited': return 'Edited an event research found';
+    case 'research.event_hidden': return 'Hid an event research found';
+    case 'research.event_restored': return 'Restored an event research found';
+    case 'research.town_event_suppressed': return 'Took down an event research found in a town, for everyone there';
     case 'agent.calendar_answered': return `Your calendar answered ${text(d.count)} of TownwiseAI’s questions`;
     case 'agent.suggestion_accepted':
       return `Accepted${d.edited === true ? ', edited,' : ''} ${SUGGESTION_WORDS[text(d.type)] ?? 'a note TownwiseAI suggested'}${SUGGESTION_SOURCE_WORDS[text(d.source)] ?? ''}`;

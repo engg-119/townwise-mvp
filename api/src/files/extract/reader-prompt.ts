@@ -29,7 +29,7 @@ export const EVENTS_MAX = 50;
 export const EVENT_TITLE_CHARS = 120;
 export const EVENT_DETAIL_CHARS = 280;
 export const DAYS_MAX = 1500;
-/** D46. [CONFIRM: 5 suggested rules a file read, 10 open per location from files] */
+/** D46. */
 export const CLOSED_PATTERNS_MAX = 5;
 /** A dated closed pattern spans at most this many days after its start, as a note does. */
 const PATTERN_SPAN_DAYS = 366;
