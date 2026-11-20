@@ -664,7 +664,8 @@ export function AgentChat(props: {
     );
   }
 
-  // The panel's questions, under the chips: none while they load, when they can't be read, or when there are none.
+  // The panel's questions, under the chips: none while they load, when they can't be read, or when there are none (unless
+  // a private event's notice says why its card went).
   const asked = props.panel.state.status === 'ready' ? props.panel.state.data.questions : [];
   const open = openQuestions(props.panel);
   const questionChat = questionChatOf(state);

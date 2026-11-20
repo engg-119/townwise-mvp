@@ -51,6 +51,8 @@ export interface Answered {
    * answers with the stored answer, and the card says the count sent here wasn't used.
    */
   sent?: number;
+  /** D71: the answer this browser sent, so a Skip that lost to a count saved first elsewhere is told apart. */
+  asked?: QuestionAnswer;
 }
 
 /** Why a card the person answered went instead, and which copy of the cards says it. */
@@ -332,7 +334,7 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
     setErrors((current) => without(current, questionId));
     answerQuestion(api, locationId, questionId, choice, guests).then(
       (result) => {
-        const done: Answered = { answer: result.question.answer, note: result.note, ...(guests === undefined ? {} : { sent: guests }) };
+        const done: Answered = { answer: result.question.answer, note: result.note, asked: choice, ...(guests === undefined ? {} : { sent: guests }) };
         setAnswered((current) => ({ ...current, [questionId]: done }));
         // Whatever was typed for Something else… goes with the question.
         setOthers((current) => without(current, questionId));

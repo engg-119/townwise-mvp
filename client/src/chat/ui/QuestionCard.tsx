@@ -13,7 +13,7 @@ import { dayText, formatCount, KIND_LABEL, rangeText, shortDayText, weekdayName,
 import type { AgentPanelState, Answered, QuestionPlace, SendToChat } from '../useAgentPanel';
 import { TELL_BUDGET, type TuningChatState } from '../useTuningChat';
 import { MAX_MESSAGE } from './Composer';
-import { ChatButton, type ChatButtonHandle } from './controls';
+import { ChatButton, focusLost, type ChatButtonHandle } from './controls';
 
 // A question TownwiseAI has for the person (spec P25, 10.12): asked by rules over the location's own sales and
 // notes, never by an estimate (D46: a weekday with no sales is a suggested rule now, RuleSuggestionCard). A heading question, one line of the evidence it saw (counts and guests, never sales),
@@ -167,7 +167,7 @@ export function questionCopy(question: Question, locationName: string, chat: boo
 export function answeredLine(question: Question, answered: Answered): string {
   if (question.kind === 'party_guests') {
     // [CONFIRM: "Saved: {n} guests on the private event note." and the skip's line]
-    // [CONFIRM 300: the lines when this Save's count lost to a count or a Skip saved first elsewhere]
+    // [CONFIRM 300: the lines when this Save or Skip lost to an answer saved first elsewhere]
     const sent = answered.sent;
     if (answered.answer !== 'guests') {
       return sent === undefined
@@ -180,6 +180,7 @@ export function answeredLine(question: Question, answered: Answered): string {
     if (sent !== undefined && sent !== count) {
       return `A count was already saved: ${saved} on the private event note, so your ${formatCount(sent)} wasn’t used. You can change it on the Notes page.`;
     }
+    if (answered.asked === 'not_sure') return `A count was already saved: ${saved} on the private event note. TownwiseAI won’t ask about this event again.`;
     return `Saved: ${saved} on the private event note.`;
   }
   const these = question.kind === 'likely_closed' ? 'this day' : 'these days';
@@ -328,7 +329,8 @@ export function QuestionCard(props: {
   const isAnswered = answered !== undefined;
   const wasAnswered = useRef(isAnswered);
   useEffect(() => {
-    if (isAnswered && !wasAnswered.current && live && Platform.OS === 'web') done.current?.focus();
+    // Only when the pressed button went with the answer: never from wherever the person has since moved focus.
+    if (isAnswered && !wasAnswered.current && live && focusLost()) done.current?.focus();
     wasAnswered.current = isAnswered;
   }, [isAnswered, live]);
   const context = savedPartyContext(question, answered) ?? copy.context;
@@ -454,7 +456,7 @@ export function QuestionsNoticeLine(props: { panel: AgentPanelState; place: Ques
   const ref = useRef<Host>(null);
   useEffect(() => {
     if (!live || text === null) return;
-    if (Platform.OS === 'web') ref.current?.focus();
+    if (focusLost()) ref.current?.focus();
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text);
   }, [live, text]);
   if (text === null) return null;

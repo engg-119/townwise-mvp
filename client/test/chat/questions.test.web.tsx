@@ -718,6 +718,33 @@ describe('a private event’s guests (D71)', () => {
     expect(await findInCards('A count was already saved: 30 guests on the private event note, so your 50 wasn’t used. You can change it on the Notes page.')).toBeTruthy();
   });
 
+  test('a Skip that lost to a count saved first elsewhere says the count was saved, not that this one skipped', async () => {
+    const api = partyApi();
+    api.respond[PARTY_PATH] = () => fixture.partyGuests.answer.response;
+    renderAt('/locations/l1/agent', api);
+    await openPanel(3);
+    const party = await waitFor(() => card(cards(), PARTY_HEADING));
+    fireEvent.click(within(party).getByRole('button', { name: 'Skip' }));
+    expect(await findInCards('A count was already saved: 43 guests on the private event note. TownwiseAI won’t ask about this event again.')).toBeTruthy();
+    expect(api.writes).toEqual([{ method: 'POST', path: PARTY_PATH, body: { answer: 'not_sure' } }]);
+  });
+
+  test('two cards over several days name their Guests fields by their dates', async () => {
+    const api = chatApi();
+    const [one] = fixture.partyGuests.questions as Record<string, unknown>[];
+    api.panel = { ...fixture.panel, questions: [
+      { ...one, id: 'party_guests_0000000000000000000000b1', noteId: '0000000000000000000000b1', startDate: '2026-04-03', endDate: '2026-04-25', weekdays: [5, 6] },
+      { ...one, id: 'party_guests_0000000000000000000000b2', noteId: '0000000000000000000000b2', startDate: '2026-05-01', endDate: '2026-05-02', weekdays: null },
+    ] };
+    renderAt('/locations/l1/agent', api);
+    await openPanel(2);
+    const first = await waitFor(() => card(cards(), 'How many guests came for the private event each day from Apr 3 to Apr 25, 2026?'));
+    const second = card(cards(), 'How many guests came for the private event each day from May 1 to May 2, 2026?');
+    expect(within(first).getByLabelText('Guests who came each day, Apr 3 to Apr 25, 2026')).toBeTruthy();
+    expect(within(second).getByLabelText('Guests who came each day, May 1 to May 2, 2026')).toBeTruthy();
+    expect(within(first).getByText('Guests who came each day')).toBeTruthy();
+  });
+
   test('a Save turned away because the note changed reads the panel again and says the count wasn’t saved', async () => {
     const api = partyApi();
     api.respond[PARTY_PATH] = () => {

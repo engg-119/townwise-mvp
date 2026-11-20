@@ -194,6 +194,9 @@ describe('a private event’s guests (D71)', () => {
       .toBe('A count was already saved: 30 guests each day on the private event note, so your 1,200 wasn’t used. You can change it on the Notes page.');
     // The same count, saved here or first elsewhere, is simply saved.
     expect(answeredLine(RECURRING, { answer: 'guests', note: saved(30), sent: 30 })).toBe('Saved: 30 guests each day on the private event note.');
+    expect(answeredLine(PARTY, { answer: 'guests', note: saved(30), asked: 'not_sure' }))
+      .toBe('A count was already saved: 30 guests on the private event note. TownwiseAI won’t ask about this event again.');
+    expect(answeredLine(PARTY, { answer: 'not_sure', note: null, asked: 'not_sure' })).toBe('Got it. TownwiseAI won’t ask about this event again.');
     expect(answeredLine(PARTY, { answer: 'not_sure', note: null, sent: 50 }))
       .toBe('This question was already skipped, so your count of 50 wasn’t saved. You can add it to the event’s note on the Notes page.');
   });
