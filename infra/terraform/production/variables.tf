@@ -116,6 +116,12 @@ variable "enable_google_calendar" {
   }
 }
 
+variable "enable_event_search" {
+  description = "Create the event scout's Azure AI Search service (Free tier, Entra ID only; infra/README.md, Event search). Apply bootstrap afterwards to give developers its index data role. False leaves it out."
+  type        = bool
+  default     = false
+}
+
 variable "enable_lab" {
   description = "Turn on the forecast lab: the lab job, its identity, the API identity's right to start it, and the API's TOWNWISE_LAB_ variables (infra/README.md, step 20). Needs lab_image and lab_callback_client_id. False leaves calibrations off."
   type        = bool

@@ -43,6 +43,11 @@ output "files_blob_endpoint" {
   value       = azurerm_storage_account.files.primary_blob_endpoint
 }
 
+output "event_search_endpoint" {
+  description = "AZURE_SEARCH_ENDPOINT for the event scout (modeling/research/README.md); null while enable_event_search is false."
+  value       = var.enable_event_search ? "https://${azurerm_search_service.events[0].name}.search.windows.net" : null
+}
+
 output "acr_name" {
   description = "GitHub variable AZURE_ACR_NAME."
   value       = azurerm_container_registry.main.name
