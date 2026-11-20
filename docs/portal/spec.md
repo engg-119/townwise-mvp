@@ -78,7 +78,7 @@ Grafted from Minimal:
 
 New in this synthesis:
 
-- a Leave action and a one-time “Not your team?” notice after a join that names who added the person, and a press-to-join screen for every invitation, a pending request or not (the auto-join risk in F1; the owner dropped the automatic join on 2026-11-19);
+- a Leave action and a one-time “Not your team?” notice after an automatic join that names who added the person, and a press-to-join screen for anyone who already has a pending request (the auto-join risk in F1);
 - org admins see every Townwise staff action on their organization, view-as included;
 - honest calibration states with no day threshold;
 - a daily guests chart on the Sales data tab, on web, with a text and table fallback on native (D21);
