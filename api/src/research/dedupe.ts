@@ -43,6 +43,20 @@ export function nameKey(name: string): string {
   return parts.join(' ');
 }
 
+/** Below this many characters, a name key is too short to stand for a business by its first words alone ("inn", "pizza"). */
+const MIN_PREFIX_CHARS = 6;
+
+/**
+ * Whether two name keys name the same business: equal, or the shorter is the longer's first whole words and at least 6
+ * characters, so "Sawtooth" and "Sawtooth Kitchen, Bar and Stage" are one restaurant.
+ */
+export function sameBusiness(a: string, b: string): boolean {
+  if (a === '' || b === '') return false;
+  if (a === b) return true;
+  const [short, long] = a.length < b.length ? [a, b] : [b, a];
+  return short.length >= MIN_PREFIX_CHARS && long.startsWith(`${short} `);
+}
+
 export interface DayRange { readonly start: string; readonly end: string }
 
 export function overlaps(a: DayRange, b: DayRange): boolean {

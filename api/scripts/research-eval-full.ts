@@ -387,7 +387,7 @@ function scoreRun(group: EvalGroup, runs: readonly ThreadRun[], curated: readonl
     : []));
   const plan = planMerge({
     runId: `eval-${group}`, subject: group === 'location' ? 'location' : 'town', found, stored: [], storedEntities: [], curated,
-    townRows, competitorPlaces: null,
+    townRows, competitorPlaces: null, ownNames: [],
   });
   const ledgerUrls = new Set(runs.flatMap((run) => buildLedger(run.outcome.messages).sources.map((source) => source.url)));
   const storedSources = plan.inserts.flatMap((insert) => insert.sources);

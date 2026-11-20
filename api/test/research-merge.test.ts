@@ -4,7 +4,7 @@
 // rows are Hanover's real ones (town-calendar.ts); every researched title, host and URL is made up.
 import { describe, expect, it } from 'vitest';
 
-import { jaccard, nameKey, sameEvent, titleKey, titleTokens } from '../src/research/dedupe.ts';
+import { jaccard, nameKey, sameBusiness, sameEvent, titleKey, titleTokens } from '../src/research/dedupe.ts';
 import { planMerge, type MergeInput, type StoredEntity, type StoredEvent, type ThreadFound } from '../src/research/merge.ts';
 import type { ThreadId } from '../src/research/threads.ts';
 import type { Finding, FoundEntity, SourceRef } from '../src/research/verify.ts';
@@ -37,7 +37,7 @@ function stored(over: Partial<StoredEvent> = {}): StoredEvent {
 }
 
 function input(over: Partial<MergeInput>): MergeInput {
-  return { runId: RUN, subject: 'town', found: [], stored: [], storedEntities: [], curated: [], townRows: [], competitorPlaces: null, ...over };
+  return { runId: RUN, subject: 'town', found: [], stored: [], storedEntities: [], curated: [], townRows: [], competitorPlaces: null, ownNames: [], ...over };
 }
 
 describe('dedupe keys', () => {
@@ -230,6 +230,34 @@ describe('planMerge', () => {
     // A neighborhood event hosted by a business is no competitor's.
     const neighbor = planMerge(input({ subject: 'location', found: [thread('neighborhood', [finding({ hostRef: 'b1' })], [tavern])] }));
     expect(neighbor.inserts[0]).toMatchObject({ origin: 'neighborhood', competitorEntity: null, competitorPlaceId: null });
+  });
+
+  it('files an event the competitors thread found at the restaurant itself as its own, not a competitor\'s', () => {
+    const own: FoundEntity = { ref: 'b1', type: 'business', name: 'Sentinel Kitchen, Bar and Stage', sources: [src('k')] };
+    const tavern: FoundEntity = { ref: 'b2', type: 'business', name: 'Sentinel Tavern', sources: [src('t')] };
+    const found = [thread('competitors', [
+      finding({ title: 'The Lantern Fits live', hostRef: 'b1', venueRef: 'b1', competitor: 1 }),
+      finding({ title: 'Sentinel trivia night', start: '2027-03-04', end: '2027-03-04', hostRef: 'b2', competitor: 2 }),
+    ], [own, tavern])];
+    // By the typed name's first words, and by Google's full name.
+    for (const ownNames of [[nameKey('Sentinel Kitchen')], [nameKey('Main Room'), nameKey('Sentinel Kitchen, Bar & Stage')]]) {
+      const plan = planMerge(input({ subject: 'location', found, ownNames, competitorPlaces: new Map([[1, 'ChIJown'], [2, 'ChIJsentinel2']]) }));
+      expect(plan.inserts.map((row) => [row.title, row.origin, row.competitorEntity?.nameKey ?? null, row.competitorPlaceId])).toEqual([
+        ['The Lantern Fits live', 'neighborhood', null, null],
+        ['Sentinel trivia night', 'competitor', 'sentinel tavern', 'ChIJsentinel2'],
+      ]);
+    }
+    // A name it does not share is a competitor still.
+    const other = planMerge(input({ subject: 'location', found, ownNames: [nameKey('Riverbank Cafe')] }));
+    expect(other.inserts.map((row) => row.origin)).toEqual(['competitor', 'competitor']);
+  });
+
+  it('holds two business names the same only when equal or when the shorter is the longer\'s first words and not too short', () => {
+    expect(sameBusiness('sentinel kitchen', 'sentinel kitchen bar and stage')).toBe(true);
+    expect(sameBusiness('sentinel', 'sentinel kitchen')).toBe(true);
+    expect(sameBusiness('inn', 'inn at mill falls')).toBe(false);
+    expect(sameBusiness('sentinel', 'sentinels tavern')).toBe(false);
+    expect(sameBusiness('', '')).toBe(false);
   });
 
   it('stamps no origin on a town run\'s rows', () => {

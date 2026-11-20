@@ -12,11 +12,14 @@
 //    only on a finding of at least medium code confidence and at least the row's own. Its title and dates never change.
 //    Any other finding is inserted.
 //
+// A competitors-thread finding hosted or held at the restaurant itself (its host or venue names the location's own name
+// or its Google name, dedupe.ts sameBusiness) is the restaurant's own event: stored as `neighborhood`, with no competitor.
+//
 // The plan is idempotent: a merge redone after a crash matches its own inserts and counts this run once (a row whose
 // `lastRunId` is this run keeps its `seenCount`), so a replay inserts and changes nothing.
 // [CONFIRM: a finding that repeats a curated row or a curated term date is dropped]
 import type { TownEvent } from '../town-calendar.ts';
-import { nameKey, sameEvent, storedMatch, titleKey, type Comparable } from './dedupe.ts';
+import { nameKey, sameBusiness, sameEvent, storedMatch, titleKey, type Comparable } from './dedupe.ts';
 import type { LocationOrigin, ThreadId } from './threads.ts';
 import {
   MAX_ENTITY_SOURCES, MAX_EVENT_SOURCES, type Confidence, type EntityType, type EventCategory, type EventKind,
@@ -115,6 +118,8 @@ export interface MergeInput {
   readonly townRows: readonly StoredEvent[];
   /** The competitors list's n to its place id, only while Google's names go to Anthropic; else null. */
   readonly competitorPlaces: ReadonlyMap<number, string> | null;
+  /** A location run: the restaurant's own names as name keys (its typed name, and Google's when the run had it); else none. */
+  readonly ownNames: readonly string[];
 }
 
 const RANK: Readonly<Record<Confidence, number>> = { low: 0, medium: 1, high: 2 };
@@ -255,12 +260,16 @@ export function planMerge(input: MergeInput): MergePlan {
       });
       continue;
     }
-    const competitors = candidate.thread === 'competitors';
+    // The restaurant's own event, though the competitors thread found it: not a competitor's.
+    const ownEvent = [candidate.host, candidate.venue]
+      .some((key) => key !== null && input.ownNames.some((own) => sameBusiness(key.nameKey, own)));
+    const competitors = candidate.thread === 'competitors' && !ownEvent;
     inserts.push({
       title: finding.title, titleKey: titleKey(finding.title), kind: finding.kind, category: finding.category,
       start: finding.start, end: finding.end, weekdays: finding.weekdays, startTime: finding.startTime, status: finding.status,
       confidence: finding.confidence, sources: candidate.sources, venue: candidate.venue, host: candidate.host,
-      thread: candidate.thread, origin: input.subject === 'location' ? originOf(candidate.thread) : null,
+      thread: candidate.thread,
+      origin: input.subject === 'location' ? (candidate.thread === 'competitors' && ownEvent ? 'neighborhood' : originOf(candidate.thread)) : null,
       competitorEntity: competitors && candidate.host?.type === 'business' ? candidate.host : null,
       competitorPlaceId: competitors && input.competitorPlaces !== null && finding.competitor !== null
         ? input.competitorPlaces.get(finding.competitor) ?? null

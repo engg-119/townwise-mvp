@@ -38,6 +38,8 @@ describe('threadsFor', () => {
     expect(off).toMatch(/in town/);
     expect(off).toMatch(/Name each business/);
     expect(on).toMatch(/listed in the request/);
+    // The restaurant's own events are never a competitor's (UI review).
+    for (const focus of [off, on]) expect(focus).toMatch(/Leave out the restaurant named in the request/);
   });
 
   it('looks a thread up by id as threadsFor defines it', () => {

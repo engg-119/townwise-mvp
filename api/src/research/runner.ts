@@ -56,6 +56,7 @@ import type { Town, TownId } from '../towns.ts';
 import { GATHER_MAX_TOKENS, reserveMicroUsd, threadLimits } from './budget.ts';
 import { createThreadTally, RESEARCH_REQUEST_MS, runThread, type FetchSwitch, type ThreadOutcome } from './call.ts';
 import { competitorInputs, placesByN, type Competitor } from './competitors.ts';
+import { nameKey } from './dedupe.ts';
 import { planMerge, type MergeInput, type MergePlan, type StoredEvent, type ThreadFound } from './merge.ts';
 import { isTownId, MERGE_LEASE_MS, planTick, townOf, townStamp, type ClaimedMerge, type PlanContext, type PlanCounts } from './plan.ts';
 import {
@@ -578,7 +579,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     const input: MergeInput = {
       runId, subject: 'town', found: foundOf(threads), stored: storedEvents(events, entities),
       storedEntities: entities.map((entity) => ({ id: entity.id, type: entity.type, nameKey: entity.nameKey })),
-      curated: townEvents(townKey, window), townRows: [], competitorPlaces: null,
+      curated: townEvents(townKey, window), townRows: [], competitorPlaces: null, ownNames: [],
     };
     const plan = planMerge(input);
     const ids = new Map<string, string>();
@@ -645,11 +646,19 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     ]);
     const mine = events.filter((event) => event.placeId === stamp.placeId && event.town === stamp.town);
     const window = researchWindow(at, timeZoneOf(location.town).timeZone);
+    const competitorsThread = threads.find((thread) => thread.thread === 'competitors' && thread.status === 'recorded');
+    // The restaurant's own names, so its own events are never a competitor's: its typed name, and Google's (live, never
+    // stored) only while research may ask Google, and only when the competitors thread found something.
+    const ownNames = [nameKey(location.name)];
+    if (config.researchPlacesToAi && location.placeId !== null && deps.profile !== undefined && (competitorsThread?.found?.events.length ?? 0) > 0) {
+      const profile = await deps.profile(location.placeId);
+      if (profile !== null) ownNames.push(nameKey(profile.name));
+    }
     const plan = planMerge({
       runId, subject: 'location', found: foundOf(threads), stored: storedEvents(mine, entities),
       storedEntities: entities.map((entity) => ({ id: entity.id, type: entity.type, nameKey: entity.nameKey })),
       curated: townId === null ? [] : townEvents(townId, window), townRows: storedEvents(townEventsStored, townEntities),
-      competitorPlaces: placesByN(threads.find((thread) => thread.thread === 'competitors' && thread.status === 'recorded')?.found?.competitorPlaceIds),
+      competitorPlaces: placesByN(competitorsThread?.found?.competitorPlaceIds), ownNames,
     });
     const townEntityIds = new Map(townEntities.map((entity) => [`${entity.type}|${entity.nameKey}`, entity.id]));
     const entityIds = new Map<string, string>();

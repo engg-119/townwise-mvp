@@ -59,8 +59,8 @@ function locationFocus(id: LocationThreadId, placesToAi: boolean): string {
       return 'The restaurant named in the request and its block: its own public events (trivia, live music, specials, tastings, holiday hours), the schedules of venues next to it, and street closures or construction on its street.';
     case 'competitors':
       return placesToAi
-        ? 'The competing restaurants, bars and cafes listed in the request: their public events that compete for the same guests (trivia nights, live music, specials, tastings, festivals), and openings or closings.'
-        : 'Restaurants, bars and cafes in town that compete with the restaurant named in the request: their public events that compete for the same guests (trivia nights, live music, specials, tastings, festivals), and openings or closings. Name each business.';
+        ? 'The competing restaurants, bars and cafes listed in the request: their public events that compete for the same guests (trivia nights, live music, specials, tastings, festivals), and openings or closings. Leave out the restaurant named in the request and its own events.'
+        : 'Restaurants, bars and cafes in town that compete with the restaurant named in the request: their public events that compete for the same guests (trivia nights, live music, specials, tastings, festivals), and openings or closings. Name each business. Leave out the restaurant named in the request and its own events.';
     case 'town_overview':
       return 'The town as a whole, in one pass: school and college calendars, sports, arts and festivals, civic closures and road work, tourism seasons, and markets and community events.';
   }

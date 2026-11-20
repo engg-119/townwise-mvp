@@ -597,6 +597,15 @@ describe('the runner: competitors (design decision 10)', () => {
     expect(event).toMatchObject({ title: 'Sentinel Trivia Night', origin: 'competitor', competitorEntityId: business?.id, competitorPlaceId: null, hostId: business?.id });
   });
 
+  it('an event the competitors thread found at the restaurant itself is stored as its own, not a competitor’s', async () => {
+    const t = await tenant({ locations: ['Sentinel Tavern'] });
+    const [locationId = ''] = t.locationIds;
+    await locationRun(t, locationId, ['competitors']);
+    await run(runner(answering({ extract: () => ({ kind: 'message', message: competitorAnswer(null) }) }).model));
+    const [event] = await stores.researchLocations.events(t.scope, locationId);
+    expect(event).toMatchObject({ title: 'Sentinel Trivia Night', origin: 'neighborhood', competitorEntityId: null, competitorPlaceId: null });
+  });
+
   it('with Google names allowed, the list goes in the request, and an event naming a competitor keeps its place id and nothing else of Google’s', async () => {
     const t = await tenant({ locations: ['Zyxwvut Kitchen'] });
     const [locationId = ''] = t.locationIds;
