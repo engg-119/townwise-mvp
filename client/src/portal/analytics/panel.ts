@@ -134,6 +134,12 @@ function usualNumber(date: string, day: DayRecord | undefined, input: PanelInput
   return { label, value: `${metricText(found.mean, input.metric)}, from ${formatCount(found.days)} ${weekday}s.${against}` };
 }
 
+/** The day's guests: the stored count, with a count a note marks wrong (D67) said so, or that there is none. */
+function guestsValue(day: DayRecord | undefined): string {
+  if (day?.storedGuests !== undefined) return `${formatCount(day.storedGuests)}, ${EFFECT_LABEL.wrong_guest_count.toLowerCase()}`;
+  return day === undefined || day.guests === null ? 'No guest count' : formatCount(day.guests);
+}
+
 export function dayPanel(date: string, input: PanelInput): DayPanelData {
   const day = input.byDate.get(date);
   const flags = dayFlags(date, day, input.context);
@@ -150,7 +156,7 @@ export function dayPanel(date: string, input: PanelInput): DayPanelData {
   const lastYearDay = input.byDate.get(lastYearDate);
   const lastYearValue = lastYearDay === undefined ? null : valueOf(lastYearDay, input.metric);
   const numbers = [
-    { label: 'Guests', value: day === undefined || day.guests === null ? 'No guest count' : formatCount(day.guests) },
+    { label: 'Guests', value: guestsValue(day) },
     { label: 'Net sales', value: day === undefined || day.netSalesCents === null ? 'No net sales' : formatDollars(day.netSalesCents) },
     usualNumber(date, day, input),
     {

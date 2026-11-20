@@ -24,8 +24,7 @@ export function closureKeyOf(schedule: RuleSchedule): string {
 /**
  * D59 slice 3: the sales history is sure of a closed weekday (beyond D46's bar of 60% of at least 4 counted days, with
  * none of its last 4 having sales) when at least 8 of its days were counted and at least 90% of them had no sales; the
- * weekly pass then adds it as a rule on its own. [CONFIRM: TownwiseAI adds a closed weekday on its own when at least 90%
- * of at least 8 counted days had no sales]
+ * weekly pass then adds it as a rule on its own.
  */
 export const SURE_SALES_MIN_DAYS = 8;
 export const SURE_SALES_SHARE = 0.9;

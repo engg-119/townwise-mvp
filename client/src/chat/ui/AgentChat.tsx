@@ -137,7 +137,6 @@ const SATURDAY = 'Tell me about last Saturday';
 /**
  * What the landing says TownwiseAI saves (UI review 2026-11-19): while it works on its own (D59, the panel's
  * `agentAuto` on and running here) what it's sure of, with Undo; otherwise, as before, notes the person decides on.
- * [CONFIRM: the landing's words while TownwiseAI works on its own]
  */
 const SAVES_AUTO = 'It saves what it’s sure of, each change with Undo in its activity; anything it isn’t sure of waits for you.';
 const SAVES_OFF = 'It suggests notes; you decide what’s saved.';

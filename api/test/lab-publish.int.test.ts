@@ -525,6 +525,23 @@ describe('a published lab run', () => {
     expect(body.days[0]).toMatchObject({ date: '2026-05-25', mid: 50, actual: 55, inRange: true });
   });
 
+  it('a day whose guest count is marked wrong (D67) has no actual: live accuracy leaves it out and its week has no actual', async () => {
+    const t = await team({ forecastsOn: true, to: '2026-05-24' });
+    const { job } = await started(t);
+    expect(await post(job, labResultFor(await inputFor(job)))).toEqual(SUCCEEDED);
+    await seedHistory(server, { orgId: t.orgId, locationId: t.locationId, from: '2026-05-25', to: '2026-05-31', guests: () => 55 });
+    await server.connection.collection('tw_notes').insertOne({
+      orgId: new Types.ObjectId(t.orgId), locationId: new Types.ObjectId(t.locationId), kind: 'other', startDate: '2026-05-27', endDate: '2026-05-27',
+      weekdays: null, effect: 'wrong_guest_count', expectedGuests: null, detail: null, title: null, startTime: null, endTime: null,
+      createdBy: t.admin.userId, createdAt: server.clock.now(), updatedAt: server.clock.now(),
+    });
+    const body = await forecastOf(t, '2026-05-25', '2026-06-07');
+    expect(body.runs[0]?.live).toEqual({ days: 6, inRange: 6, typicalErrorPct: 9.1, from: '2026-05-25', to: '2026-05-31' });
+    expect(body.days.find((day) => day.date === '2026-05-27')).toMatchObject({ mid: 50, actual: null, inRange: null });
+    expect(body.days.find((day) => day.date === '2026-05-26')).toMatchObject({ actual: 55, inRange: true });
+    expect(body.weeks.find((week) => week.from === '2026-05-25')).toMatchObject({ actual: null, inRange: null });
+  });
+
   it('staff withdraw a lab run with the existing route; the previous published run serves its dates again', async () => {
     const t = await team({ forecastsOn: true });
     const championId = await publishedChampion(t);

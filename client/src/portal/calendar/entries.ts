@@ -2,7 +2,7 @@ import type { TownEvent } from '../analytics/api';
 import { noteCovers } from '../analytics/days';
 import { formatCount } from '../format';
 import type { Note } from '../locations/api';
-import { KIND_LABEL } from '../locations/noteRules';
+import { EFFECT_LABEL, KIND_LABEL } from '../locations/noteRules';
 import type { Rule } from '../rules/api';
 import type { Filters, FilterKey, ImportedEvent } from './model';
 
@@ -21,8 +21,10 @@ export function filterOf(event: Pick<TownEvent, 'kind'>): FilterKey {
   return 'terms';
 }
 
-/** A note in a cell's chip: “Private event, 70”, “Private buyout”, “Closure”. */
+/** A note in a cell's chip: “Private event, 70”, “Private buyout”, “Closure”, “Guest count marked wrong”. */
 export function noteChip(note: Pick<Note, 'kind' | 'effect' | 'expectedGuests'>): string {
+  // D67: the effect says what the note is.
+  if (note.effect === 'wrong_guest_count') return EFFECT_LABEL.wrong_guest_count;
   const kind = note.kind === 'private_event' && note.effect === 'closed' ? 'Private buyout' : KIND_LABEL[note.kind];
   return note.expectedGuests === null ? kind : `${kind}, ${formatCount(note.expectedGuests)}`;
 }

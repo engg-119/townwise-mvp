@@ -7,7 +7,8 @@ import type {
 
 // Fixtures in the API's real shapes (api/src/handlers/me.ts, locations.ts) and a fake ApiClient for the portal:
 // GET /api/me, /api/org and the console's pending count answer from mutable fields, every POST answers from
-// `answers`, and anything else goes to `fallback` (the tuning chat's fake) or answers 404.
+// `answers` (any other GET from `answers['GET {path}']`), and anything else goes to `fallback` (the tuning chat's fake)
+// or answers 404.
 
 export const EMAIL = ['a', 'example.com'].join('@');
 export const STAFF_EMAIL = ['staff', 'example.com'].join('@');
@@ -102,7 +103,7 @@ export interface FakePortalApi extends ApiClient {
   me: MeResponse | ApiError;
   org: OrgResponse | ApiError;
   pendingCount: number;
-  /** Answers for writes, by path: the response body, an ApiError to throw, or a promise of either. */
+  /** Answers for writes, by path, and for other GETs, by `GET {path}`: the response body, an ApiError to throw, or a promise of either. */
   answers: Record<string, (body: unknown) => unknown>;
   calls: Call[];
   fallback: ApiClient | null;
@@ -136,8 +137,8 @@ export function fakePortalApi(init: { me: MeResponse | ApiError; org?: OrgRespon
       if (method === 'GET' && path === '/api/me') return settle(api.me, schema);
       if (method === 'GET' && path === '/api/org') return settle(api.org, schema);
       if (method === 'GET' && path === '/api/admin/requests?status=pending') return settle({ requests: [], pendingCount: api.pendingCount }, schema);
-      const answer = api.answers[path];
-      if (method !== 'GET' && answer !== undefined) return settle(answer(opts?.body), schema);
+      const answer = api.answers[method === 'GET' ? `GET ${path}` : path];
+      if (answer !== undefined) return settle(answer(opts?.body), schema);
       if (api.fallback !== null) return api.fallback.json(path, schema, opts);
       return Promise.reject(refusal(404, 'not_found'));
     },

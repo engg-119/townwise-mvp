@@ -69,11 +69,16 @@ export function activityLine(item: ActivityItem): string {
       return item.via === 'chat' ? `Saved a note you approved: ${what}.` : `Saved a note from your answer: ${what}.`;
     }
     case 'question_answered': {
+      // D71: Skip on a private event's question. [CONFIRM: the activity's words for a private event's guests]
+      if (item.questionId.startsWith('party_guests_')) return 'You skipped the question about a private event’s guests.';
       const subject = questionSubject(item.questionId);
       if (item.answer === 'other') return subject === null ? 'You answered a question in the chat.' : `You told TownwiseAI about ${subject} in the chat.`;
       if (subject === null) return item.answer === 'open' ? 'You said the data is missing.' : 'You weren’t sure about a question.';
       return item.answer === 'open' ? `You said the data is missing for ${subject}.` : `You weren’t sure about ${subject}.`;
     }
+    // D71: a private event's guests saved from its question. Never the count or the note's title.
+    case 'guest_count_saved':
+      return `Saved your guest count for the private event, ${rangeText(item.startDate, item.endDate)}.`;
     // F3: a stored file Townwise read. Never its name: the files list shows that, and this panel is read under view-as.
     case 'file_processed':
       return `Read your file for ${rangeText(item.firstDate, item.lastDate)}, ${formatCount(item.dayCount)} ${item.dayCount === 1 ? 'day' : 'days'}.`;

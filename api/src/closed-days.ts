@@ -17,6 +17,12 @@
 // keep closing past days. [CONFIRM: a note covering a day beats a rule schedule's closure or buyout, and before today a
 // rule's closure holds only on a day with no guests or guests under the likely-closed line]
 //
+// A note marking a day's guest count wrong (D67) is read before any of this: trustedGuestDays sets that day's guests to
+// null, so it is a day with sales and no guest count, never likely closed and never in a neighbor's typical guests.
+// The mark says the day's sales were right, so a marked day with net sales above 0 is open to every closure test that
+// reads guests (markedOpen): a rule's closure never holds on it. A marked day with no sales reads as any day with no
+// guest count. A closure note and a rule's buyout read no guests, so they close a marked day as any other.
+//
 // The client mirrors this in client/src/portal/analytics/days.ts, pinned by the shared day-classes.json fixture
 // (test/fixtures/day-classes.json and its client copy). A change to one side needs the other and the fixture.
 import { utcDay } from './dates.ts';
@@ -42,6 +48,45 @@ type StoredDay = Pick<SalesDay, 'guests' | 'netSalesCents'>;
 /** A closure note, or any note or schedule whose effect is closed (a buyout too). */
 export function isClosure(entry: Entry): boolean {
   return entry.kind === 'closure' || entry.effect === 'closed';
+}
+
+/**
+ * A note marking a past day's guest count wrong (D67): its sales stand. It decides nothing about open, closed or booked
+ * (it is in neither saysOpen nor notesDecide); trustedGuestDays reads the days it covers as having no guest count.
+ */
+export function isWrongGuestCount(entry: Pick<NoteContent, 'effect'>): boolean {
+  return entry.effect === 'wrong_guest_count';
+}
+
+/**
+ * Whether a day whose guest count a covering note marks wrong (D67) has stored net sales above 0: the mark says its
+ * sales were right, so it was open, and a rule's closure never holds on it however few guests it shows.
+ */
+export function markedOpen(day: Pick<SalesDay, 'netSalesCents'> | undefined, notes: readonly Pick<NoteContent, 'effect'>[]): boolean {
+  return day?.netSalesCents !== undefined && day.netSalesCents !== null && day.netSalesCents > 0 && notes.some(isWrongGuestCount);
+}
+
+/** What trustedGuestDays reads of a note: its dates, weekdays and effect. */
+export type CoverNote = Pick<NoteContent, 'startDate' | 'endDate' | 'weekdays' | 'effect'>;
+
+function markCovers(note: CoverNote, date: string): boolean {
+  if (date < note.startDate || date > note.endDate) return false;
+  return note.weekdays === null || note.weekdays.includes(new Date(`${date}T00:00:00.000Z`).getUTCDay());
+}
+
+/**
+ * The days with `guests` null on every date a wrong-guest-count note covers (D67), sales and every other field untouched;
+ * the same array when no note has the effect. A marked day then reads everywhere Townwise trains, compares or analyzes
+ * as a day whose upload had sales and no guest count. [CONFIRM: a day whose guest count is marked wrong reads as a day
+ * with sales and no guest count wherever Townwise trains, compares or analyzes; its sales stand, and Your data, the
+ * sales page and monthly totals still show the stored count]
+ */
+export function trustedGuestDays<D extends { readonly date: string; readonly guests: number | null }>(
+  days: readonly D[], notes: readonly CoverNote[],
+): readonly D[] {
+  const marks = notes.filter(isWrongGuestCount);
+  if (marks.length === 0) return days;
+  return days.map((day) => (day.guests !== null && marks.some((note) => markCovers(note, day.date)) ? { ...day, guests: null } : day));
 }
 
 /** A private buyout: a private event whose effect is closed. */
@@ -104,13 +149,14 @@ export function fewOrNoGuests(day: StoredDay | undefined, typical: number | null
 
 /**
  * The covering rule schedules whose closure or buyout holds on the day (see the top): none when the notes decide it;
- * before today, a buyout always and a closure only on a day with few or no guests.
+ * before today, a buyout always and a closure only on a day with few or no guests that is not markedOpen (D67).
  */
 export function closingRules<R extends Entry>(
   rules: readonly R[], notes: readonly Entry[], day: StoredDay | undefined, typical: number | null, past: boolean,
 ): R[] {
   if (notesDecide(notes)) return [];
-  return rules.filter((rule) => isClosure(rule) && (!past || isBuyout(rule) || fewOrNoGuests(day, typical)));
+  const few = fewOrNoGuests(day, typical) && !markedOpen(day, notes);
+  return rules.filter((rule) => isClosure(rule) && (!past || isBuyout(rule) || few));
 }
 
 /**

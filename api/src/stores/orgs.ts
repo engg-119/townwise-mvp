@@ -138,7 +138,7 @@ function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
     suspendedAt: doc.suspendedAt,
     firstJoinedAt: doc.firstJoinedAt ?? null,
     lastSuspendedAt: doc.lastSuspendedAt ?? null,
-    // D42: on by default for every organization, existing and new, until staff switch it off. [CONFIRM]
+    // D42: on by default for every organization, existing and new (approved 2026-11-19), until staff switch it off.
     forecasts: doc.forecasts == null ? { on: true, at: null } : { on: doc.forecasts.on, at: doc.forecasts.at },
     // Weekly suggestions: on by default (owner directive 2026-11-16) until an org admin turns them off. [CONFIRM]
     weeklySuggestions: doc.weeklySuggestions == null

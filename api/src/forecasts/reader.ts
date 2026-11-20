@@ -27,7 +27,7 @@
 // for its live accuracy; the model card's, the newest run's over its days. It logs nothing and stores nothing.
 import type { OrgScope } from '../access/policy.ts';
 import { noteCovers } from '../agent/questions.ts';
-import { closureOf, TYPICAL_LOOKBACK_DAYS, typicalByDate } from '../closed-days.ts';
+import { closureOf, trustedGuestDays, TYPICAL_LOOKBACK_DAYS, typicalByDate } from '../closed-days.ts';
 import { daysBetween, utcDay } from '../dates.ts';
 import type { BusinessRuleStore } from '../stores/business-rules.ts';
 import type { ForecastRow, ForecastRunRecord, ForecastStore } from '../stores/forecasts.ts';
@@ -36,7 +36,7 @@ import type { NoteRecord, NoteStore } from '../stores/notes.ts';
 import type { SalesDayStore } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
 import {
-  adjustDay, flagsAfterData, orderedReasons, ownerBeatsAgent, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule,
+  adjustDay, flagsAfterData, mayHaveFlagged, orderedReasons, ownerBeatsAgent, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule,
 } from './adjust.ts';
 import { effectHistory, reasonEffects } from './effects.ts';
 import { eachDay, type DayStatus } from './file.ts';
@@ -111,9 +111,10 @@ export interface ForecastDayView {
   madeAfterDay: boolean;
   /**
    * A day before today whose run may have read a private event note or business rule covering it (adjust.ts
-   * flagsAfterData, the lab input's privateEvent flag) last written on or after the day, by the time the run was made
-   * (score.ts writtenForRun): what was learned after the day could have shaped the figure, so `inRange` is null and the
-   * day is not scored (D49 as amended).
+   * flagsAfterData, the lab input's privateEvent flag; for a note, D71, any private event but a buyout, a guest count
+   * written since included) last written on or after the day, by the time the run was made (score.ts writtenForRun):
+   * what was learned after the day could have shaped the figure, so `inRange` is null and the day is not scored (D49 as
+   * amended).
    */
   laterNote: boolean;
   /** The stored guests for a day before today; null otherwise. */
@@ -285,8 +286,9 @@ export function createForecastReader(deps: {
    * Every published run, every chosen day with its actual (before today), and each run's live accuracy over its own
    * days, closed and likely-closed days left out. The stored days are read once, from 8 weeks before the first chosen
    * day (its typical guests, D32), or from `reach.historyFrom` when that is earlier (the reason effects' history), to
-   * yesterday; the notes once, over the chosen days before today and `reach.notes`; the scheduled rules once. None are
-   * read when no run supplies a day.
+   * yesterday; the notes once, over the stored days, the chosen days before today and `reach.notes`; the scheduled rules
+   * once. None are read when no run supplies a day. A stored day whose guest count a note marks wrong (D67) reads with
+   * no guest count.
    */
   async function load(
     scope: OrgScope, locationId: string, today: string,
@@ -302,15 +304,20 @@ export function createForecastReader(deps: {
     const [first] = dates;
     const yesterday = utcDay(new Date(`${today}T00:00:00.000Z`), -1);
     const from = first === undefined ? undefined : firstOf([utcDay(new Date(`${first}T00:00:00.000Z`), -TYPICAL_LOOKBACK_DAYS), reach.historyFrom]);
-    // The notes the scored days need (the chosen days to yesterday), and the caller's.
-    const notesFrom = firstOf([first, reach.notes?.from]);
-    const notesTo = lastOf([dates.filter((date) => date <= yesterday).at(-1), reach.notes?.to]);
-    const [stored, noted, scheduled] = await Promise.all([
-      from !== undefined && from <= yesterday ? salesDays.days(scope, locationId, { from, to: yesterday }) : [],
+    const readsDays = from !== undefined && from <= yesterday;
+    // The notes the scored days need (the chosen days to yesterday), the caller's, and every stored day's (D67: a note
+    // marking a guest count wrong anywhere in the stored range).
+    const notesFrom = firstOf([readsDays ? from : undefined, first, reach.notes?.from]);
+    const notesTo = lastOf([readsDays ? yesterday : undefined, dates.filter((date) => date <= yesterday).at(-1), reach.notes?.to]);
+    const [storedRows, noted, scheduled] = await Promise.all([
+      readsDays ? salesDays.days(scope, locationId, { from, to: yesterday }) : [],
       first === undefined || notesFrom === undefined || notesTo === undefined ? [] : notes.overlapping(scope, locationId, { from: notesFrom, to: notesTo }),
       first === undefined ? [] : businessRules.scheduled(scope, locationId),
     ]);
     const rules = scheduledRules(scheduled);
+    // D67: a day whose guest count is marked wrong has no actual, feeds no typical guests and no effect, and is never
+    // likely closed: it reads as a day with sales and no guest count.
+    const stored = trustedGuestDays(storedRows, noted);
     const notesOn = (date: string): NoteRecord[] => noted.filter((note) => noteCovers(note, date));
     const rulesOn = (date: string): ScheduledRule[] => rules.filter((rule) => noteCovers(rule.schedule, date));
     const actuals = new Map<string, number>();
@@ -330,10 +337,12 @@ export function createForecastReader(deps: {
     ) !== null;
     /**
      * A past day whose run may have read a private event note or rule, covering it and last written once the day began
-     * (D49 as amended): the lab input flags one on a day after the run's data (adjust.ts flagsAfterData).
+     * (D49 as amended): the lab input flags one on a day after the run's data (adjust.ts flagsAfterData). D71: a note is
+     * asked whether or not it has a guest count now (mayHaveFlagged), since a count written later leaves the run's figure
+     * from the note without one.
      */
     const laterNoteOn = (date: string, run: ForecastRunRecord): boolean => date < today && (
-      keptOn(date).some((note) => flagsAfterData(note) && writtenForRun(run, date, note.updatedAt))
+      keptOn(date).some((note) => mayHaveFlagged(note) && writtenForRun(run, date, note.updatedAt))
       || scheduled.some((rule) => rule.schedule !== null && noteCovers(rule.schedule, date) && flagsAfterData(rule.schedule)
         && writtenForRun(run, date, rule.updatedAt)));
     const scored = (date: string, { run, row }: Chosen): ScoredDay => ({

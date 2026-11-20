@@ -29,9 +29,7 @@
 // or rule a person made on its days, and its dedupe key was never used at the location; an event below that bar, or in
 // conflict, becomes an open note suggestion from the file (tw_agent_suggestions, `source: 'file'`, `type: 'note'`),
 // which any member decides as a file's suggested rule, at most 20 open per location from files and only while it ends
-// today or later. [CONFIRM: TownwiseAI applies only what the model rated high and the code checks pass; everything else
-// waits] [CONFIRM: a read someone asked for follows the same confidence bar] [CONFIRM: 20 open note suggestions from
-// files per location] An automatic read writes as TownwiseAI (`createdBy: 'townwise_ai'`, the audit actor TownwiseAI),
+// today or later. An automatic read writes as TownwiseAI (`createdBy: 'townwise_ai'`, the audit actor TownwiseAI),
 // on behalf of the file's adder, whose seat is still checked first; it starts no calibration, and what it changed on
 // training days wants a refit instead (agent/refit.ts). A pressed read keeps its requester as the author and its
 // calibration. While the switch is off a pressed read is exactly D34's.

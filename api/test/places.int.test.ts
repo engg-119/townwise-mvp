@@ -143,6 +143,22 @@ describe('details', () => {
   });
 });
 
+describe('status', () => {
+  it('says the search is on, to a person with no organization, without calling Google, spending the limiter or writing', async () => {
+    const writes = await writesDuring(server, async () => {
+      const res = await call(server, '/api/places/status', { session });
+      expect({ status: res.status, body: await res.json() as unknown }).toEqual({ status: 200, body: { placeSearch: true } });
+    });
+    expect(writes).toEqual([]);
+    expect(fake.calls).toHaveLength(0);
+    expect(await server.redis.get(limiterKey('townwise:places', session.userId))).toBeNull();
+  });
+
+  it('needs a session: 401 unauthenticated', async () => {
+    expect(await errorOf(await call(server, '/api/places/status'))).toEqual({ status: 401, error: 'unauthenticated' });
+  });
+});
+
 describe('who may call them', () => {
   it('both need a session: 401 unauthenticated, and Google is not called', async () => {
     expect(await errorOf(await autocomplete({ input: 'Lou' }, null))).toEqual({ status: 401, error: 'unauthenticated' });

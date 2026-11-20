@@ -14,10 +14,14 @@ declare module 'vitest' {
 export default async function setup(project: TestProject): Promise<() => Promise<void>> {
   const [mongo, valkey] = await Promise.all([
     // The kit's settings (api/kit/auth/test/global-setup.ts): a raised open-file limit, and rseq=1 so
-    // mongo 8.0.32 starts on newer kernels.
+    // mongo 8.0.32 starts on newer kernels. The data lives in memory (tmpfs): with four workers, each dropping its database
+    // and rebuilding every index at each server start, a file took about 3 times longer than alone (11 s to 34 s on
+    // average, 2026-11-19, PR #131's CI on camo), and the likeliest shared bottleneck is the one mongod's journal on disk.
+    // Nothing here needs to survive the run. No key file is used (no username), so nothing copied into /data/db is hidden.
     new MongoDBContainer(MONGO_IMAGE)
       .withUlimits({ nofile: { soft: 64000, hard: 64000 } })
       .withEnvironment({ GLIBC_TUNABLES: 'glibc.pthread.rseq=1' })
+      .withTmpFs({ '/data/db': 'rw,size=2g' })
       .start(),
     new GenericContainer(VALKEY_IMAGE).withExposedPorts(6379).start(),
   ]);

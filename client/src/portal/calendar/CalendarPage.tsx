@@ -5,7 +5,7 @@ import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 import type { ApiClient } from '../../api/client';
 import { theme } from '../../theme';
 import { fetchCalendar } from '../analytics/api';
-import { noteCovers } from '../analytics/days';
+import { noteCovers, trustedGuestDays } from '../analytics/days';
 import { dayMonthRange } from '../analytics/week';
 import { MONTH_NAMES } from '../analytics/words';
 import { hasCode } from '../errors';
@@ -288,7 +288,9 @@ function CalendarView(): React.JSX.Element {
   // read leaves the grid without them (design decision 11), as the button then reads "Your calendars".
   const hasCalendars = calendars.error === null && (calendars.data?.calendars ?? []).length > 0;
   const input = useMemo<CalendarInput | null>(() => (shown === null || notes.data === null ? null : {
-    today, covered: shown.range, forecast: forecastWindow, salesDays: shown.days, events: shown.calendar.events, notes: notes.data.list,
+    // D67: a guest count a note marks wrong reads as none, as the API's forecast read gives it no actual.
+    today, covered: shown.range, forecast: forecastWindow, salesDays: trustedGuestDays(shown.days, notes.data.list), events: shown.calendar.events,
+    notes: notes.data.list,
     rules: notes.data.rules, imported: hasCalendars ? shown.stored : [], filters,
   }), [today, shown, forecastWindow, notes.data, hasCalendars, filters]);
   const rows = useMemo(() => (input === null || view === 'week' ? [] : buildGrid(month, input, bounds)), [input, view, month, bounds]);
@@ -299,7 +301,11 @@ function CalendarView(): React.JSX.Element {
     .flatMap((slot) => (slot.kind === 'day' && !slot.pending && !slot.outside ? [slot] : []))), [view, week, rows, weekStart]);
   // The forecast chart (D64): the grid month's days above the grid, or the strip's days atop the week's; none while
   // the chip hides it or it has nothing to draw.
-  const lastYear = monthData.data?.lastYear ?? null;
+  const storedLastYear = monthData.data?.lastYear ?? null;
+  const lastYear = useMemo(
+    () => (storedLastYear === null || notes.data === null ? storedLastYear : trustedGuestDays(storedLastYear, notes.data.list)),
+    [storedLastYear, notes.data],
+  );
   const chart = useMemo(() => {
     if (input === null || !chartOn) return null;
     const dates = view === 'week' ? stripDays : gridDays(month).filter((date) => date.startsWith(month));

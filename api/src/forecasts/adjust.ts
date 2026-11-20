@@ -24,8 +24,8 @@
 //   read, as a covering note beats a rule. A note is TownwiseAI's while nobody edited it since it was saved: it carries
 //   `agent` and its `updatedAt` is still `agent.at`, or (D34, from before D59) it carries a file `source` and was never
 //   edited. Once a person edits it, it is theirs. A note TownwiseAI saved from the person's own words in chat (slice 4:
-//   the person its author, no file `source`) is theirs from the start. The lab input applies the same rule (../lab/input.ts). [CONFIRM: a note
-//   a person made beats a TownwiseAI note on the same day] Pure: no store, no clock.
+//   the person its author, no file `source`) is theirs from the start. The lab input applies the same rule (../lab/input.ts).
+//   Pure: no store, no clock.
 import { isBuyout, isClosure, notesDecide } from '../closed-days.ts';
 import type { BusinessRuleRecord, RuleSchedule } from '../stores/business-rules.ts';
 import type { NoteContent, NoteRecord } from '../stores/notes.ts';
@@ -87,6 +87,16 @@ const closes = (entry: Effect): boolean => isClosure(entry) && !isBuyout(entry);
  */
 export function flagsAfterData(entry: Effect): boolean {
   return entry.kind === 'private_event' && !isBuyout(entry) && !isParty(entry);
+}
+
+/**
+ * D71: a note a run made after its day may have read as flagsAfterData does, whether or not it has a guest count now:
+ * any private event but a buyout. A count written later (TownwiseAI's question, or the Notes page) makes the note a party
+ * that flagsAfterData no longer names, while the run's figure still came from the uncounted note, so the reader asks
+ * this of a past day's notes and keeps such a day out of those runs' accuracy.
+ */
+export function mayHaveFlagged(entry: Effect): boolean {
+  return entry.kind === 'private_event' && !isBuyout(entry);
 }
 /** What owner-beats-agent reads of a note. */
 type Authored = Pick<NoteRecord, 'agent' | 'source' | 'createdBy' | 'createdAt' | 'updatedAt'>;

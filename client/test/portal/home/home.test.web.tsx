@@ -106,7 +106,9 @@ async function renderAt(api: FakePortalApi, ready: string = NOT_PUBLISHED): Prom
       <ExpoRoot context={getMockContext(appRoutes(seededRoot(auth), { '(marketing)/index': () => null }))} location={path} />
     </Head.Provider>,
   );
-  await screen.findByText(ready);
+  // Home's lead line appears once its forecast read answers (UI review 2026-11-19), so a loaded runner can take more than
+  // the default second to show it.
+  await screen.findByText(ready, undefined, { timeout: 4000 });
 }
 
 /**

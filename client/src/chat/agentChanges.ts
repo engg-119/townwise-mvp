@@ -10,7 +10,7 @@ import { KIND_LABEL, rangeText, weekdaysText } from './format';
 // organization's switch (GET .../agent's `agentAuto`, PATCH /api/org/agent-auto), each change TownwiseAI saved (the
 // activity's `agent_change`, the log at GET .../agent/changes) and Undo of one (POST .../agent/changes/:id/undo), and
 // the events a file read wasn't sure of (`noteSuggestions`, decided through the suggested rules' routes). Changes carry
-// ids, dates and kinds only; every word here is the client's. [CONFIRM: the panel's and switch's words]
+// ids, dates and kinds only; every word here is the client's.
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const NOTE_KIND = z.enum(['closure', 'private_event', 'opening', 'other']);
@@ -113,8 +113,7 @@ function pageOf(action: AgentChange['action']): string {
 /**
  * What a change added, in a few words: "a note: Private event, Jun 13, 2026", (slice 2) "booking labels on 12
  * events, used for forecasts", or (slice 3) "a business rule: Closure on Mondays, from Jun 8, 2026", its weekdays named
- * so a weekday rule does not read as every day. [CONFIRM: the words for what TownwiseAI saves from its weekly
- * suggestions and the sales history]
+ * so a weekday rule does not read as every day.
  */
 function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'weekdays'>): string {
   const dates = change.startDate === null || change.endDate === null ? '' : rangeText(change.startDate, change.endDate);
@@ -136,7 +135,6 @@ function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 
   }
 }
 
-/** [CONFIRM: the words for what TownwiseAI saves from its weekly suggestions and the sales history] */
 const SOURCE_WORDS: Readonly<Record<AgentChange['sourceKind'], string>> = {
   file: 'from a file you added', calendar: 'from your calendar', weekly: 'from its weekly look ahead', sales: 'from your sales history',
   chat: 'from your message',
@@ -190,17 +188,14 @@ export function undoErrorFinal(error: unknown): boolean {
 }
 
 /**
- * The switch's words (design decision 14). [CONFIRM: the panel's and switch's words] [CONFIRM: the words for what
- * TownwiseAI saves from its weekly suggestions and the sales history] [CONFIRM: the words for pasted text TownwiseAI reads
- * and a note it saves from your message] Only a link or Google calendar's refresh brings the
+ * The switch's words (design decision 14). Only a link or Google calendar's refresh brings the
  * weekly look ahead forward (api/src/calendar/early-pass.ts), and only while the titles switch is on, so they say so.
  * D59 slice 5: a calendar that plainly says closed answers TownwiseAI's open closure questions (api/src/calendar/answers.ts),
- * whatever the titles switch says, since nothing is sent. [CONFIRM: the switch's and activity's words for answers from a
- * calendar]
+ * whatever the titles switch says, since nothing is sent.
  */
 export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add or text you paste on Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. When you tell it about a dated event plainly in a message, it saves that note too. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week. While sending your calendars’ titles is on, a calendar link or Google calendar whose refresh adds or moves an event in the next 3 months brings that forward, at most once a day. When your calendar plainly says you’re closed on days it asked about, it stops asking, whether this is on or off. With this on, it also saves that closure from the calendar, so the forecast closes those days; with it off, make a note from that event on the Calendar. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
 
-/** How TownwiseAI works' sentence, by the switch (design decision 14). [CONFIRM: the panel's and switch's words] */
+/** How TownwiseAI works' sentence, by the switch (design decision 14). */
 export function savesLine(on: boolean): string {
   return on
     ? 'It saves what it’s sure of and shows each change here with Undo. Anything it isn’t sure of waits for you.'

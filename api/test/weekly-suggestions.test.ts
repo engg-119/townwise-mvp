@@ -11,10 +11,15 @@ import { describe, expect, it } from 'vitest';
 import {
   GENERIC_TITLE_WORDS, keptSuggestions, MAX_EVENT_SUGGESTIONS, MAX_SUGGESTIONS, sentTitle, SUGGESTIONS_EVENTS_FORMAT, SUGGESTIONS_FORMAT,
   SUGGESTIONS_MAX_TOKENS, SUGGESTIONS_OWNER_EVENTS_PROMPT, SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_SYSTEM_PROMPT, suggestionsRequest,
-  suggestionsReserveMicroUsd, suggestionsWeek, sureChangeOf, type OwnerEventEntry, type SentOwnerEvent, type SuggestionChecks, type SuggestionsInput,
+  suggestionsInput, suggestionsReserveMicroUsd, suggestionsWeek, sureChangeOf, type OwnerEventEntry, type SuggestionsContext, type SentOwnerEvent, type SuggestionChecks, type SuggestionsInput,
 } from '../src/lab/suggestions.ts';
 import { ceilingCostMicroUsd } from '../src/chat/pricing.ts';
-import type { NoteContent } from '../src/stores/notes.ts';
+import type { OrgScope } from '../src/access/policy.ts';
+import { utcDay } from '../src/dates.ts';
+import { effectHistory } from '../src/forecasts/effects.ts';
+import type { LocationRecord } from '../src/stores/locations.ts';
+import type { NoteContent, NoteRecord } from '../src/stores/notes.ts';
+import type { SalesDay } from '../src/stores/sales-days.ts';
 
 const TODAY = '2026-11-16';
 const TO = '2027-02-15';
@@ -454,3 +459,39 @@ describe('confidence and what TownwiseAI is sure of (D59 slice 3)', () => {
   });
 });
 
+
+describe('suggestionsInput and a guest count marked wrong (D67)', () => {
+  // Thanksgiving 2025 had 0 guests but real sales against Thursdays of 100: likely closed, unless its count is marked wrong.
+  const today = '2026-11-12';
+  const location: LocationRecord = { id: 'l1', name: 'Taproom', town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, placeId: null, createdAt: new Date(0) };
+  const history = effectHistory(today);
+  const days: SalesDay[] = [];
+  for (let date = history.readFrom; date <= history.to; date = utcDay(new Date(`${date}T00:00:00.000Z`), 1)) {
+    days.push({ date, guests: date === '2025-11-27' ? 0 : 100, netSalesCents: 200_000 });
+  }
+  const mark = {
+    id: 'm1', kind: 'other', startDate: '2025-11-27', endDate: '2025-11-27', weekdays: null, effect: 'wrong_guest_count', expectedGuests: null,
+    detail: null, title: null, startTime: null, endTime: null,
+  } as unknown as NoteRecord;
+
+  async function thanksgiving(notes: readonly NoteRecord[]): Promise<SuggestionsInput['calendar'][number] | undefined> {
+    const overlapping = (_scope: unknown, _id: string, range: { from: string; to: string }) =>
+      Promise.resolve(notes.filter((note) => note.startDate <= range.to && note.endDate >= range.from));
+    const stores = {
+      notes: { overlapping },
+      businessRules: { list: () => Promise.resolve([]) },
+      salesDays: {
+        days: (_scope: unknown, _id: string, range: { from: string; to: string }) => Promise.resolve(days.filter((day) => day.date >= range.from && day.date <= range.to)),
+        coverage: () => Promise.resolve({ firstDate: days[0]?.date ?? null, lastDate: days.at(-1)?.date ?? null }),
+      },
+    } as unknown as SuggestionsContext['stores'];
+    const { input } = await suggestionsInput({ stores }, {} as OrgScope, location, today, [], { titles: false });
+    return input.calendar.find((entry) => entry.start === '2026-11-26' && entry.kind === 'holiday');
+  }
+
+  it('counts a marked past occurrence as open, not closed, and takes it out of the history effect', async () => {
+    expect((await thanksgiving([]))?.pastDays).toEqual({ open: 0, closed: 1, noSales: 0 });
+    expect((await thanksgiving([mark]))?.pastDays).toEqual({ open: 1, closed: 0, noSales: 0 });
+    expect((await thanksgiving([mark]))?.history).toBeNull();
+  });
+});

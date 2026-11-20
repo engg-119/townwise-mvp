@@ -21,7 +21,7 @@ import { ChangeLine } from './AgentChanges';
 const READ_ONLY_ID = 'changes-ro';
 
 /**
- * The page's intro, slice 2's calendar labels and their Undo included. [CONFIRM: the panel's and switch's words]
+ * The page's intro, slice 2's calendar labels and their Undo included.
  */
 export const CHANGES_INTRO = 'Each note, business rule, summary, set of sales days or set of booking labels TownwiseAI saved here, newest first. Undo removes what it added, as long as nobody changed it since. Undo on a calendar’s booking labels also removes the notes TownwiseAI made from that calendar and stops using its labels for forecasts. Once you change something it added, it’s yours.';
 

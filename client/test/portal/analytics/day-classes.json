@@ -1640,6 +1640,160 @@
       ],
       "events": [],
       "class": "regular"
+    },
+    {
+      "name": "a marked day with a near-zero count is noted, not closed (D67)",
+      "date": "2026-10-10",
+      "history": [
+        {
+          "date": "2026-10-03",
+          "guests": 200
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 200
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 200
+        }
+      ],
+      "day": {
+        "guests": 2,
+        "netSalesCents": 50000
+      },
+      "notes": [
+        {
+          "kind": "other",
+          "startDate": "2026-10-10",
+          "endDate": "2026-10-10",
+          "weekdays": null,
+          "effect": "wrong_guest_count"
+        }
+      ],
+      "events": [],
+      "class": "noted"
+    },
+    {
+      "name": "a neighbor's typical guests skip a marked day, so too few remain to call the day likely closed (D67)",
+      "date": "2026-10-10",
+      "history": [
+        {
+          "date": "2026-10-03",
+          "guests": 10
+        },
+        {
+          "date": "2026-09-26",
+          "guests": 100
+        },
+        {
+          "date": "2026-09-19",
+          "guests": 100
+        }
+      ],
+      "day": {
+        "guests": 5,
+        "netSalesCents": 20000
+      },
+      "notes": [
+        {
+          "kind": "other",
+          "startDate": "2026-10-03",
+          "endDate": "2026-10-03",
+          "weekdays": null,
+          "effect": "wrong_guest_count"
+        }
+      ],
+      "events": [],
+      "class": "regular"
+    },
+    {
+      "name": "a marked Monday with sales under a closed-Mondays rule is open and noted: the mark says its sales were right (D67)",
+      "date": "2026-10-12",
+      "history": [
+        {
+          "date": "2026-10-05",
+          "guests": 150
+        },
+        {
+          "date": "2026-09-28",
+          "guests": 150
+        },
+        {
+          "date": "2026-09-21",
+          "guests": 150
+        }
+      ],
+      "day": {
+        "guests": 150,
+        "netSalesCents": 300000
+      },
+      "notes": [
+        {
+          "kind": "other",
+          "startDate": "2026-10-12",
+          "endDate": "2026-10-12",
+          "weekdays": null,
+          "effect": "wrong_guest_count"
+        }
+      ],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            1
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "noted"
+    },
+    {
+      "name": "a marked Monday with no sales under a closed-Mondays rule is closed, as a past day with no guest count (D67)",
+      "date": "2026-10-12",
+      "history": [
+        {
+          "date": "2026-10-05",
+          "guests": 150
+        },
+        {
+          "date": "2026-09-28",
+          "guests": 150
+        },
+        {
+          "date": "2026-09-21",
+          "guests": 150
+        }
+      ],
+      "day": {
+        "guests": 150,
+        "netSalesCents": null
+      },
+      "notes": [
+        {
+          "kind": "other",
+          "startDate": "2026-10-12",
+          "endDate": "2026-10-12",
+          "weekdays": null,
+          "effect": "wrong_guest_count"
+        }
+      ],
+      "rules": [
+        {
+          "kind": "closure",
+          "startDate": "2026-09-01",
+          "endDate": null,
+          "weekdays": [
+            1
+          ],
+          "effect": "closed"
+        }
+      ],
+      "events": [],
+      "class": "closed"
     }
   ]
 }

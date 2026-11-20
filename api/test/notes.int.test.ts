@@ -15,7 +15,7 @@ import { createMemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { readNoteContent, sameNoteContent, type NoteView } from '../src/handlers/notes.ts';
 import { createNoteStore } from '../src/stores/notes.ts';
 import { createOwnerCalendarStore } from '../src/stores/owner-calendars.ts';
-import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { addLocation, addSalesDay, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -580,5 +580,118 @@ describe('a note made from an owner-calendar event (calendar-event-suggestions)'
     expect(await store.find(scope, locationId, linked.id)).not.toBeNull();
     expect(await store.removeIf(scope, locationId, linked.id, now)).toBe(true);
     expect(await store.find(scope, locationId, linked.id)).toBeNull();
+  });
+});
+
+describe('a note marking past days’ guest counts wrong (D67)', () => {
+  // The test clock reads 2026-06-01, in Hanover too: 12:00 UTC is 08:00 there.
+  const MARK = {
+    kind: 'other', startDate: '2025-10-31', endDate: '2025-11-01', weekdays: null, effect: 'wrong_guest_count', expectedGuests: null,
+  };
+
+  async function wantedAt(location: string): Promise<Date | undefined> {
+    const doc = await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(location) });
+    return (doc?.refit as { wantedAt?: Date } | undefined)?.wantedAt;
+  }
+
+  it('a member marks Halloween weekend with no title or detail; it is stored, listed, and wants a refit', async () => {
+    const location = await addLocation(server, { orgId, name: 'Marked Room' });
+    await addSalesDay(server, { orgId, locationId: location, date: '2025-11-02', guests: 90, netSalesCents: 180_000 });
+    const note = await created(MARK, author, location);
+    expect(note).toMatchObject({ ...MARK, detail: null, title: null, startTime: null, endTime: null, fromEvent: null });
+    const stored = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) });
+    expect(stored?.effect).toBe('wrong_guest_count');
+    const listed = await call(server, notesPath(location), { session: colleague.session });
+    expect((await listed.json() as { notes: NoteView[] }).notes.map((each) => [each.id, each.effect])).toEqual([[note.id, 'wrong_guest_count']]);
+    expect(await wantedAt(location)).toEqual(server.clock.now());
+    const event = (await auditEvents(server)).find((e) => (e.target as { id: string }).id === note.id);
+    expect(event?.details).toEqual({ locationId: location, kind: 'other', startDate: '2025-10-31', endDate: '2025-11-01' });
+  });
+
+  it('takes weekdays, and days up to yesterday in the town', async () => {
+    expect((await created({ ...MARK, startDate: '2026-05-01', endDate: '2026-05-29', weekdays: [5] })).weekdays).toEqual([5]);
+    expect((await created({ ...MARK, startDate: '2026-05-31', endDate: '2026-05-31' })).endDate).toBe('2026-05-31');
+  });
+
+  it('refuses today, a later day, guests, hours, and any kind but Other, and stores nothing', async () => {
+    const location = await addLocation(server, { orgId, name: 'Refused Mark Room' });
+    for (const bad of [
+      { ...MARK, startDate: '2026-06-01', endDate: '2026-06-01' },
+      { ...MARK, endDate: '2026-06-01' },
+      { ...MARK, startDate: '2026-06-02', endDate: '2026-06-02' },
+      { ...MARK, expectedGuests: 120 },
+      { ...MARK, startTime: '18:00', endTime: '22:00' },
+      { ...MARK, kind: 'private_event' },
+      { ...MARK, kind: 'closure' },
+      { ...MARK, kind: 'opening' },
+    ]) {
+      expect({ bad, ...(await errorOf(await post(bad, author, location))) }).toEqual({ bad, status: 400, error: 'invalid_request' });
+    }
+    expect(await server.connection.collection('tw_notes').countDocuments({ locationId: new Types.ObjectId(location) })).toBe(0);
+  });
+
+  it('reads the town’s date: at 21:00 in Hanover, already tomorrow in UTC, today is still refused', async () => {
+    const hours = 13 * 60 * 60 * 1000;
+    server.clock.advance(hours); // 2026-06-02T01:00Z, 2026-06-01 21:00 in Hanover
+    try {
+      const late = await person('late', 'member'); // signed in after the clock moved
+      expect(await errorOf(await post({ ...MARK, startDate: '2026-06-01', endDate: '2026-06-01' }, late)))
+        .toEqual({ status: 400, error: 'invalid_request' });
+      expect((await post({ ...MARK, startDate: '2026-05-31', endDate: '2026-05-31' }, late)).status).toBe(201);
+    } finally {
+      server.clock.advance(-hours);
+    }
+  });
+
+  it('the author and an org admin edit it, another member is 403; an edit into the mark on a later day is refused', async () => {
+    const note = await created(MARK);
+    const path = `${notesPath()}/${note.id}`;
+    expect((await call(server, path, { session: colleague.session, method: 'PATCH', json: { ...MARK, endDate: '2025-10-31' } })).status).toBe(403);
+    const edited = await call(server, path, { session: author.session, method: 'PATCH', json: { ...MARK, endDate: '2025-10-31' } });
+    expect((await edited.json() as { note: NoteView }).note).toMatchObject({ endDate: '2025-10-31', effect: 'wrong_guest_count' });
+    expect((await call(server, path, { session: admin.session, method: 'PATCH', json: { ...MARK, weekdays: [5] } })).status).toBe(200);
+    expect(await errorOf(await call(server, path, { session: author.session, method: 'PATCH', json: { ...MARK, endDate: '2026-06-03' } })))
+      .toEqual({ status: 400, error: 'invalid_request' });
+    const other = await created({ kind: 'other', startDate: '2026-07-01', endDate: '2026-07-01', effect: 'unknown', detail: 'Patio work' });
+    expect(await errorOf(await call(server, `${notesPath()}/${other.id}`, { session: author.session, method: 'PATCH', json: { ...MARK, startDate: '2026-07-01', endDate: '2026-07-01' } })))
+      .toEqual({ status: 400, error: 'invalid_request' });
+    expect((await call(server, path, { session: admin.session, method: 'DELETE' })).status).toBe(204);
+  });
+
+  it('saves a mark made from a past calendar event unlinked', async () => {
+    const location = await addLocation(server, { orgId, name: 'Linked Mark Room' });
+    const added = await createOwnerCalendarStore(server.connection).add({ orgId } as unknown as OrgScope, location, { kind: 'file', label: 'Past' }, {
+      events: [{ uid: 'halloween@bookings.example.test', title: 'Costume night', startDate: '2025-10-31', endDate: '2025-10-31', startTime: null, endTime: null, keyed: true }],
+      skippedRepeating: 0,
+    }, { createdBy: 'fixture', now: server.clock.now() });
+    if (added === 'calendar_limit') throw new Error('calendar_limit');
+    const note = await created({ ...MARK, endDate: '2025-10-31', fromEvent: { calendarId: added.id, uid: 'halloween@bookings.example.test' } }, author, location);
+    expect(note.fromEvent).toBeNull();
+    const stored = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) });
+    expect(stored).not.toHaveProperty('fromEvent');
+  });
+
+  it('drops the link when a note made from a past calendar event is edited into a mark; an edit that stays keeps it', async () => {
+    const location = await addLocation(server, { orgId, name: 'Edited Mark Room' });
+    const added = await createOwnerCalendarStore(server.connection).add({ orgId } as unknown as OrgScope, location, { kind: 'file', label: 'Past' }, {
+      events: [{ uid: 'fall-fest@bookings.example.test', title: 'Fall fest', startDate: '2025-10-31', endDate: '2025-10-31', startTime: null, endTime: null, keyed: true }],
+      skippedRepeating: 0,
+    }, { createdBy: 'fixture', now: server.clock.now() });
+    if (added === 'calendar_limit') throw new Error('calendar_limit');
+    const plain = { kind: 'other', startDate: '2025-10-31', endDate: '2025-10-31', effect: 'unknown', detail: 'Synthetic detail' };
+    const note = await created({ ...plain, fromEvent: { calendarId: added.id, uid: 'fall-fest@bookings.example.test' } }, author, location);
+    expect(note.fromEvent).not.toBeNull();
+    const path = `${notesPath(location)}/${note.id}`;
+    const kept = await call(server, path, { session: author.session, method: 'PATCH', json: { ...plain, detail: 'Other synthetic detail' } });
+    expect((await kept.json() as { note: NoteView }).note.fromEvent).not.toBeNull();
+    const marked = await call(server, path, { session: author.session, method: 'PATCH', json: { ...MARK, endDate: '2025-10-31' } });
+    expect((await marked.json() as { note: NoteView }).note).toMatchObject({ effect: 'wrong_guest_count', fromEvent: null });
+    const stored = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) });
+    expect(stored).not.toHaveProperty('fromEvent');
+  });
+
+  it('readNoteContent refuses the mark without the town’s date, so TownwiseAI can never save one', () => {
+    expect(readNoteContent(MARK, '2026-06-01')).toBeNull();
+    expect(readNoteContent(MARK, '2026-06-01', { townToday: '2026-06-01' })).toMatchObject({ effect: 'wrong_guest_count', detail: null, title: null });
   });
 });

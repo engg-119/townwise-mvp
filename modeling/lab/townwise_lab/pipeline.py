@@ -3,8 +3,9 @@
 Runs two engines (design decision 8): the baseline engine (baseline.py) always, and the notebook's model (hybrid,
 holiday multipliers, optional weekday regime) when the history spans MIN_HISTORY_DAYS. Both are backtested on the same
 weeks (the model's quarterly refits, the baseline's weekly cutoffs, each week scored 28 and 7 days ahead), and the one
-returned is the current run's engine unless the other's backtest weekly WAPE is at least 0.5 points lower and it passes
-the gate's coverage, bias, weekday-bias and weekday-median checks (choose_engine, passes). The returned engine's backtest, six-month folds and
+returned is the current run's engine unless the other's backtest weekly WAPE is at least 0.5 points lower, that win is
+significant week by week (switch_p_value, D69), and it passes the gate's coverage, bias, weekday-bias and weekday-median
+checks (choose_engine, passes); with no current run the baseline is returned unless the model wins the same way. The returned engine's backtest, six-month folds and
 comparison with the current published run make the scorecard, with each engine's own figures beside them, and its run
 reaches today plus 91 days (its forecast tier, D42) and, when that tier is backed, on to today plus 365 (its outlook,
 D52; forecast.run_end), with the outlook's ranges by outlook_ratios. Nothing here logs or prints.
@@ -14,13 +15,15 @@ import re
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 from townwise_lab import backtest, baseline, compare, features, forecast, holidays, metrics, model, schema
 from townwise_lab.forecast import iso
 
 # From the first to the last history day: the span that always gives 12 horizon-28 backtest weeks with an 80% range,
-# so the gate can judge the draft (GATE.minHistoryDays, decided by the owner on 2026-11-10 (spec D27), which the API checks before it starts
-# a calibration). The first refit is up to 30 days after first day + 364, scoring starts up to 34 days after it, and the
+# so the gate can judge the draft (GATE.minHistoryDays, decided by the owner on 2026-11-10 (spec D27): the gate's check
+# on a first model forecast. The API starts any calibration from GATE.baselineMinHistoryDays, 230 days, and under this
+# span only the baseline runs). The first refit is up to 30 days after first day + 364, scoring starts up to 34 days after it, and the
 # 12th week with a range is the 24th scored, ending 167 days after the first: 364 + 30 + 34 + 167. Pinned by
 # test_min_history_days_always_gives_twelve_weeks_with_a_range.
 MIN_HISTORY_DAYS = 595
@@ -30,6 +33,10 @@ SHORT_HORIZON = 7
 LONG_HORIZON = forecast.FORECAST_DAYS  # reported, never gated: each week forecast at least 91 days before its Monday
 CONFORMAL_MIN = 9  # independent windows an outlook's 80% conformal rank needs (as baseline.weekly_band: n of 9 or more)
 ENGINE_MARGIN = 0.005  # an engine switch needs the other's backtest weekly WAPE 0.5 points lower on the same weeks
+# D69: and a one-sided Diebold-Mariano test on those weeks' absolute errors under this p-value [CONFIRM]. A 0.5-point
+# gap over about 40 noisy weeks is often luck; the test asks whether the other engine won week after week.
+SWITCH_ALPHA = 0.10
+SWITCH_LAGS = HORIZON // 7  # weeks forecast from the same refit share errors: Newey-West over 4 weeks of overlap
 # The publish gate's absolute checks an engine must pass to be returned over the other (api/src/lab/gate.ts GATE)
 WEEKS_WITH_RANGE_MIN = 12  # GATE.heldOutWeeksMin
 COVERAGE_MIN, COVERAGE_MAX = 0.65, 0.95  # GATE.coverageMin and GATE.coverageMax
@@ -41,7 +48,8 @@ CODE_VERSION = re.compile(r"[0-9a-f]{40}")
 
 def frame_of(inp: dict) -> pd.DataFrame:
     """The day frame (see features) for a valid LabInput: one ev_<group> column per event group it names, "one_off"
-    included, and the holiday flags from the dates."""
+    included, the holiday flags from the dates, and features.PRIVATE_ON_CLOSED (forecast.private_on_closed_weekday),
+    which training_rows reads, so every engine and backtest leaves out the same private days (D70)."""
     days = inp["days"]
     dates = pd.Series(pd.to_datetime([d["date"] for d in days]), name="date")
     columns = {"date": dates, "weekday": dates.dt.day_name(),
@@ -50,9 +58,11 @@ def frame_of(inp: dict) -> pd.DataFrame:
     for group in sorted({g for d in days for g in d["events"]}):
         columns[features.EVENT_PREFIX + group] = [int(group in d["events"]) for d in days]
     columns |= {"private_event": [int(d["privateEvent"]) for d in days], "closed": [d["closed"] for d in days],
-                "booked": [d["booked"] for d in days]}
+                "booked": [d["booked"] for d in days], "party": [d["party"] for d in days]}
     frame = pd.DataFrame(columns)
-    return pd.concat([frame, features.holiday_flags(frame.date)], axis=1)
+    frame = pd.concat([frame, features.holiday_flags(frame.date)], axis=1)
+    frame[features.PRIVATE_ON_CLOSED] = forecast.private_on_closed_weekday(frame)
+    return frame
 
 
 def _failure(calibration_id: str | None, code: str) -> dict:
@@ -81,19 +91,40 @@ def passes(bt: dict, engine: str, recorded_bias: float | None = None) -> bool:
     return abs(bt["bias"]) <= BASELINE_BIAS_MAX + 1e-12 and wape < bt["median_wape"]
 
 
+def switch_p_value(incumbent_err: pd.Series, challenger_err: pd.Series, lags: int = SWITCH_LAGS) -> float:
+    """D69: the one-sided Diebold-Mariano p-value that the challenger's weekly absolute errors are lower than the
+    incumbent's on the same weeks (the two series' shared index): the mean loss difference over its Newey-West
+    (Bartlett) standard error, read against Student's t with T - 1 degrees of freedom. 1.0, never significant, with fewer
+    than WEEKS_WITH_RANGE_MIN shared weeks or differences that do not vary."""
+    weeks = incumbent_err.index.intersection(challenger_err.index)
+    d = (incumbent_err[weeks] - challenger_err[weeks]).to_numpy(dtype=float)
+    T = len(d)
+    if T < WEEKS_WITH_RANGE_MIN:
+        return 1.0
+    c = d - d.mean()
+    var = float(c @ c) / T
+    for lag in range(1, min(lags, T - 1) + 1):
+        var += 2 * (1 - lag / (lags + 1)) * float(c[lag:] @ c[:-lag]) / T
+    if not var > 1e-18:
+        return 1.0
+    return float(stats.t.sf(d.mean() / np.sqrt(var / T), T - 1))
+
+
 def choose_engine(current: str | None, model_wape: float | None, baseline_wape: float, *, model_ok: bool = True,
-                  baseline_ok: bool = True) -> str:
+                  baseline_ok: bool = True, model_significant: bool = False,
+                  baseline_significant: bool = False) -> str:
     """The engine a calibration returns: the current run's (`current`) unless the other's backtest weekly WAPE is at
-    least 0.5 points lower on the same weeks and the other passes its checks (`model_ok`, `baseline_ok`: passes); with
-    no current run, the model when it is 0.5 points lower than the baseline, else the baseline, but the other when that
-    one fails its checks and the other passes them. A tie keeps the current engine, and a current engine that fails is
-    kept (its run stays published until it lapses; then there is no current run). Without a model (`model_wape` None),
-    the baseline."""
+    least 0.5 points lower on the same weeks, that win is significant (`model_significant`, `baseline_significant`:
+    switch_p_value under SWITCH_ALPHA, D69) and the other passes its checks (`model_ok`, `baseline_ok`: passes); with
+    no current run, the model when it wins the baseline that way, else the baseline, but the other when that one fails
+    its checks and the other passes them. A tie or an insignificant win keeps the current engine, and a current engine
+    that fails is kept (its run stays published until it lapses; then there is no current run). Without a model
+    (`model_wape` None), the baseline."""
     if model_wape is None:
         return "baseline"
     ok = {"model": model_ok, "baseline": baseline_ok}
-    lower = {"model": model_wape <= baseline_wape - ENGINE_MARGIN + 1e-12,
-             "baseline": baseline_wape <= model_wape - ENGINE_MARGIN + 1e-12}
+    lower = {"model": model_wape <= baseline_wape - ENGINE_MARGIN + 1e-12 and model_significant,
+             "baseline": baseline_wape <= model_wape - ENGINE_MARGIN + 1e-12 and baseline_significant}
     if current is None:
         winner = "model" if lower["model"] else "baseline"
         other = "baseline" if winner == "model" else "model"
@@ -375,10 +406,17 @@ def calibrate(inp: dict, code_version: str) -> dict:
 
     current = None if inp["champion"] is None else inp["champion"]["engine"]
     recorded_bias = None if inp["champion"] is None else inp["champion"]["recordedWeekdayBiasMeanAbs"]
+    significant = {"model": False, "baseline": False}
+    if model_bt is not None:  # D69: each engine's weekly absolute errors on the weeks both scored
+        err = {name: (b["weeks28"].pred - b["weeks28"].actual).abs() for name, b in (("model", model_bt),
+                                                                                       ("baseline", base_bt))}
+        significant = {"model": switch_p_value(err["baseline"], err["model"]) < SWITCH_ALPHA,
+                       "baseline": switch_p_value(err["model"], err["baseline"]) < SWITCH_ALPHA}
     engine = choose_engine(current, None if model_bt is None else model_bt["scores"]["weeklyWape"],
                            base_bt["scores"]["weeklyWape"],
                            model_ok=model_bt is not None and passes(model_bt, "model", recorded_bias),
-                           baseline_ok=passes(base_bt, "baseline", recorded_bias))
+                           baseline_ok=passes(base_bt, "baseline", recorded_bias),
+                           model_significant=significant["model"], baseline_significant=significant["baseline"])
     bt, preds = (model_bt, model_preds) if engine == "model" else (base_bt, base_preds)
     days28, weeks28, log_err, scores, window = bt["days28"], bt["weeks28"], bt["log_err"], bt["scores"], bt["window"]
 

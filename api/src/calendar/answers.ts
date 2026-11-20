@@ -22,11 +22,8 @@
 //   4. The suggestion is marked `answered` by compare-and-set (a computed sales suggestion is stored `answered` under its
 //      closure key). While TownwiseAI does not work on its own, nothing is written before it, and a standing weekday
 //      stays open: a calendar shows only its next weeks, so it never stands in for the rule a person would confirm.
-//      [CONFIRM: while TownwiseAI does not work on its own, a standing closed weekday a calendar covers stays open]
 // A location deleted while this ran keeps nothing it wrote. When a calendar is removed (or its Google access ends),
-// takeBackAnswers takes back the closure notes its answers saved that nobody changed since, as TownwiseAI. [CONFIRM:
-// removing a calendar, or its Google access ending, takes back the closure notes its answers saved that nobody changed
-// since]
+// takeBackAnswers takes back the closure notes its answers saved that nobody changed since, as TownwiseAI.
 // Never throws: a failure is logged by the location's id, and the switch it follows stands. Logs and the audit event
 // carry ids and counts only: never a title, a uid or a date.
 import { createHash } from 'node:crypto';
@@ -56,9 +53,9 @@ import { localDay, timeZoneOf } from '../time-zones.ts';
 import { closedDaysOf, closedEventsOf, closureNoteOfEvent, type CalendarEvent } from './closed-events.ts';
 import { FILE_HISTORY_DAYS, WINDOW_DAYS } from './ics.ts';
 
-/** A standing closed weekday is answered when this many of each of its weekdays, from tomorrow, are covered. [CONFIRM: 8 upcoming days of a weekday covered answer a standing closed weekday] */
+/** A standing closed weekday is answered when this many of each of its weekdays, from tomorrow, are covered. */
 export const UPCOMING_WEEKDAYS = 8;
-/** At most this many notes from calendar answers a run per location; the rest at the next run. [CONFIRM: at most 20 notes from calendar answers a run] */
+/** At most this many notes from calendar answers a run per location; the rest at the next run. */
 export const MAX_ANSWER_NOTES = 20;
 
 /** What an open suggestion proposes, as a calendar may answer it. */

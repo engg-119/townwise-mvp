@@ -5,7 +5,9 @@
 // making another (handlers/agent.ts). Every row gets its `noteId` when it is inserted, whatever the answer. An answer
 // whose note is written overrules a different answer sent at the same time, as a saved proposal overrules Not now
 // (stores/chat-proposals.ts): the note exists. It holds no person id (the audit event carries the actor) and no text:
-// `other` (Something else) stores the answer only.
+// `other` (Something else) stores the answer only. D71: a private event's question (`party_guests_<noteId>`) claims its
+// row with that event's note id as `noteId`: the note the answer edits, never one it makes; `guests` stores the answer
+// and never the count, which is in the note.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -32,7 +34,7 @@ function answerSchema(): Schema<AnswerFields> {
     orgId: { type: Schema.Types.ObjectId, required: true },
     locationId: { type: Schema.Types.ObjectId, required: true },
     questionId: { type: String, required: true },
-    answer: { type: String, required: true, enum: ['closed', 'open', 'not_sure', 'other'] },
+    answer: { type: String, required: true, enum: ['closed', 'open', 'not_sure', 'other', 'guests'] },
     noteId: { type: Schema.Types.ObjectId, required: true },
     status: { type: String, required: true, enum: ['saving', 'done'] },
     createdAt: { type: Date, required: true },
@@ -69,9 +71,10 @@ export interface AgentAnswerStore {
   find(scope: OrgScope, key: AnswerKey): Promise<AnswerRecord | null>;
   /**
    * Claims the question for this answer: inserts it as `saving`, or moves a `saving` row (an earlier try that stopped)
-   * to this answer, keeping its `noteId`. Null when it is already done.
+   * to this answer, keeping its `noteId`. Null when it is already done. `noteId` (D71) is the inserted row's note id, the
+   * note a private event's answer edits; else a new id.
    */
-  claim(scope: OrgScope, key: AnswerKey, input: { answer: QuestionAnswer; now: Date }): Promise<AnswerRecord | null>;
+  claim(scope: OrgScope, key: AnswerKey, input: { answer: QuestionAnswer; now: Date; noteId?: string }): Promise<AnswerRecord | null>;
   /**
    * `saving` to `done` with the claimed answer, only while the row still holds it. An answer whose note is written
    * (`noteWritten`) also moves a row a different answer took or finished meanwhile. True only for the call that changed
@@ -114,7 +117,7 @@ export function createAgentAnswerStore(connection: Connection): AgentAnswerStore
             { ...keyOf(scope, key), status: trusted({ $ne: 'done' }) },
             {
               $set: { answer: input.answer, status: 'saving', updatedAt: input.now },
-              $setOnInsert: { noteId: new Types.ObjectId(), createdAt: input.now },
+              $setOnInsert: { noteId: new Types.ObjectId(input.noteId), createdAt: input.now },
             },
             { upsert: true, returnDocument: 'after' },
           ).lean();

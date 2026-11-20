@@ -165,6 +165,9 @@ const NOTE_NOUN: Readonly<Record<NoteRecord['kind'], string>> = {
 
 function noteLabel(note: NoteRecord): string {
   if (note.kind === 'closure') return 'Your closure';
+  // D67. [CONFIRM: the words "The guest count was wrong (sales were right)", "Your note: guest count marked wrong" and
+  // "Guest count marked wrong"]
+  if (note.effect === 'wrong_guest_count') return 'Your note: guest count marked wrong';
   const guests = note.expectedGuests === null ? '' : `, ${String(note.expectedGuests)} ${note.expectedGuests === 1 ? 'guest' : 'guests'}`;
   if (note.effect === 'closed') return note.kind === 'private_event' ? `Your private buyout${guests}` : 'Your note: closed';
   const hours = note.startTime === null || note.endTime === null ? '' : `, ${clockWords(note.startTime)} to ${clockWords(note.endTime)}`;
@@ -202,6 +205,8 @@ const KIND_WORDS: Readonly<Record<RuleSchedule['kind'], string>> = {
 };
 const EFFECT_WORDS: Readonly<Record<RuleSchedule['effect'], string>> = {
   closed: 'closed', more_guests: 'more guests than usual', fewer_guests: 'fewer guests than usual', unknown: 'effect not known',
+  // A note's only (D67): the rules routes refuse it, so no schedule says this.
+  wrong_guest_count: 'guest count marked wrong',
 };
 
 function guestWords(guests: number): string {

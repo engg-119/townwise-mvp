@@ -23,7 +23,7 @@ export async function calendarClosedDays(
 
 /** The questions' input at the location now, with the records it came from. */
 export async function questionInputAt(ctx: Pick<TownwiseContext, 'stores' | 'now'>, scope: OrgScope, location: LocationRecord): Promise<{
-  input: QuestionInput; notes: NoteRecord[]; answers: AnswerRecord[];
+  input: QuestionInput & { readonly today: string }; notes: NoteRecord[]; answers: AnswerRecord[];
 }> {
   const [coverage, notes, answers, scheduled] = await Promise.all([
     ctx.stores.salesDays.coverage(scope, location.id),

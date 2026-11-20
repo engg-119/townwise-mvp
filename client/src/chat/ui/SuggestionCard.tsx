@@ -34,7 +34,7 @@ import type { AgentPanelState, Decided } from '../useAgentPanel';
 // the weekly switch, the organization's switch for reading the calendars' event titles: admins turn it off or on (staff
 // open as admin only off), members see its state.
 
-/** The switch's words (spec P25), with the town's name. [CONFIRM: the panel's and switch's words] (D59 slice 3: what it saves on its own) */
+/** The switch's words (spec P25), with the town's name (D59 slice 3: what it saves on its own). */
 export function weeklyWords(town: string): string {
   return `Once a week TownwiseAI reads the next 3 months of ${town}’s calendar with your notes and rules, and suggests notes or rules for you to accept. Where TownwiseAI works on its own, it saves the ones it’s sure of instead, with Undo in its activity. It sends them to Anthropic and uses this organization’s TownwiseAI budget.`;
 }

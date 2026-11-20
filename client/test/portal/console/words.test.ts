@@ -55,6 +55,9 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
   ['agent.question_answered', { locationId: 'l1', questionId: 'likely_closed_2026-03-14', answer: 'not_sure' }, 'Not sure'],
   ['agent.question_answered', { locationId: 'l1', questionId: 'likely_closed_2026-03-14', answer: 'other' }, 'Answered in the chat'],
   ['agent.question_answered', { locationId: 'l1', questionId: 'gap_2026-12-24_2026-12-26', answer: 'other' }, 'Answered in the chat'],
+  // D71: a private event's guests, never the count.
+  ['agent.question_answered', { locationId: 'l1', questionId: 'party_guests_0000000000000000000000a5', answer: 'guests' }, 'Saved the guest count'],
+  ['agent.question_answered', { locationId: 'l1', questionId: 'party_guests_0000000000000000000000a5', answer: 'not_sure' }, 'Skipped'],
   ['agent.suggestion_accepted', { locationId: 'l1', suggestionId: 's1', type: 'note' }, 'Note'],
   ['agent.suggestion_dismissed', { locationId: 'l1', suggestionId: 's1', type: 'rule' }, 'Business rule'],
   // D46: a suggested closure rule's source, and whether it was edited; a read's and an undo's counts of them.

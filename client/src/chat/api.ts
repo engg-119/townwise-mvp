@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { ApiClient } from '../api/client';
 import { withOrgId } from '../portal/api';
 import { dataItemSchema, type DataItem } from '../portal/data/api';
-import { createNote, NOTE_EFFECTS, NOTE_KINDS, noteSchema, type Note } from '../portal/locations/api';
+import { createNote, NOTE_KINDS, noteSchema, SHARED_EFFECTS, type Note } from '../portal/locations/api';
 import { knownRuleSuggestions, ruleScheduleSchema, ruleSchema, type Rule, type RuleSuggestion } from '../portal/rules/api';
 import type { SseEvent } from '../api/sse';
 import { agentAutoSchema, agentChangeItemSchema, noteSuggestionSchema, type AgentAuto, type NoteSuggestion } from './agentChanges';
@@ -594,6 +594,14 @@ const questionSchema = z.discriminatedUnion('kind', [
   z.object({
     id: z.string(), kind: z.literal('likely_closed'), date: dateSchema, guests: z.number().int().min(0), typicalGuests: z.number().int(),
   }),
+  /**
+   * D71: how many guests came to a past private event with no count: its note's id, dates and weekdays, never its title.
+   * A note over several days asks for each day's guests.
+   */
+  z.object({
+    id: z.string(), kind: z.literal('party_guests'), noteId: z.string(), startDate: dateSchema, endDate: dateSchema,
+    weekdays: z.array(z.number().int()).nullable(),
+  }),
 ]);
 export type Question = z.infer<typeof questionSchema>;
 
@@ -604,6 +612,8 @@ const activitySchema = z.discriminatedUnion('kind', [
     noteKind: noteProposalSchema.shape.kind, startDate: dateSchema, endDate: dateSchema,
   }),
   z.object({ at: z.string(), kind: z.literal('question_answered'), questionId: z.string(), answer: z.enum(['open', 'not_sure', 'other']) }),
+  /** D71: a private event's guests saved from its question: the note's id and dates, never the count. */
+  z.object({ at: z.string(), kind: z.literal('guest_count_saved'), noteId: z.string(), startDate: dateSchema, endDate: dateSchema }),
   /** F3: a stored file Townwise read, and what it added. Never the file's name. */
   z.object({
     at: z.string(), kind: z.literal('file_processed'), fileId: z.string(), firstDate: dateSchema, lastDate: dateSchema, dayCount: z.number().int(),
@@ -619,7 +629,7 @@ const suggestionCalendarSchema = z.object({ id: z.string(), title: z.string(), s
 /** A suggested note: every field of the notes route's body, hours included. */
 const suggestedNoteSchema = z.object({
   kind: z.enum(NOTE_KINDS), startDate: dateSchema, endDate: dateSchema, weekdays: z.array(z.number().int()).nullable(),
-  effect: z.enum(NOTE_EFFECTS), expectedGuests: z.number().int().nullable(), detail: z.string().nullable(),
+  effect: z.enum(SHARED_EFFECTS), expectedGuests: z.number().int().nullable(), detail: z.string().nullable(),
   startTime: z.string().nullable(), endTime: z.string().nullable(),
   /** The event's name (D49): always null from the weekly pass so far; an API from before it sends none. */
   title: z.string().nullish(),
@@ -722,10 +732,11 @@ export async function loadAgentPanel(api: ApiClient, locationId: string): Promis
   };
 }
 
-export type QuestionAnswer = 'closed' | 'open' | 'not_sure' | 'other';
+/** `guests` (D71) answers a private event's question only, with its count. */
+export type QuestionAnswer = 'closed' | 'open' | 'not_sure' | 'other' | 'guests';
 
 const answerResultSchema = z.object({
-  question: z.object({ id: z.string(), answer: z.enum(['closed', 'open', 'not_sure', 'other']) }),
+  question: z.object({ id: z.string(), answer: z.enum(['closed', 'open', 'not_sure', 'other', 'guests']) }),
   note: noteSchema.nullable(),
 });
 export type AnswerResult = z.infer<typeof answerResultSchema>;
@@ -733,11 +744,14 @@ export type AnswerResult = z.infer<typeof answerResultSchema>;
 /**
  * `closed` saves a closure note over the question's days, and `open` on a likely-closed question the note that it was
  * open with few guests; every answer stops the question being asked again. The body is the answer alone: `other`
- * (Something else…) carries no words, which go to the chat as a message.
+ * (Something else…) carries no words, which go to the chat as a message. D71: `guests` carries the count a private
+ * event's question asks for (`{ answer: 'guests', guests }`), which the API writes into that note, answered as `note`.
  */
-export function answerQuestion(api: ApiClient, locationId: string, questionId: string, answer: QuestionAnswer): Promise<AnswerResult> {
+export function answerQuestion(
+  api: ApiClient, locationId: string, questionId: string, answer: QuestionAnswer, guests?: number,
+): Promise<AnswerResult> {
   return api.json(`${locationPath(locationId)}/agent/questions/${encodeURIComponent(questionId)}`, answerResultSchema, {
-    method: 'POST', body: { answer },
+    method: 'POST', body: answer === 'guests' ? { answer, guests } : { answer },
   });
 }
 

@@ -449,6 +449,8 @@ describe('this month', () => {
     const items = monthItems(TODAY, calendar);
     expect(items.map((item) => [item.kind, item.dates])).toEqual([['event', 'Nov 11'], ['note', 'Nov 20 to 22'], ['event', 'Nov 26']]);
     expect(eventLine({ title: 'Veterans Day', kind: 'holiday', scope: 'national' })).toBe('Veterans Day. Federal holiday.');
+    // D68: Halloween is a holiday no law sets, so never "Federal holiday".
+    expect(eventLine({ title: 'Halloween', kind: 'holiday', scope: 'observance' })).toBe('Halloween. Holiday.');
     expect(eventLine({ title: 'Sample game', kind: 'event', scope: 'town' })).toBe('Sample game. Town event.');
   });
 });
@@ -549,6 +551,20 @@ describe('the month card', () => {
     const slow = input(days, dayContext([slowNote], []));
     expect(cellOn(slow, '2026-11-03', [slowNote])).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
     expect(monthDay('2026-11-03', slow)).toMatchObject({ likelyClosed: false });
+  });
+
+  test('a day whose guest count is marked wrong (D67) says its stored count and its net sales, as Analytics’ day panel does', () => {
+    // 100 guests a day at $20 a guest; Mon, Nov 2, 2026 marked wrong.
+    const mark = note({ kind: 'other', startDate: '2026-11-02', endDate: '2026-11-02', effect: 'wrong_guest_count', detail: null, expectedGuests: null });
+    const days = decodeHistory(historyBody(run('2024-09-01', '2026-11-04', () => 100)), [mark]);
+    const home = input(days, dayContext([mark], []));
+    const marked = monthDay('2026-11-02', home);
+    expect(marked).toMatchObject({ value: null, likelyClosed: false });
+    expect(thisDayLine(marked, 'guests')).toBe('100 guests recorded, guest count marked wrong. Net sales $2,000.');
+    // Net sales are the day's own, as stored.
+    expect(thisDayLine(monthDay('2026-11-02', { ...home, metric: 'netSales' }), 'netSales')).toBe('$2,000');
+    // An unmarked day reads as before.
+    expect(thisDayLine(monthDay('2026-11-03', home), 'guests')).toBe('100 guests');
   });
 
   test('this week’s own near-empty day (spec D32) is likely closed, in This month’s words, but never today in the app', () => {

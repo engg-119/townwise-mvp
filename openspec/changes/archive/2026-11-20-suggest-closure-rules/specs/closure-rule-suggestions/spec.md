@@ -96,7 +96,7 @@ A rule with the same words and no schedule SHALL not block it. The weekly pass S
 - **THEN** only the file suggestion is listed
 
 ### Requirement: Nothing changes until someone confirms, edits or dismisses
-A file or sales suggestion SHALL change no forecast and no rule until it is accepted. Any member outside view-as, staff open as admin among them, SHALL decide one through `org.agent.rule_suggestion_accept` and `org.agent.rule_suggestion_dismiss`. Both are `member` routes, 2 KB, at `.../agent/rule-suggestions/:suggestionId/`. They SHALL answer 404 for a weekly suggestion before any write, and the weekly routes SHALL answer 404 for a file or sales suggestion.
+A file or sales suggestion SHALL change no forecast and no rule until it is accepted. The one exception is D59 slice 3: while TownwiseAI works on its own (the `TOWNWISE_AGENT_AUTO` switch and the organization's `agentAuto` switch), it MAY apply a closure rule suggestion itself when the model rated it `high`, the code checks pass, it conflicts with no rule or note a person made on those days and its dedupe key was never used at the location, with Undo, and at most 2 rules a week per location. Anything else stays open for a person. Any member outside view-as, staff open as admin among them, SHALL decide one through `org.agent.rule_suggestion_accept` and `org.agent.rule_suggestion_dismiss`. Both are `member` routes, 2 KB, at `.../agent/rule-suggestions/:suggestionId/`. They SHALL answer 404 for a weekly suggestion before any write, and the weekly routes SHALL answer 404 for a file or sales suggestion.
 
 **Confirm and Edit.**
 

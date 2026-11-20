@@ -1,5 +1,6 @@
 // POST /api/places/autocomplete and POST /api/places/details: the Places proxy that finds the business when someone
-// requests access; and (D29) POST /api/places/map, the signed map of every checked place, which never calls Google.
+// requests access; (D29) POST /api/places/map, the signed map of every checked place, which never calls Google; and
+// GET /api/places/status, whether the search is on, for the pages that have no GET /api/org to read it from.
 // Nothing from these routes is stored, and the typed text, place ids, addresses, Google's answers and the signed map
 // URL never reach a log or an audit event: a failure logs the route id and a code only.
 import { randomUUID } from 'node:crypto';
@@ -100,6 +101,15 @@ export function townOfAddress(components: readonly AddressComponent[]): Town | n
   if (researched !== undefined) return { townId: researched.townId, name: researched.name, state: researched.state };
   const [first] = names;
   return first === undefined ? null : { townId: null, name: first, state };
+}
+
+/**
+ * GET /api/places/status: `{ placeSearch }`, whether the search is on, as GET /api/org says it. P3 and P21's setup
+ * panel read it before they offer the search. It never calls Google and spends no limiter.
+ */
+export function placesStatus(ctx: TownwiseContext, _req: Request, res: Response): Promise<void> {
+  res.status(200).json({ placeSearch: ctx.places !== null });
+  return Promise.resolve();
 }
 
 /**
