@@ -19,7 +19,7 @@ import { useFocusFallback } from '../ui/messageFocus';
 import type { PopoverAnchor } from '../ui/Popover';
 import { AppChip, SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
-import { FIGURE_KEY, forecastLabel, forecastWords, type CalendarDayView, type EffectGrade, type EffectMark, type ImportedEvent, type ReasonLine } from './model';
+import { BACKTEST_LABEL, FIGURE_KEY, forecastLabel, forecastWords, type CalendarDayView, type EffectGrade, type EffectMark, type ImportedEvent, type ReasonLine } from './model';
 
 // The Calendar's day panel (P28, spec 16.3): a region "Selected day", beside the grid from 1024px and under it below.
 // Top to bottom: the day; its Forecast (the published figure and range, what the notes changed, a booked or closed day,
@@ -185,8 +185,9 @@ export function CalendarDay(props: {
   }
   const words = forecastWords(view.forecast, props.locationName);
   const label = forecastLabel(view.forecast);
-  // The figure's kind in words, unless the part's label already says it (UI review S2): an outlook keeps “Forecast”.
-  const figureKey = words.figure === null || FIGURE_KEY[words.figure.source] === label ? null : FIGURE_KEY[words.figure.source];
+  // The figure's kind in words, unless the part's label already says it (UI review S2): an outlook keeps “Forecast”, and
+  // a backtest's figure (D72) is never called a forecast.
+  const figureKey = words.figure === null || FIGURE_KEY[words.figure.source] === label || label === BACKTEST_LABEL ? null : FIGURE_KEY[words.figure.source];
   const ro = readOnlyId === null ? null : { disabled: true, describedBy: readOnlyId };
   const nothing = view.events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0
     && view.researched.length === 0;

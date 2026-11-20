@@ -347,6 +347,8 @@ function CalendarView(): React.JSX.Element {
     today, covered: shown.range, forecast: forecastWindow, salesDays: trustedGuestDays(shown.days, notes.data.list), events: shown.calendar.events,
     notes: notes.data.list,
     rules: notes.data.rules, imported: hasCalendars ? shown.stored : [], found: shown.calendar.found, filters,
+    // D72: past dates no run covers show the backtest's figure (Home leaves it out).
+    backtest: true,
   }), [today, shown, forecastWindow, notes.data, hasCalendars, filters]);
   const rows = useMemo(() => (input === null || view === 'week' ? [] : buildGrid(month, input, bounds)), [input, view, month, bounds]);
   const stripDays = useMemo(() => stripDates(strip), [strip]);

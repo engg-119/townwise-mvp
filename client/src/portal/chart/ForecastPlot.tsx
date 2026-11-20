@@ -7,7 +7,9 @@ import { Mono } from '../ui/text';
 // The forecast plot (spec P11's This week chart, generalized for the Calendar by D64), on web and native alike
 // (react-native-svg): one column a day. The published forecast's middle is a hollow `mint` point on a dashed `mint`
 // line, its range (low to high, as the words give it) a `raised` band with 1px `line` edges, and an outlook day's range
-// (D52) the same band lighter with dashed edges; a stored figure, the actual, is a solid `mint` point beside its
+// (D52) the same band lighter with dashed edges; a backtest day's (D72, the Calendar's past dates no run covers) is a
+// hollow `text2` point on its own dotted `text2` line over the lighter band with dotted edges, so it never joins or
+// passes for a forecast's, by color or pattern alone; a stored figure, the actual, is a solid `mint` point beside its
 // forecast; the same weekday last year is a faint 1px `line` line with small dots. A day with no point leaves a gap in
 // the lines. Home draws its 7 days with it (home/WeekChart.tsx), the Calendar its month above the grid
 // (calendar/MonthChart.tsx) and each day of its week view as a slice (`from`, `to`): the viewBox shows only those
@@ -38,13 +40,15 @@ export interface PlotDay {
   point: PlotPoint | null;
   /** An outlook day (D52): its range drawn lighter with dashed edges. */
   outlook?: boolean;
+  /** A backtest's figure (D72): its own dotted line and hollow `text2` point, its range lighter with dotted edges. */
+  backtest?: boolean;
   /** The stored figure, drawn beside the forecast. */
   actual: number | null;
   lastYear: number | null;
 }
 
 /** Which series have at least one figure drawn, for the key. */
-export interface PlotDrawn { forecast: boolean; actual: boolean; lastYear: boolean; outlook?: boolean }
+export interface PlotDrawn { forecast: boolean; actual: boolean; lastYear: boolean; outlook?: boolean; backtest?: boolean }
 
 interface At { x: number; y: number }
 
@@ -131,10 +135,16 @@ export function ForecastPlot(props: {
   const near = (index: number): boolean => index >= from - 1 && index <= to;
   const beside = Math.min(9, slot * 0.2);
   const half = slot * 0.25;
-  const band = (outlook: boolean): string[] => bandPaths(days.map((day, index) => (
-    day.point === null || !near(index) || (day.outlook === true) !== outlook ? null : { x: x(index), low: y(day.point.low), high: y(day.point.high) }
+  const bandOf = (day: PlotDay): 'range' | 'outlook' | 'backtest' => (day.backtest === true ? 'backtest' : day.outlook === true ? 'outlook' : 'range');
+  const band = (kind: 'range' | 'outlook' | 'backtest'): string[] => bandPaths(days.map((day, index) => (
+    day.point === null || !near(index) || bandOf(day) !== kind ? null : { x: x(index), low: y(day.point.low), high: y(day.point.high) }
   )), half);
-  const middle = linePath(days.map((day, index) => (day.point === null || !near(index) ? null : { x: x(index), y: y(day.point.mid) })));
+  // A forecast's line and a backtest's never join.
+  const middleOf = (backtest: boolean): string => linePath(days.map((day, index) => (
+    day.point === null || !near(index) || (day.backtest === true) !== backtest ? null : { x: x(index), y: y(day.point.mid) }
+  )));
+  const middle = middleOf(false);
+  const backtestMiddle = middleOf(true);
   const words = props.words ?? [];
   const lastYearAt = (index: number): number | null => {
     const day = days[index];
@@ -156,8 +166,9 @@ export function ForecastPlot(props: {
         <Path data-chosen="day" d={chosenBox(chosen, slot, height)} fill={C.mint} fillOpacity={0.16} stroke={C.mint} strokeWidth={1} />
       )}
       <Path d={`M${String(r2(from * slot))} 0.5 h${String(r2(width))} M${String(r2(from * slot))} ${String(height - 0.5)} h${String(r2(width))}`} stroke={C.border} strokeWidth={1} />
-      {band(false).map((d) => <Path key={d} data-series="range" d={d} fill={C.raised} stroke={C.line} strokeWidth={1} />)}
-      {band(true).map((d) => <Path key={d} data-series="outlook-range" d={d} fill={C.raised} fillOpacity={0.5} stroke={C.line} strokeWidth={1} strokeDasharray="3 2" />)}
+      {band('range').map((d) => <Path key={d} data-series="range" d={d} fill={C.raised} stroke={C.line} strokeWidth={1} />)}
+      {band('outlook').map((d) => <Path key={d} data-series="outlook-range" d={d} fill={C.raised} fillOpacity={0.5} stroke={C.line} strokeWidth={1} strokeDasharray="3 2" />)}
+      {band('backtest').map((d) => <Path key={d} data-series="backtest-range" d={d} fill={C.raised} fillOpacity={0.5} stroke={C.line} strokeWidth={1} strokeDasharray="1 2" />)}
       {lastYear === '' ? null : <Path data-series="last-year" d={lastYear} fill="none" stroke={C.line} strokeOpacity={0.7} strokeWidth={1} />}
       {days.map((day, index) => {
         const value = lastYearAt(index);
@@ -166,8 +177,12 @@ export function ForecastPlot(props: {
         );
       })}
       {middle === '' ? null : <Path data-series="forecast" d={middle} fill="none" stroke={C.mint} strokeWidth={1.5} strokeDasharray="4 3" />}
-      {days.map((day, index) => (day.point === null || !drawn(index) ? null : (
+      {days.map((day, index) => (day.point === null || day.backtest === true || !drawn(index) ? null : (
         <Circle key={day.date} data-series="forecast-point" cx={x(index)} cy={y(day.point.mid)} r={4} fill={C.panel} stroke={C.mint} strokeWidth={1.5} />
+      )))}
+      {backtestMiddle === '' ? null : <Path data-series="backtest" d={backtestMiddle} fill="none" stroke={C.text2} strokeWidth={1.5} strokeDasharray="1 3" />}
+      {days.map((day, index) => (day.point === null || day.backtest !== true || !drawn(index) ? null : (
+        <Circle key={day.date} data-series="backtest-point" cx={x(index)} cy={y(day.point.mid)} r={3.5} fill={C.panel} stroke={C.text2} strokeWidth={1.5} />
       )))}
       {days.map((day, index) => (day.actual === null || !drawn(index) ? null : (
         <Circle key={day.date} data-series="actual" cx={r2(x(index) + (day.point === null ? 0 : beside))} cy={y(day.actual)} r={4.5} fill={C.mint} />
@@ -192,7 +207,7 @@ export function ForecastPlot(props: {
   );
 }
 
-type SwatchKind = 'forecast' | 'range' | 'outlook' | 'actual' | 'lastYear';
+type SwatchKind = 'forecast' | 'range' | 'outlook' | 'backtest' | 'backtestRange' | 'actual' | 'lastYear';
 
 function Swatch(props: { kind: SwatchKind }): React.JSX.Element {
   return <View style={swatch[props.kind]} />;
@@ -204,6 +219,7 @@ export function PlotKey(props: { drawn: PlotDrawn; actual: string; testID: strin
   const items: { kind: SwatchKind; words: string }[] = [
     ...(drawn.forecast ? [{ kind: 'forecast' as const, words: 'Forecast' }, { kind: 'range' as const, words: 'Likely range' }] : []),
     ...(drawn.outlook === true ? [{ kind: 'outlook' as const, words: 'Outlook range' }] : []),
+    ...(drawn.backtest === true ? [{ kind: 'backtest' as const, words: 'Backtest' }, { kind: 'backtestRange' as const, words: 'Backtest range' }] : []),
     ...(drawn.actual ? [{ kind: 'actual' as const, words: props.actual }] : []),
     ...(drawn.lastYear ? [{ kind: 'lastYear' as const, words: 'Same weekday last year' }] : []),
   ];
@@ -226,6 +242,8 @@ const swatch = StyleSheet.create({
   forecast: { width: 10, height: 10, borderRadius: 5, borderWidth: 1.5, borderColor: C.mint, backgroundColor: C.panel },
   range: { width: 12, height: 12, borderWidth: 1, borderColor: C.line, backgroundColor: C.raised },
   outlook: { width: 12, height: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: C.line },
+  backtest: { width: 9, height: 9, borderRadius: 4.5, borderWidth: 1.5, borderColor: C.text2, backgroundColor: C.panel },
+  backtestRange: { width: 12, height: 12, borderWidth: 1, borderStyle: 'dotted', borderColor: C.line },
   actual: { width: 10, height: 10, borderRadius: 5, backgroundColor: C.mint },
   lastYear: { width: 16, height: 1, backgroundColor: C.line },
 });

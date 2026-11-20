@@ -168,3 +168,34 @@ test('the chart is hidden from screen readers and takes no tab stop', () => {
   // Its scroller too: a browser makes an overflowing scroller a tab stop unless it says otherwise.
   expect(screen.getByTestId('calendar-month-chart-scroller').getAttribute('tabindex')).toBe('-1');
 });
+
+test('backtest days (D72) draw apart from the forecast, dotted and text2, the key names them, and the month says no “No forecast”', () => {
+  const backtest = (date: string) => ({
+    date, engine: 'model', dataThrough: '2026-06-30', low: 100, mid: 125, high: 150, runId: 'r0', actual: null, inRange: null,
+  });
+  const window = forecastOf([forecastDay({ date: '2026-11-12' }), forecastDay({ date: '2026-11-13' })]) as ForecastWindow;
+  const reads: CalendarInput = {
+    today: TODAY, covered: { from: '2026-10-26', to: '2026-12-06' }, backtest: true,
+    forecast: { ...window, backtest: [backtest('2026-11-02'), backtest('2026-11-03'), backtest('2026-11-04')] },
+    salesDays: [{ date: '2026-11-03', guests: 131, netSalesCents: 262_000 }], events: [], notes: [], rules: [], imported: [], filters: ALL_FILTERS,
+  };
+  renderChart('2026-11-03', calendarChart(NOVEMBER, reads, null));
+  expect(series('backtest-point')).toHaveLength(3);
+  expect(series('backtest-point')[0]?.getAttribute('stroke')).toBe(theme.color.text2);
+  expect(series('forecast-point')).toHaveLength(2);
+  // Each has its own line, never joined: the backtest's dotted, the forecast's dashed.
+  expect(series('backtest')).toHaveLength(1);
+  expect(series('backtest')[0]?.getAttribute('stroke-dasharray')).toBe('1 3');
+  expect(series('backtest')[0]?.getAttribute('d')?.match(/[ML]/g)).toEqual(['M', 'L', 'L']);
+  expect(series('forecast')[0]?.getAttribute('stroke-dasharray')).toBe('4 3');
+  expect(series('backtest-range')).toHaveLength(1);
+  expect(series('backtest-range')[0]?.getAttribute('stroke-dasharray')).toBe('1 2');
+  expect(screen.getByTestId('calendar-month-chart-key-items').textContent).toBe('ForecastLikely rangeBacktestBacktest rangeActual guests');
+  expect(chart().textContent).not.toContain('No forecast for these days.');
+  cleanup();
+  // Backtest days alone still draw, with no “No forecast for these days.”
+  renderChart('2026-11-03', calendarChart(NOVEMBER, { ...reads, forecast: { ...forecastOf([]) as ForecastWindow, backtest: [backtest('2026-11-02')] } }, null));
+  expect(series('backtest-point')).toHaveLength(1);
+  expect(screen.getByTestId('calendar-month-chart-key-items').textContent).toContain('Backtest');
+  expect(chart().textContent).not.toContain('No forecast for these days.');
+});

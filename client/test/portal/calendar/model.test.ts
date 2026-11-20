@@ -1,11 +1,11 @@
 import type { TownEvent } from '../../../src/portal/analytics/api';
 import {
-  ALL_FILTERS, calendarMonth, captionOf, checkWords, pastForecastLines, dayCell, dayView, eventsOn, FIGURE_KEY, figureLabel, figureSource, figureTone, forecastCheck,
+  ALL_FILTERS, BACKTEST_LABEL, backtestCheck, backtestWords, calendarMonth, captionOf, checkWords, pastForecastLines, dayCell, dayView, eventsOn, FIGURE_KEY, figureLabel, figureSource, figureTone, forecastCheck,
   forecastLabel, forecastWords, insideWords, markedFigure, monthBounds, monthCheckLine, OUTLOOK_KEY, outlookKey, rangeWords, reasonOutcomeWords,
   reasonShortLines, reasonSize, savedNotice, selectedDay, shortReasons, statusTakesFigure, statusWord, tooltipLines, topRightOf, type CalendarCell,
   type CalendarInput, type ImportedEvent,
 } from '../../../src/portal/calendar/model';
-import type { ForecastDay, ForecastReason, ForecastWindow } from '../../../src/portal/estimates/api';
+import type { BacktestDay, ForecastDay, ForecastReason, ForecastWindow } from '../../../src/portal/estimates/api';
 import { forecastDayLines, WHY_LINES, whyRows } from '../../../src/portal/home/DayDetail';
 import { daysBetween } from '../../../src/portal/locations/dates';
 import { trustedGuestDays } from '../../../src/portal/analytics/days';
@@ -1004,5 +1004,108 @@ describe('an outlook day (D52)', () => {
     // A booked or closed outlook day shows no outlook, so no key line for it.
     const booked = forecastDay({ ...BOOKED, outlook: true });
     expect(outlookKey(calendarMonth('2026-11', reads([booked])).flat().filter((cell) => cell !== null))).toBeNull();
+  });
+});
+
+describe('a backtest day (D72)', () => {
+  // Nov 2 to 4 have no run's day; the backtest forecast them from sales through Jun 30, 2026 (the model) or Mar 31, 2026
+  // (the baseline). Nov 7 has a run's day (PAST) and a backtest entry too, which it ignores.
+  const backtest = (date: string, fields: Partial<BacktestDay> = {}): BacktestDay => ({
+    date, engine: 'model', dataThrough: '2026-06-30', low: 110.4, mid: 129.6, high: 150.2, runId: 'r0', actual: 138, inRange: true, ...fields,
+  });
+  const DAYS = [
+    backtest('2026-11-02'),
+    backtest('2026-11-03', { engine: 'baseline', dataThrough: '2026-03-31', actual: 170, inRange: false }),
+    backtest('2026-11-04', { actual: null, inRange: null }),
+    backtest('2026-11-07', { mid: 999 }),
+  ];
+  const reads = (fields: Partial<CalendarInput> = {}): CalendarInput => input({
+    backtest: true,
+    forecast: { ...windowOf([PAST, forecastDay({ date: TODAY })]), backtest: DAYS },
+    salesDays: [
+      { date: '2026-11-02', guests: 138, netSalesCents: 276000 }, { date: '2026-11-03', guests: 170, netSalesCents: 340000 },
+      { date: '2026-11-07', guests: 138, netSalesCents: 276000 },
+    ],
+    ...fields,
+  });
+
+  test('a past day with stored guests keeps its actual in the cell; with none, the cell shows the backtest’s figure, named as one', () => {
+    expect(dayCell('2026-11-02', reads())).toMatchObject({ figure: { value: 138, kind: 'actual' }, status: null });
+    const cell = dayCell('2026-11-04', reads());
+    expect(cell).toMatchObject({ figure: { value: 130, kind: 'backtest' }, status: null });
+    expect(markedFigure(String(cell.figure?.value), cell.figure ?? { kind: 'backtest' })).toBe('~130');
+    expect(captionOf(cell)).toBe('backtest');
+    expect(topRightOf(cell)).toBe('backtest');
+    expect(figureSource({ kind: 'backtest' })).toBe('forecast');
+    expect(figureTone({ kind: 'backtest' })).toBe('text2');
+    expect(figureLabel(130, { kind: 'backtest' })).toBe('130 guests, backtest');
+    expect(cell.label).toMatch(/^Wed, Nov 4, 2026\. No data\. 130 guests, backtest, likely 110 to 151\./);
+    expect(tooltipLines('2026-11-04', reads())?.lines[0]).toBe('No data. 130 guests, backtest (likely 110 to 151)');
+  });
+
+  test('the day panel says the backtest’s figure, how it did, and that it was not a forecast made at the time', () => {
+    // The model's, inside the range.
+    const inside = dayView('2026-11-02', reads()).forecast;
+    expect(forecastLabel(inside)).toBe('Actual guests');
+    expect(forecastWords(inside, 'Sawtooth')).toEqual({
+      figure: { before: '', value: '138', after: 'guests', source: 'actual' },
+      lines: [
+        'Backtest from sales through Jun 30, 2026: about 130 (likely 110 to 151); 138 guests came: inside the range.',
+        'Townwise had no forecast for this day yet. This is what its model would have said, trained only on sales through Jun 30, 2026.',
+      ],
+    });
+    // The baseline's, above the range.
+    expect(forecastWords(dayView('2026-11-03', reads()).forecast, 'Sawtooth').lines).toEqual([
+      'Backtest from sales through Mar 31, 2026: about 130 (likely 110 to 151); 170 guests came: above the range.',
+      'Townwise had no forecast for this day yet. This is what its baseline would have said, trained only on sales through Mar 31, 2026.',
+    ]);
+    // Below the range.
+    const below = backtestCheck(backtest('2026-11-02', { actual: 90, inRange: false }));
+    expect(below?.verdict).toBe('below');
+    expect(below === null ? null : backtestWords(below)).toBe('Backtest from sales through Jun 30, 2026: about 130 (likely 110 to 151); 90 guests came: below the range');
+    // No stored guests: the backtest's figure, headed Backtest, with no guests clause.
+    const unstored = dayView('2026-11-04', reads()).forecast;
+    expect(forecastLabel(unstored)).toBe(BACKTEST_LABEL);
+    expect(forecastWords(unstored, 'Sawtooth')).toEqual({
+      figure: { before: 'About', value: '130', after: 'guests', source: 'forecast' },
+      lines: [
+        'No guests stored for this day.',
+        'Backtest from sales through Jun 30, 2026: about 130 (likely 110 to 151).',
+        'Townwise had no forecast for this day yet. This is what its model would have said, trained only on sales through Jun 30, 2026.',
+      ],
+    });
+    // The tooltip says how it did after the actual.
+    expect(tooltipLines('2026-11-03', reads())?.lines.slice(0, 2)).toEqual([
+      '170 guests, actual', 'Backtest from sales through Mar 31, 2026: about 130 (likely 110 to 151); 170 guests came: above the range',
+    ]);
+  });
+
+  test('a run’s day always wins over a backtest entry for the same date', () => {
+    expect(dayCell('2026-11-07', reads())).toMatchObject({ figure: { value: 138, kind: 'actual' } });
+    const part = dayView('2026-11-07', reads()).forecast;
+    expect(part).toMatchObject({ kind: 'past', backtest: null });
+    expect(forecastWords(part, 'Sawtooth').lines).toEqual(['Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.']);
+    expect(tooltipLines('2026-11-07', reads())?.lines.join(' ')).not.toContain('Backtest');
+    // Today and later never read a backtest.
+    expect(dayView(TODAY, { ...reads(), forecast: { ...windowOf([]), backtest: [backtest(TODAY)] } }).forecast).toMatchObject({ kind: 'none' });
+  });
+
+  test('backtest days never count in the month line', () => {
+    const plain = input({ forecast: windowOf([PAST, forecastDay({ date: TODAY })]) });
+    expect(monthCheckLine('2026-11', reads())).toBe(monthCheckLine('2026-11', plain));
+    expect(monthCheckLine('2026-11', reads())).toBe('So far this month: 1 of 1 day inside the forecast range.');
+    // A month with only backtest days is still one with nothing published for it.
+    const only: ForecastWindow = { available: false, reason: 'not_covered', runs: [], days: [], weeks: [], backtest: DAYS.slice(0, 3) };
+    expect(monthCheckLine('2026-11', reads({ forecast: only }))).toBeNull();
+    expect(monthCheckLine('2026-10', reads({ forecast: { ...only, backtest: [backtest('2026-10-20')] } }))).toBeNull();
+  });
+
+  test('without the input’s backtest flag (Home), backtest days show nothing', () => {
+    const home = reads({ backtest: false });
+    expect(dayCell('2026-11-04', home)).toMatchObject({ figure: null, status: 'no_data' });
+    expect(dayView('2026-11-02', home).forecast).toMatchObject({ backtest: null });
+    expect(forecastWords(dayView('2026-11-02', home).forecast, 'Sawtooth').lines).toEqual([]);
+    expect(tooltipLines('2026-11-02', home)?.lines.join(' ')).not.toContain('Backtest');
+    expect(pastForecastLines('2026-11-04', home)).toEqual([]);
   });
 });
