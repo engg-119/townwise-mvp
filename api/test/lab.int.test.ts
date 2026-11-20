@@ -182,7 +182,7 @@ describe('starting a calibration', () => {
     });
   });
 
-  it('a second start for the same location is 409 calibration_in_progress; a fifth start in a day is 429', async () => {
+  it('a second start for the same location is 409 calibration_in_progress; staff are not held to the 4 a day', async () => {
     const t = await team();
     const first = await started(t);
     const before = (await auditEvents(server)).length;
@@ -190,23 +190,14 @@ describe('starting a calibration', () => {
     // Refused by the read-only checks: nothing recorded, nothing charged.
     expect((await auditEvents(server)).length).toBe(before);
     expect((await failJob(server, first.job)).status).toBe(200);
-    for (let n = 2; n <= 4; n += 1) {
+    // Staff's Calibrate is not one of the organization's 4 a day (owner, 2026-11-19): a fifth and sixth start, charged.
+    for (let n = 2; n <= 6; n += 1) {
       const { job } = await started(t);
       expect((await failJob(server, job)).status).toBe(200);
     }
-    const jobs = runner.jobs.length;
-    const fifth = await start(t);
-    expect(await errorOf(fifth)).toEqual({ status: 429, error: 'calibrations_rate_limited' });
-    expect(runner.jobs).toHaveLength(jobs);
-    // Refused after the event: the event and a not-applied note naming why, and no calibration.
-    const [requested, notApplied] = (await auditEvents(server)).slice(-2);
-    expect(requested).toMatchObject({ action: 'calibration.requested', details: { locationId: t.locationId } });
-    expect(notApplied).toMatchObject({ action: 'staff_action.not_applied', details: { eventId: String(requested?._id), code: 'calibrations_rate_limited' } });
-    const requestedId = (requested?.target as { id: string }).id;
-    expect(await count('tw_calibrations', { _id: new Types.ObjectId(requestedId) })).toBe(0);
-    expect((await list(t)).calibrations).toHaveLength(4);
+    expect((await list(t)).calibrations).toHaveLength(6);
     const usage = await server.connection.collection('tw_chat_usage').findOne({ orgId: new Types.ObjectId(t.orgId) });
-    expect(usage?.costMicroUsd).toBe(4 * CALIBRATION_CHARGE_MICRO_USD);
+    expect(usage?.costMicroUsd).toBe(6 * CALIBRATION_CHARGE_MICRO_USD);
   });
 
   it('under 230 days of history is 409 not_enough_history, saying which engine runs from when, and starts no job', async () => {
@@ -304,7 +295,7 @@ describe('starting a calibration', () => {
     } as unknown as TownwiseContext;
     const req = {
       id: new Types.ObjectId().toHexString(), scope: { orgId: new Types.ObjectId().toHexString() }, location: { id: new Types.ObjectId().toHexString() },
-      requester: { userId: 'staff-0000', role: 'superadmin', via: 'console' }, regimeStart: null, today: '2026-06-01',
+      requester: { userId: 'admin-0000', role: 'org_admin', via: 'chat' }, regimeStart: null, today: '2026-06-01',
     } as unknown as StartRequest;
     expect(await launch(ctx, req)).toEqual({ ok: false, code: 'rate_limited' });
     expect(touched).toBe(0);

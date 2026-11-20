@@ -201,13 +201,18 @@ function eventsOf(townId: string | null, from: string, to: string): Map<string, 
   return new Map([...groups].map(([date, set]) => [date, [...set].sort()]));
 }
 
+/** The lab flags Halloween itself (hol_halloween), so the calendar's Halloween (D68) would count it twice. */
+const LAB_OWN_HOLIDAYS: ReadonlySet<string> = new Set(['us:halloween']);
+
 /**
  * Every town calendar entry overlapping `from` to `to` (holidays, terms, seasons and events, in townEvents' order), as
- * ids, groups, kinds, dates and confidence only. An id or group the lab's pattern would refuse is left out.
+ * ids, groups, kinds, dates and confidence only. An id or group the lab's pattern would refuse is left out, as is a
+ * holiday the lab flags itself (LAB_OWN_HOLIDAYS).
  */
 function calendarOf(townId: string | null, from: string, to: string): LabCalendarEntry[] {
   return townEvents(townId, { from, to })
     .filter((event) => ENTRY_ID.test(event.id) && (event.group === null || GROUP.test(event.group)))
+    .filter((event) => event.group === null || !LAB_OWN_HOLIDAYS.has(event.group))
     .map((event) => ({ id: event.id, group: event.group, kind: event.kind, start: event.start, end: event.end, confidence: event.confidence }));
 }
 

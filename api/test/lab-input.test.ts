@@ -377,6 +377,8 @@ describe('labInputOf', () => {
     // 2025's after Jan 2 (ten), 2026's eleven and 2027's through Jul 5, its Independence Day observed (six).
     expect(input?.calendar).toHaveLength(27);
     expect(input?.calendar.every((entry) => entry.kind === 'holiday' && entry.id.startsWith('us:'))).toBe(true);
+    // The calendar's Halloween (D68) stays out: the lab's own hol_halloween is its only Halloween effect.
+    expect(input?.calendar.some((entry) => entry.group === 'us:halloween')).toBe(false);
   });
 
   it('includes the current champion run rows, its engine from the run’s model family, its recorded weekday bias, and null without one', () => {

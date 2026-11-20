@@ -91,6 +91,11 @@ describe('the two reads', () => {
     expect(townEventSchema.parse(event).sources.map((source) => source.label)).toEqual(['home.dartmouth.edu', 'old site']);
   });
 
+  test('townEventSchema reads Halloween’s observance scope (D68)', () => {
+    const halloween = townEvent({ id: 'us:halloween:2026', title: 'Halloween', start: '2026-10-31', kind: 'holiday', scope: 'observance', group: 'us:halloween' });
+    expect(townEventSchema.parse(halloween).scope).toBe('observance');
+  });
+
   test('calendarRange runs from January 1 of the first year with data to the end of this year, inside the API rules', () => {
     expect(calendarRange('2024-03-05', '2026-11-05')).toEqual({ from: '2024-01-01', to: '2026-12-31' });
     expect(calendarRange(null, '2026-11-05')).toEqual({ from: '2026-01-01', to: '2026-12-31' });

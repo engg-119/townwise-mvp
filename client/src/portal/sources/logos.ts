@@ -38,6 +38,7 @@ export const SITES: Readonly<Record<string, SiteEntry>> = {
   'ithaca.edu': { name: 'Ithaca College', logo: ithacaEdu },
   'jsdelivr.net': { name: 'jsDelivr', logo: null },
   'lakeplacid.com': { name: 'Lake Placid Adirondacks', logo: null },
+  'loc.gov': { name: 'Library of Congress', logo: null },
   'middlebury.edu': { name: 'Middlebury College', logo: middleburyEdu },
   'northconwaynh.com': { name: 'NorthConwayNH.com', logo: null },
   'nps.gov': { name: 'National Park Service', logo: null },

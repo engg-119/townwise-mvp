@@ -1,5 +1,5 @@
 // get_town_calendar (U13A): the town calendar (spec 13.1) for a range of at most 92 days: researched term dates and
-// events with their sources and confidence, the town profile's key dates and US federal holidays, each dated row with
+// events with their sources and confidence, the town profile's key dates, US federal holidays and Halloween (D68), each dated row with
 // its weekdays. The same calendar the calendar route serves. Public data only.
 import { z } from 'zod';
 
@@ -29,7 +29,7 @@ const calendarResult = z.object({
 export const townCalendarTool: ChatTool<CalendarRange> = {
   definition: {
     name: 'get_town_calendar',
-    description: 'The public calendar of the location\'s town for a date range of at most 92 days, both ends included: researched term dates (classes and finals), town events and key dates with their sources and the research\'s confidence, and US federal holidays on their actual day. Each event has its start and end weekdays. researched is false when Townwise has researched no events for the town; then only holidays are listed. covers is the span the research covers, all years.',
+    description: 'The public calendar of the location\'s town for a date range of at most 92 days, both ends included: researched term dates (classes and finals), town events and key dates with their sources and the research\'s confidence, US federal holidays on their actual day (scope national), and Halloween with the weekend nights around it (scope observance, a holiday no law sets). Each event has its start and end weekdays. researched is false when Townwise has researched no events for the town; then only holidays are listed. covers is the span the research covers, all years.',
     input_schema: {
       type: 'object',
       properties: { from: DATE, to: DATE },

@@ -69,6 +69,13 @@ describe('note reasons', () => {
     const [weekday] = reasonViews('2026-06-06', [{ kind: 'weekday', ref: null, effectPct: null }], townCalendarOf('hanover-nh')('2026-06-06'));
     expect(weekday).toEqual({ kind: 'weekday', label: 'Saturday', effectPct: null, effect: null, sources: [], note: null, rule: null });
   });
+
+  it('names the lab’s Halloween reason (no ref) by the calendar’s Halloween entry, never plain "Holiday" (D68)', () => {
+    const why = (date: string): string[] => reasonViews(date, [{ kind: 'holiday', ref: null, effectPct: 30 }], townCalendarOf('hanover-nh')(date))
+      .map((view) => view.label);
+    expect(why('2026-10-31')).toEqual(['Halloween']);
+    expect(why('2026-10-30')).toEqual(['Halloween weekend']);
+  });
 });
 
 // D49: two run reasons that read as one label on a day (case and spacing aside) show once: the larger effect, else the
