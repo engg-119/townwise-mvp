@@ -571,6 +571,17 @@ Calendar read scopes are sensitive, so Google reviews them. Until Google verifie
 
 **Turn it off** with `enable_google_calendar = false` and apply: the secret leaves the app, Google calendars fail their refreshes with `google_unavailable` and keep their events, and removing one still revokes its access, since revoking needs only the stored token and `TOWNWISE_CALENDAR_KEY`. **Before rolling back across this change** (redeploying an image older than it, step 13), remove every Google calendar, which revokes its access: an older image never refreshes a Google calendar or revokes a grant, and its client refuses a location that holds one ("Couldn’t load your calendars"). **To abandon the feature**, remove every Google calendar while this image runs with `TOWNWISE_CALENDAR_KEY` set, confirm `tw_google_connections` is empty (for example in a dump restored beside the live data, step 14), then turn the flag off; the empty collection can then be dropped.
 
+### 23. Event search
+
+The event scout (`modeling/research`) keeps the events it researches in an Azure AI Search service, `srch-townwise-2d2c15bf` (`production/search.tf`). It holds only public information about public events and the scout's judgment of their effect on demand, never client data, so it keeps its public endpoint; API keys are off, so every caller signs in with Entra ID. It is Free tier: $0, one per subscription, 50 MB and three indexes, no SLA. Nothing in production calls it yet, and the API identity holds no role on it.
+
+1. **Create it.** Add `enable_event_search = true` to `infra/terraform/production/terraform.tfvars`, then `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds one resource. `terraform output event_search_endpoint` prints `AZURE_SEARCH_ENDPOINT`.
+2. **Give developers its data.** Apply `infra/terraform/bootstrap`. The plan adds one role assignment: `townwise-developers` gets Search Index Data Contributor on the service alone, which reads and writes documents but cannot change or delete the service or its indexes. Apply it after item 1, since the assignment is scoped to the service.
+3. **Create the index**, once, as an administrator (Owner on the production group covers it): from `modeling/research`, with `AZURE_SEARCH_ENDPOINT` set, `uv run python -m townwise_research ensure-index`. A later change to the index's fields is the same command.
+4. **Check.** Signed in as a developer, `uv run --env-file .env.local python -m townwise_research scout --beats dartmouth_athletics --days 14` ends with "N events (N indexed)", and `search --days 14` lists them.
+
+**Turn it off** with `enable_event_search = false` and apply, which deletes the service and its events (re-running the scout rebuilds them); remove `developers_event_search` from `bootstrap/team.tf` and apply bootstrap too.
+
 ## Releases
 
 A release is a release PR merging `develop` into `main`. The merge deploys through `deploy.yml`, on camo while hosted Actions is blocked (Deploys on camo, below), each service only when it changed; before 2026-11-18 releases were deployed by hand (`~/.townwise-ci/release/`). Once the new revision is confirmed live, the release gets an annotated tag and a GitHub Release (owner decision, 2026-11-12; every release since `v2026.11.04` has one).
@@ -737,6 +748,7 @@ Prices are from the Azure Retail Prices API (eastus), with a 730-hour month (2,6
 | Scheduled calibrations, when on (step 20): Monday's, at most one a week per location whose data changed, plus refits after training changes, at most one a day per location; roughly 200 a week at most across both | the lab's, above | about $0.13 a location with weekly refits only (up to about $0.90 with a refit every day); at most about $26 at the cap |
 | Backup storage, Hot LRS, 30 dumps kept | $0.0208 per GB a month, writes $0.05 per 10,000 | about $0.03 at 50 MB a dump |
 | Container Registry Basic, 10 GiB included | $0.1666 a day; storage beyond 10 GiB $0.10 per GB a month | $5.07, while old lab images are deleted (step 20) |
+| Event search (step 23), Azure AI Search Free tier | | $0 |
 | Azure DNS zone | $0.50 per zone (queries $0.40 per million) | $0.50 |
 | Key Vault | $0.03 per 10,000 operations | about $0.02 |
 | Log Analytics | first 5 GB a month free; the 0.1 GB daily cap keeps ingestion under it | $0 |

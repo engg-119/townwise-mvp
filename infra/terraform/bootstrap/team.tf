@@ -45,6 +45,10 @@ locals {
     # calendars use the same key as production (infra/README.md, step 21). It unseals every stored link and Google
     # token in production's database, so a laptop holding it is as sensitive as that database. Scoped to the secret.
     developers_calendar_key = { group = "developers", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.KeyVault/vaults/kv-townwise-${local.suffix}/secrets/townwise-calendar-key", role = "Key Vault Secrets User" }
+    # The event scout's search service (production/search.tf): read and write documents in its indexes, on that
+    # service alone; no control-plane role, so developers cannot change or delete the service or its indexes. Apply
+    # after production creates the service with enable_event_search.
+    developers_event_search = { group = "developers", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.Search/searchServices/srch-townwise-${local.suffix}", role = "Search Index Data Contributor" }
     # The production group holds one vault, so this is that vault's secrets.
     secrets_admins_reader  = { group = "secrets-admins", scope = azurerm_resource_group.prod.id, role = "Reader" }
     secrets_admins_officer = { group = "secrets-admins", scope = azurerm_resource_group.prod.id, role = "Key Vault Secrets Officer" }
