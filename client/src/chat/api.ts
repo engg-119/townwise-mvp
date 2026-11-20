@@ -631,7 +631,7 @@ export type ForecastMadeItem = z.infer<typeof forecastMadeItemSchema>;
 export const researchDoneItemSchema = z.object({
   at: z.string(), kind: z.literal('research_done'), subject: z.enum(['town', 'location']), status: z.enum(['done', 'partial', 'failed', 'budget']),
   found: z.number().int().nonnegative(), added: z.number().int().nonnegative(), competitors: z.number().int().nonnegative().nullable(),
-  threadsFailed: z.number().int().nonnegative(), finishedAt: z.string(),
+  threadsFailed: z.number().int().nonnegative(), threadsBudget: z.number().int().nonnegative().catch(0), finishedAt: z.string(),
 });
 export type ResearchDoneItem = z.infer<typeof researchDoneItemSchema>;
 

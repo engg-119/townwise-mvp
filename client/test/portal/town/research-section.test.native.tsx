@@ -14,7 +14,7 @@ import { act, cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-li
 import { addDays, localToday } from '../../../src/portal/locations/dates';
 import { resetProfiles } from '../../../src/portal/profile/useProfile';
 import { researchSeenKey } from '../../../src/portal/research/seen';
-import { RESEARCH_NOW, RESTORE_NOTICES, switchWords } from '../../../src/portal/town/research-copy';
+import { pressOpensLine, RESEARCH_NOW, RESTORE_NOTICES, switchWords, WEEK_OFF } from '../../../src/portal/town/research-copy';
 import {
   ACCESS, fakePortalApi, meOf, openAsAdminMe, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
@@ -51,7 +51,7 @@ function townRun(status: string, done: number): Record<string, unknown> {
 function locationRun(status: string, fields: Record<string, unknown> = {}): Record<string, unknown> {
   const live = ['queued', 'running', 'merging'].includes(status);
   return {
-    status, finishedAt: live ? null : '2026-11-17T16:00:00.000Z', counts: COUNTS, trigger: 'weekly', startedAt: '2026-11-17T15:30:00.000Z',
+    id: 'run-1', status, finishedAt: live ? null : '2026-11-17T16:00:00.000Z', counts: COUNTS, trigger: 'weekly', startedAt: '2026-11-17T15:30:00.000Z',
     threads: [
       { thread: 'neighborhood', status: live ? 'queued' : 'recorded', code: live ? 'overloaded' : null },
       { thread: 'competitors', status: live ? 'running' : 'recorded', code: null },
@@ -62,7 +62,7 @@ function locationRun(status: string, fields: Record<string, unknown> = {}): Reco
 
 function research(fields: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    on: true, available: true, town: townRun('done', 6), location: locationRun('done'), next: '2026-11-23', gaps: [],
+    on: true, available: true, town: townRun('done', 6), location: locationRun('done'), next: '2026-11-23', pressAt: null, gaps: [],
     entities: [{ id: 'e1', type: 'venue', name: 'Example Hall', events: 2 }],
     hidden: [{ id: `l-${HEX}`, title: 'Quiz night', start: '2026-12-03', end: '2026-12-03', head: 'r1' }],
     ...fields,
@@ -100,6 +100,7 @@ function gets(api: FakePortalApi, path: string): number {
 afterEach(async () => {
   await cleanup();
   resetProfiles();
+  jest.useRealTimers();
 });
 
 test('an org admin sees both runs in topics, the next run, this week, who and where, hidden, Research now and the switch', async () => {
@@ -240,8 +241,53 @@ test('opening the Town tab marks the location’s run seen, so the Calendar’s 
   await renderApp('/locations/l1/town', api);
   expect(await screen.findByText(/^Your restaurant and nearby: last researched/)).toBeTruthy();
   await waitFor(() => {
-    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(researchSeenKey('u1', 'l1'), '2026-11-17T15:30:00.000Z');
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(researchSeenKey('u1', 'l1'), 'run-1');
   });
+});
+
+test('a run pressed and left while queued is not marked seen, so the Calendar still shows its banner (UI review)', async () => {
+  jest.mocked(SecureStore.setItemAsync).mockClear();
+  const { api } = setup({ research: research({ location: locationRun('queued', { id: 'run-2', trigger: 'press', startedAt: null }) }) });
+  await renderApp('/locations/l1/town', api);
+  expect(await screen.findByText('Your restaurant and nearby: Queued')).toBeTruthy();
+  await act(() => Promise.resolve());
+  expect(jest.mocked(SecureStore.setItemAsync).mock.calls.filter(([key]) => key === researchSeenKey('u1', 'l1'))).toEqual([]);
+});
+
+test('turning research off re-reads this week and the competition, and the week reads the off line (UI review)', async () => {
+  const { api, body } = setup();
+  api.answers['/api/org/research'] = () => {
+    body.research = research({ on: false, gaps: ['off'], next: null });
+    return { research: { on: false } };
+  };
+  const from = localToday();
+  const week = `${BASE}/calendar?from=${from}&to=${addDays(from, 6)}`;
+  await renderApp('/locations/l1/town', api);
+  expect(await screen.findByText('Winter carnival')).toBeTruthy();
+  expect(gets(api, week)).toBe(1);
+  expect(gets(api, `${BASE}/competition?theme=dark`)).toBe(1);
+  await fireEvent.press(screen.getByRole('button', { name: 'Turn off town research' }));
+  expect(await screen.findByText(WEEK_OFF)).toBeTruthy();
+  expect(screen.queryByText('Winter carnival')).toBeNull();
+  await waitFor(() => { expect(gets(api, week)).toBe(2); });
+  expect(gets(api, `${BASE}/competition?theme=dark`)).toBe(2);
+  expect(screen.queryByText('Research found nothing for the next 7 days.')).toBeNull();
+});
+
+test('within 6 hours of the last run, Research now is disabled and says when it opens, then opens (UI review)', async () => {
+  jest.useFakeTimers({
+    now: new Date(2026, 10, 19, 12, 0, 0),
+    doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance'],
+  });
+  const opens = new Date(2026, 10, 19, 12, 30, 0).toISOString();
+  const { api } = setup({ research: research({ pressAt: opens }) });
+  await renderApp('/locations/l1/town', api);
+  const button = await screen.findByRole('button', { name: RESEARCH_NOW });
+  expect(button.props.accessibilityState).toMatchObject({ disabled: true });
+  expect(screen.getByText(pressOpensLine(opens, new Date(2026, 10, 19, 12, 0, 0)))).toBeTruthy();
+  await act(() => jest.advanceTimersByTimeAsync(31 * 60_000));
+  expect(screen.getByRole('button', { name: RESEARCH_NOW }).props.accessibilityState).toMatchObject({ disabled: false });
+  expect(screen.getByText(/^Looks again at your restaurant/)).toBeTruthy();
 });
 
 test('coming up this week links a season to a day this week and leaves out a weekly event with no day in it', async () => {

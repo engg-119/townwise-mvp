@@ -125,7 +125,7 @@ function FoundRow(props: {
       {chips.length === 0 ? null : <View style={styles.chips}>{chips.map((chip) => <Mono key={chip} tone="white">{chip}</Mono>)}</View>}
       <SourceChips sources={event.sources} />
       {event.edited ? (
-        <View style={styles.effect}>
+        <View style={styles.edited}>
           <Small>{EDITED_LINE}</Small>
           {props.readOnly ? null : (
             <Button variant="link" label={FOUND_ACTIONS.reset} accessibilityLabel={foundActionLabel('reset', event.title)} {...busy} onPress={() => { props.onAction('restore'); }} />
@@ -315,6 +315,8 @@ const styles = StyleSheet.create({
   item: { gap: 2, minWidth: 0 },
   effect: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space[2], minWidth: 0 },
   words: { flex: 1, minWidth: 0 },
+  // Reset's 44-point target centers its label, so the line is centered beside it to read on one line.
+  edited: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[2], minWidth: 0 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[3] },
 });
 

@@ -44,8 +44,8 @@ export const townRunSchema = z.object({
 });
 export type TownRun = z.infer<typeof townRunSchema>;
 
-/** The location's own run, with what started it and when. */
-export const locationRunSchema = townRunSchema.extend({ trigger: z.enum(RUN_TRIGGERS), startedAt: z.string().nullable() });
+/** The location's own run, with its id (the Calendar banner's seen mark, seen.ts), what started it and when. */
+export const locationRunSchema = townRunSchema.extend({ id: z.string(), trigger: z.enum(RUN_TRIGGERS), startedAt: z.string().nullable() });
 export type LocationRun = z.infer<typeof locationRunSchema>;
 
 const entitySchema = z.object({ id: z.string(), type: z.string(), name: z.string(), events: z.number() });
@@ -62,6 +62,8 @@ export const researchSchema = z.object({
   location: locationRunSchema.nullable().catch(null),
   /** The next weekly run's day (YYYY-MM-DD, the town's zone), or null. */
   next: z.string().nullable(),
+  /** When Research now opens again (ISO), within 6 hours of the last run's finish; null when it is open. */
+  pressAt: z.string().nullable().catch(null),
   gaps: z.array(z.string()).transform((gaps) => gaps.filter((gap): gap is ResearchGap => (RESEARCH_GAPS as readonly string[]).includes(gap))),
   entities: eachOf(entitySchema),
   hidden: eachOf(hiddenSchema),

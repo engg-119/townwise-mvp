@@ -1,7 +1,7 @@
 import * as copy from '../../../src/portal/town/research-copy';
 import {
   businessDay, competitorLine, distanceWords, entityLine, eventChips, eventWhen, finishedNotice, gapLine, hiddenHeading,
-  moreLine, nextLine, placeType, pressRefusal, runLine, switchLabel, switchState, switchWords, topicLabel, topicState,
+  moreLine, nextLine, placeType, pressOpensLine, pressRefusal, runLine, switchLabel, switchState, switchWords, topicLabel, topicState,
 } from '../../../src/portal/town/research-copy';
 import type { TownRun } from '../../../src/portal/research/api';
 
@@ -25,11 +25,21 @@ describe('status in topics', () => {
   test('a finished location run says when, how many events and how many new', () => {
     expect(runLine({ kind: 'location' }, run('done'))).toBe(`Your restaurant and nearby: last researched ${copy.shortDay(FINISHED)}, 9 events, 3 new`);
     expect(runLine({ kind: 'location' }, run('partial'))).toMatch(/3 new\. Some topics didn’t finish\.$/);
+    // Topics skipped for budget were not tried: said so, not that they didn't finish (UI review).
+    const skipped = [
+      { thread: 'neighborhood', status: 'recorded', code: null }, { thread: 'competitors', status: 'budget', code: null },
+      { thread: 'town_overview', status: 'budget', code: null },
+    ];
+    expect(runLine({ kind: 'location' }, run('partial', skipped))).toMatch(/3 new\. Some topics were skipped, little budget left this month\.$/);
+    const mixed = [skipped[0], skipped[1], { thread: 'town_overview', status: 'failed', code: 'internal' }].flatMap((each) => (each === undefined ? [] : [each]));
+    expect(runLine({ kind: 'location' }, run('partial', mixed))).toMatch(/Some topics didn’t finish\.$/);
   });
 
   test('queued, merging, failed, budget, off and none', () => {
     const town = { kind: 'town', name: 'Hanover' } as const;
-    expect(runLine(town, run('queued', [], null))).toBe('Hanover: queued');
+    // Capitalized as its topics' "Queued" (UI review).
+    expect(runLine(town, run('queued', [], null))).toBe('Hanover: Queued');
+    expect(runLine({ kind: 'location' }, run('queued', [], null))).toBe('Your restaurant and nearby: Queued');
     expect(runLine(town, run('merging', [], null))).toBe('Researching Hanover: adding what it found to the calendar');
     expect(runLine(town, run('failed'))).toBe(`Hanover: research on ${copy.shortDay(FINISHED)} didn’t finish`);
     expect(runLine(town, run('budget', [], null))).toBe('Hanover: research was skipped, little budget left this month');
@@ -83,6 +93,15 @@ describe('Research now and the switch', () => {
     expect(pressRefusal(500, null)).toBeNull();
   });
 
+  test('within 6 hours of the last run, Research now says when it opens again, with the day when it is not today', () => {
+    const now = new Date(2026, 10, 19, 10, 0);
+    expect(pressOpensLine(new Date(2026, 10, 19, 15, 40).toISOString(), now))
+      .toBe('Research ran in the last 6 hours. You can press Research now again at 3:40 pm.');
+    expect(pressOpensLine(new Date(2026, 10, 20, 3, 0).toISOString(), now))
+      .toBe('Research ran in the last 6 hours. You can press Research now again on Nov 20 at 3 am.');
+    expect(pressOpensLine('not a time', now)).toBe('Research ran in the last 6 hours. Try again later.');
+  });
+
   test('a finished run says what it found', () => {
     expect(finishedNotice(run('done'))).toBe('Research finished: 3 new events on your calendar.');
     expect(finishedNotice({ status: 'done', counts: { ...COUNTS, added: 0 } })).toBe('Research finished. Nothing new this time.');
@@ -134,7 +153,7 @@ test('every string says topics, never threads, and has no em dash', () => {
     else if (typeof value === 'object') strings.push(...Object.values(value as Record<string, string>));
   }
   strings.push(
-    switchWords('Hanover'), runLine({ kind: 'town', name: 'Hanover' }, run('running', [{ thread: 'sports', status: 'running', code: null }], null)),
+    switchWords('Hanover'), pressOpensLine('2026-11-19T15:40:00.000Z', new Date('2026-11-19T10:00:00.000Z')), runLine({ kind: 'town', name: 'Hanover' }, run('running', [{ thread: 'sports', status: 'running', code: null }], null)),
     ...(['off', 'no_place', 'not_researched_town', 'budget', 'places_off'] as const).map((gap) => gapLine(gap, { town: 'Hanover', admin: true, on: true, available: true })),
   );
   expect(strings.length).toBeGreaterThan(30);

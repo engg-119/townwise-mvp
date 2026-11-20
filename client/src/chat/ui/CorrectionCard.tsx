@@ -16,7 +16,7 @@ import { described } from './described';
 
 // D66 (openspec change town-research-agent, design decision 12): the card a correct_calendar_event call draws, from its
 // stored or streamed `tool` part (corrections.ts). A correction TownwiseAI made says what it did on this location's
-// calendar, with Undo through the change's own route (the same as its line in the activity); one it proposed in a
+// calendar, and an edit the fields it set (as a proposal lists them, so two cards in one reply tell apart), with Undo through the change's own route (the same as its line in the activity); one it proposed in a
 // conversation that read a web page or a file shows the change with Apply, which sends the person's own edit on a
 // fresh read of the event, so the tap is theirs (Reset on the Calendar undoes it). The card names no event title: the
 // call's views carry ids and the proposed values only. Under view-as both buttons are disabled, described by the
@@ -55,6 +55,7 @@ function AppliedBody(props: { card: Extract<Card, { kind: 'applied' }>; location
   return (
     <>
       <Text style={styles.lead}>{correctionDoneLine(card.change)}</Text>
+      {correctionFieldLines(card.fields).map((line) => <Text key={line} style={styles.field}>{line}</Text>)}
       {state.status === 'undone' ? <View role="status"><Text style={styles.done}>{CORRECTION.undone}</Text></View> : null}
       <Actions>
         {offered ? (

@@ -58,13 +58,20 @@ test('Ask TownwiseAI’s draft is taken once, and only for its location', () => 
 });
 
 test('the banner shows for a run a person started until that run is seen; a weekly run never', () => {
-  const run = { trigger: 'press' as const, startedAt: '2026-11-19T14:00:00.000Z' };
+  const run = { trigger: 'press' as const, id: 'run-1' };
   expect(bannerShows(run, null)).toBe(true);
   expect(bannerShows(run, runMark(run))).toBe(false);
-  expect(bannerShows({ ...run, startedAt: '2026-11-26T14:00:00.000Z' }, runMark(run))).toBe(true);
+  // The next run a person starts shows again.
+  expect(bannerShows({ ...run, id: 'run-2' }, runMark(run))).toBe(true);
   expect(bannerShows({ ...run, trigger: 'weekly' }, null)).toBe(false);
-  expect(bannerShows({ trigger: 'early', startedAt: null }, null)).toBe(true);
+  expect(bannerShows({ trigger: 'early', id: 'run-3' }, null)).toBe(true);
   expect(bannerShows(null, null)).toBe(false);
+});
+
+test('a run is marked by its id from queued to finished, so a mark made while it was queued is not another run’s (UI review)', () => {
+  // The old mark was `startedAt ?? 'queued'`: two queued runs read the same.
+  expect(runMark({ id: 'run-1' })).not.toBe(runMark({ id: 'run-2' }));
+  expect(runMark({ id: 'run-1' })).toBe('run-1');
 });
 
 test('the seen run is kept per person and location under a key a secure store takes, and a failing store reads as nothing seen', async () => {
@@ -75,10 +82,10 @@ test('the seen run is kept per person and location under a key a secure store ta
     remove: (key) => { kept.delete(key); return Promise.resolve(); },
   };
   expect(researchSeenKey('u:1', 'l1')).toMatch(/^[A-Za-z0-9._-]+$/);
-  await markSeen(store, 'u1', 'l1', { startedAt: '2026-11-19T14:00:00.000Z' });
-  expect(await readSeen(store, 'u1', 'l1')).toBe('2026-11-19T14:00:00.000Z');
+  await markSeen(store, 'u1', 'l1', { id: 'run-1' });
+  expect(await readSeen(store, 'u1', 'l1')).toBe('run-1');
   expect(await readSeen(store, 'u1', 'l2')).toBeNull();
   const broken: LastChatStore = { read: () => Promise.reject(new Error('no')), write: () => Promise.reject(new Error('no')), remove: () => Promise.resolve() };
   expect(await readSeen(broken, 'u1', 'l1')).toBeNull();
-  await expect(markSeen(broken, 'u1', 'l1', { startedAt: null })).resolves.toBeUndefined();
+  await expect(markSeen(broken, 'u1', 'l1', { id: 'run-1' })).resolves.toBeUndefined();
 });

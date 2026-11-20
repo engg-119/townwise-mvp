@@ -18,9 +18,12 @@ import type { ToolView } from './api';
 /** The tool whose calls draw the correction card. */
 export const CORRECTION_TOOL = 'correct_calendar_event';
 
-/** A correction card: the call's id, the event's, and what was done (`changeId`) or proposed (`proposed`). */
+/**
+ * A correction card: the call's id, the event's, and what was done (`changeId`, with the edit's applied `fields`, null
+ * for hide, restore or a result stored before they were sent) or proposed (`proposed`).
+ */
 export type CorrectionCard =
-  | { id: string; eventId: string; kind: 'applied'; change: CorrectionChange; changeId: string }
+  | { id: string; eventId: string; kind: 'applied'; change: CorrectionChange; changeId: string; fields: CorrectionFields | null }
   | { id: string; eventId: string; kind: 'proposed'; change: CorrectionChange; fields: CorrectionFields | null };
 
 const CHANGE = z.enum(['edit', 'hide', 'restore']);
@@ -34,7 +37,9 @@ const fieldsSchema = z.object({
   startTime: TIME.nullable().optional(),
   where: z.string().nullable().optional(),
 }).strip();
-const appliedSchema = z.object({ applied: z.literal(true), eventId: z.string(), changeId: z.string().min(1) });
+const appliedSchema = z.object({
+  applied: z.literal(true), eventId: z.string(), changeId: z.string().min(1), fields: fieldsSchema.nullable().optional().catch(null),
+});
 const proposedSchema = z.object({
   applied: z.literal(false), code: z.literal('needs_tap'), eventId: z.string(),
   proposed: z.object({ change: CHANGE, fields: fieldsSchema.nullable() }),
@@ -55,7 +60,10 @@ export function correctionOf(step: { id: string; name: string; state: string; in
   if (applied.success) {
     const change = CHANGE.safeParse(step.input?.change);
     return change.success
-      ? { id: step.id, eventId: applied.data.eventId, kind: 'applied', change: change.data, changeId: applied.data.changeId }
+      ? {
+        id: step.id, eventId: applied.data.eventId, kind: 'applied', change: change.data, changeId: applied.data.changeId,
+        fields: applied.data.fields == null ? null : present(applied.data.fields),
+      }
       : null;
   }
   const proposed = proposedSchema.safeParse(step.result);

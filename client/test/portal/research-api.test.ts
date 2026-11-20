@@ -74,8 +74,8 @@ describe('the research routes (design decision 13)', () => {
   const RESEARCH = {
     on: true, available: true,
     town: { status: 'done', finishedAt: '2026-11-17T10:00:00.000Z', threads: [{ thread: 'sports', status: 'recorded', code: null }, 'bad'], counts: { found: 9, added: 3, updated: 1, dropped: 2 } },
-    location: { status: 'running', finishedAt: null, threads: [], counts: { found: 0, added: 0, updated: 0, dropped: 0 }, trigger: 'press', startedAt: '2026-11-19T14:00:00.000Z' },
-    next: '2026-11-23', gaps: ['budget', 'later_gap'], entities: [{ id: 'e1', type: 'venue', name: 'Example Hall', events: 2 }],
+    location: { id: 'run-1', status: 'running', finishedAt: null, threads: [], counts: { found: 0, added: 0, updated: 0, dropped: 0 }, trigger: 'press', startedAt: '2026-11-19T14:00:00.000Z' },
+    next: '2026-11-23', pressAt: '2026-11-19T20:00:00.000Z', gaps: ['budget', 'later_gap'], entities: [{ id: 'e1', type: 'venue', name: 'Example Hall', events: 2 }],
     hidden: [{ id: `l-${HEX}`, title: 'Trivia night', start: '2026-12-03', end: '2026-12-03', head: 'r1' }],
   };
 
@@ -85,6 +85,11 @@ describe('the research routes (design decision 13)', () => {
     const read = await fetchResearch(fake, 'l1');
     expect(read.town?.threads).toEqual([{ thread: 'sports', status: 'recorded', code: null }]);
     expect(read.location?.trigger).toBe('press');
+    expect(read.location?.id).toBe('run-1');
+    expect(read.pressAt).toBe('2026-11-19T20:00:00.000Z');
+    // An answer without pressAt reads as Research now open.
+    routes.gets[`${BASE}/research`] = () => ({ ...RESEARCH, pressAt: undefined });
+    expect((await fetchResearch(fake, 'l1')).pressAt).toBeNull();
     expect(read.gaps).toEqual(['budget']);
     expect(read.hidden[0]?.head).toBe('r1');
   });

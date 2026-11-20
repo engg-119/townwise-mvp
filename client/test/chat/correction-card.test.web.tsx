@@ -147,6 +147,24 @@ test('on reload: Undo refused because someone edited the event since says so and
   expect(within(shown).queryByRole('button', { name: 'Undo' })).toBeNull();
 });
 
+test('a made edit says what it changed, as a proposal does, so two cards in one reply tell apart (UI review)', async () => {
+  const api = fakeChatApi();
+  const edited = {
+    ...APPLIED, id: 'toolu_fix_3', input: { eventId: EVENT_ID, change: 'edit' },
+    result: { ...APPLIED.result, fields: { end: '2026-12-13' } },
+  };
+  await openStored(api, [{ type: 'tool', ...edited }, { type: 'tool', ...PROPOSED }]);
+  const [made, proposal] = await screen.findAllByRole('group', { name: 'Calendar correction' });
+  if (made === undefined || proposal === undefined) throw new Error('two cards expected');
+  expect(within(made).getByText('TownwiseAI changed an event town research found, on this location’s calendar only.')).toBeTruthy();
+  expect(within(made).getByText('Ends Dec 13, 2026')).toBeTruthy();
+  expect(within(proposal).getByText('Dates: Dec 10, 2026')).toBeTruthy();
+  // A made correction stored before it carried its fields, and a hide, show no field line.
+  cleanup();
+  await openStored(fakeChatApi(), [{ type: 'tool', ...APPLIED }]);
+  expect(within(await card()).queryByText(/^(Ends|Dates|Title|Starts)/)).toBeNull();
+});
+
 test('a proposal shows the change and why it waits; Apply sends the person’s own edit on the head read now', async () => {
   const api = fakeChatApi();
   api.reads[calendarPath()] = () => ({ town: { name: 'Hanover', state: 'NH', townId: 'hanover-nh' }, researched: true, covers: null, events: [], found: [found()] });

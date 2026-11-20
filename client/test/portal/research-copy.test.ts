@@ -87,7 +87,7 @@ test('the banner: only a run a person started, while it runs and after, in plain
 });
 
 describe('TownwiseAI, Home and the dashboard (task 7.4)', () => {
-  const RUN: ResearchDone = { subject: 'town', status: 'done', found: 12, added: 4, competitors: null, threadsFailed: 0 };
+  const RUN: ResearchDone = { subject: 'town', status: 'done', found: 12, added: 4, competitors: null, threadsFailed: 0, threadsBudget: 0 };
 
   test('the correction card: what TownwiseAI did, what it proposes, and the change in plain words', () => {
     expect(CORRECTION).toEqual({
@@ -133,6 +133,12 @@ describe('TownwiseAI, Home and the dashboard (task 7.4)', () => {
     expect(researchDoneLine({ ...RUN, found: 0, added: 0 }, 'Hanover')).toBe('Researched Hanover: nothing found this time.');
     expect(researchDoneLine({ ...RUN, status: 'partial', threadsFailed: 2 }, 'Hanover')).toBe('Researched Hanover: 12 events found, 4 new. 2 topics didn’t finish.');
     expect(researchDoneLine({ ...RUN, status: 'partial', threadsFailed: 1 }, 'Hanover')).toBe('Researched Hanover: 12 events found, 4 new. 1 topic didn’t finish.');
+    // Topics skipped for budget were never tried: said so, not that they didn't finish (UI review).
+    expect(researchDoneLine({ ...RUN, status: 'partial', threadsFailed: 4, threadsBudget: 4 }, 'Hanover'))
+      .toBe('Researched Hanover: 12 events found, 4 new. 4 topics were skipped, little budget left this month.');
+    expect(researchDoneLine({ ...RUN, status: 'partial', threadsFailed: 1, threadsBudget: 1 }, 'Hanover'))
+      .toBe('Researched Hanover: 12 events found, 4 new. 1 topic was skipped, little budget left this month.');
+    expect(researchDoneLine({ ...RUN, status: 'partial', threadsFailed: 3, threadsBudget: 2 }, 'Hanover')).toBe('Researched Hanover: 12 events found, 4 new. 3 topics didn’t finish.');
     expect(researchDoneLine({ ...RUN, status: 'failed' }, 'Hanover')).toBe('Research of Hanover didn’t finish. Nothing changed on the calendar.');
     expect(researchDoneLine({ ...RUN, status: 'budget' }, 'Hanover')).toBe('Research of Hanover waited: Townwise’s research budget for this month is used.');
     expect(researchDoneLine({ ...RUN, subject: 'location', status: 'budget', competitors: 0 }, 'Hanover'))
@@ -159,8 +165,9 @@ test('no word says “thread”, and none has an em dash', () => {
     bannerWords({ trigger: 'press', status: 'running', counts: COUNTS }, 'X') ?? '',
     ...(['edit', 'hide', 'restore'] as const).flatMap((change) => [correctionDoneLine(change), correctionProposedLine(change)]),
     ...(['town', 'location'] as const).flatMap((subject) => (['done', 'partial', 'failed', 'budget'] as const).map((status) => researchDoneLine({
-      subject, status, found: 3, added: 2, competitors: 1, threadsFailed: 1,
+      subject, status, found: 3, added: 2, competitors: 1, threadsFailed: 1, threadsBudget: 0,
     }, 'X'))),
+    researchDoneLine({ subject: 'town', status: 'partial', found: 3, added: 2, competitors: null, threadsFailed: 1, threadsBudget: 1 }, 'X'),
     researchBudgetLine(1) ?? '',
   );
   for (const words of strings) {

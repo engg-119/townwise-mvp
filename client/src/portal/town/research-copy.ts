@@ -77,7 +77,8 @@ function subjectInSentence(subject: Subject): string {
 
 /**
  * A run's status line: “Researching Hanover: 3 of 6 topics done”, “Your restaurant and nearby: last researched Nov 17,
- * 9 events, 3 new”, “Hanover: queued”, or why the last run ended as it did. Null run: not researched yet.
+ * 9 events, 3 new”, “Hanover: Queued” (as its topics read), or why the last run ended as it did; a partial run whose
+ * unfinished topics were all skipped for budget says so rather than that they didn't finish. Null run: not researched yet.
  */
 export function runLine(subject: Subject, run: TownRun | null): string {
   const name = subjectName(subject);
@@ -86,14 +87,17 @@ export function runLine(subject: Subject, run: TownRun | null): string {
   const done = run.threads.filter((thread) => DONE_TOPICS.includes(thread.status)).length;
   const on = run.finishedAt === null ? '' : ` on ${shortDay(run.finishedAt)}`;
   switch (run.status) {
-    case 'queued': return `${name}: queued`;
+    case 'queued': return `${name}: Queued`;
     case 'running': return `Researching ${subjectInSentence(subject)}: ${formatCount(done)} of ${formatCount(total)} topics done`;
     case 'merging': return `Researching ${subjectInSentence(subject)}: adding what it found to the calendar`;
     case 'done':
     case 'partial': {
       const last = run.finishedAt === null ? 'last researched' : `last researched ${shortDay(run.finishedAt)}`;
       const line = `${name}: ${last}, ${plural(run.counts.found, 'event', 'events')}, ${formatCount(run.counts.added)} new`;
-      return run.status === 'partial' ? `${line}. Some topics didn’t finish.` : line;
+      if (run.status !== 'partial') return line;
+      const unfinished = run.threads.filter((thread) => thread.status !== 'recorded' && thread.status !== 'empty');
+      const budgetOnly = unfinished.length > 0 && unfinished.every((thread) => thread.status === 'budget');
+      return `${line}. ${budgetOnly ? 'Some topics were skipped, little budget left this month.' : 'Some topics didn’t finish.'}`;
     }
     case 'failed': return `${name}: research${on} didn’t finish`;
     case 'budget': return `${name}: research${on} was skipped, little budget left this month`;
@@ -134,6 +138,19 @@ export const RESEARCH_NOW = 'Research now';
 export const RESEARCH_NOW_HELP = 'Looks again at your restaurant, its neighborhood and its competitors. Up to 3 times a day.';
 export const RESEARCH_NOW_RUNNING = 'Research is running. This page updates as it goes.';
 export const RESEARCH_STARTED = 'Research started. This page updates as it goes.';
+
+/**
+ * Research now within 6 hours of the last run (GET .../research's `pressAt`), said up front beside the disabled button:
+ * “Research ran in the last 6 hours. You can press Research now again at 3:40 pm.”, with the day when it isn't today.
+ * `now` is the viewer's clock; times read in the viewer's zone.
+ */
+export function pressOpensLine(at: string, now: Date): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return 'Research ran in the last 6 hours. Try again later.';
+  const time = clock(`${String(date.getHours())}:${String(date.getMinutes()).padStart(2, '0')}`);
+  const today = date.toDateString() === now.toDateString();
+  return `Research ran in the last 6 hours. You can press Research now again ${today ? '' : `on ${shortDay(at)} `}at ${time}.`;
+}
 
 /** Research now's refusals, by status and code; null for one the page shows with the shared copy. */
 export function pressRefusal(status: number, code: string | null): string | null {
@@ -179,6 +196,8 @@ export const SWITCH_FAILED = 'Couldn’t change this. Try again.';
 export const WEEK_HEADING = 'Coming up this week';
 export const WEEK_MAX = 8;
 export const WEEK_EMPTY = 'Research found nothing for the next 7 days.';
+/** In place of the week's list while the organization's research switch is off (nothing researched is read then). */
+export const WEEK_OFF = 'Town research is off, so nothing found by research is listed.';
 export const WEEK_FAILED = 'Couldn’t load what research found for this week.';
 
 /** “+3 more on the Calendar”, or null. */

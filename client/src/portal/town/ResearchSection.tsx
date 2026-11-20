@@ -24,10 +24,10 @@ import { Heading } from '../ui/text';
 import { CompetitionCard } from './CompetitionCard';
 import { EventItem, firstDay } from './EventItem';
 import {
-  entityLine, eventWhen, finishedNotice, gapLine, hiddenHeading, isLive, moreLine, nextLine, pressRefusal,
+  entityLine, eventWhen, finishedNotice, gapLine, hiddenHeading, isLive, moreLine, nextLine, pressOpensLine, pressRefusal,
   RESEARCH_HEADING, RESEARCH_KICKER, RESEARCH_NOW, RESEARCH_NOW_HELP, RESEARCH_NOW_RUNNING, RESEARCH_STARTED, RESTORE,
   RESTORE_NOTICES, restoreLabel, runLine, SWITCH_FAILED, SWITCH_OPEN_AS_ADMIN, switchLabel, switchState, switchWords,
-  topicLabel, topicState, WEEK_EMPTY, WEEK_FAILED, WEEK_HEADING, WEEK_MAX, WHO_HEADING,
+  topicLabel, topicState, WEEK_EMPTY, WEEK_FAILED, WEEK_HEADING, WEEK_MAX, WEEK_OFF, WHO_HEADING,
 } from './research-copy';
 
 // P15's Research section (D66, OpenSpec change town-research-agent, design decision 15), under TownProfile: the town's
@@ -37,7 +37,9 @@ import {
 // who and where, the events hidden by this location's team with Restore (sending the item's head), and the
 // Competition card. While either run is live it re-reads GET .../research every 30 seconds (D65's useWhileRunning) and,
 // when the run it saw ends, re-reads the organization in place (refreshOrg, for the dashboard's "Researching"), this
-// week's events and the Competition card, and says what the run found.
+// week's events and the Competition card, and says what the run found. Turning the switch re-reads those two as well,
+// and while it is off the week reads the off line, not "nothing found". Within 6 hours of the last run (`pressAt`)
+// Research now is disabled and says when it opens again, re-enabling itself then.
 
 const READ_ONLY_ID = 'research-read-only';
 
@@ -66,7 +68,7 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
   const { api, me, refreshOrg } = usePortal();
   const { readOnly, line } = useReadOnly();
   const [state, setState] = useState<Load<Research>>({ status: 'loading' });
-  /** Bumped when a run the page saw ends: this week's events and the Competition card read again. */
+  /** Bumped when a run the page saw ends or the switch changes: this week's events and the Competition card read again. */
   const [tick, setTick] = useState(0);
   const [notice, setNotice] = useNoticeState();
 
@@ -104,11 +106,12 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
     if (words !== null) setNotice(words);
   }, [locationRun, setNotice]);
   useWhenDone(isLive(locationRun), onLocationDone);
-  // Opening the Town tab clears the Calendar's research banner for the run it shows (research/seen.ts), as Dismiss does.
-  const startedAt = locationRun?.startedAt;
+  // The Town tab clears the Calendar's research banner for the run it shows (research/seen.ts), as Dismiss does, once
+  // it has shown the run's end: a person who presses Research now and leaves at once still sees the banner there.
+  const endedRunId = locationRun !== null && !isLive(locationRun) ? locationRun.id : null;
   useEffect(() => {
-    if (startedAt !== undefined) void markSeen(lastChatStore, me.user.id, location.id, { startedAt });
-  }, [me.user.id, location.id, startedAt]);
+    if (endedRunId !== null) void markSeen(lastChatStore, me.user.id, location.id, { id: endedRunId });
+  }, [me.user.id, location.id, endedRunId]);
 
   const week = useWeekFound(location.id, tick);
 
@@ -154,7 +157,7 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
       </Section>
 
       <Section title={WEEK_HEADING}>
-        <WeekList locationId={location.id} week={week} />
+        <WeekList locationId={location.id} week={week} on={data.on} />
       </Section>
 
       {data.entities.length === 0 ? null : (
@@ -183,6 +186,8 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
           <ResearchSwitch town={location.town.name} research={data} onSwitched={(on) => {
             setState({ status: 'ready', data: { ...data, on } });
             refresh().catch(() => undefined);
+            // What research found is read only while the switch is on: the week and the Competition card read again.
+            setTick((value) => value + 1);
           }} />
         </Section>
       ) : null}
@@ -214,7 +219,17 @@ function ResearchNow(props: {
   const { setNotice } = props;
   const [pressing, setPressing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const usable = props.research.on && props.research.available && !props.running;
+  // Within 6 hours of the last run: disabled, saying when it opens, and enabled again at that time.
+  const { pressAt } = props.research;
+  const opensAt = pressAt === null ? Number.NaN : Date.parse(pressAt);
+  const [now, setNow] = useState(() => Date.now());
+  const waiting = opensAt > now;
+  useEffect(() => {
+    if (!waiting) return undefined;
+    const timer = setTimeout(() => { setNow(Date.now()); }, Math.min(opensAt - Date.now() + 1_000, 2_147_483_647));
+    return () => { clearTimeout(timer); };
+  }, [waiting, opensAt, now]);
+  const usable = props.research.on && props.research.available && !props.running && !waiting;
   const press = (): void => {
     if (pressing || !usable) return;
     setPressing(true);
@@ -234,7 +249,9 @@ function ResearchNow(props: {
   };
   return (
     <View style={styles.block}>
-      <Text style={styles.help}>{props.running ? RESEARCH_NOW_RUNNING : RESEARCH_NOW_HELP}</Text>
+      <Text style={styles.help}>
+        {props.running ? RESEARCH_NOW_RUNNING : waiting && pressAt !== null ? pressOpensLine(pressAt, new Date(now)) : RESEARCH_NOW_HELP}
+      </Text>
       <View style={styles.actions}>
         <Button variant="outline" label={RESEARCH_NOW} disabled={pressing || !usable} onPress={press} />
       </View>
@@ -243,8 +260,10 @@ function ResearchNow(props: {
   );
 }
 
-function WeekList(props: { locationId: string; week: Load<ResearchedEvent[] | null> }): React.JSX.Element {
+function WeekList(props: { locationId: string; week: Load<ResearchedEvent[] | null>; on: boolean }): React.JSX.Element {
   const { week } = props;
+  // Nothing researched is read while the switch is off: say so, not that research found nothing.
+  if (!props.on) return <Text style={styles.body}>{WEEK_OFF}</Text>;
   if (week.status === 'loading') return <LoadingLine text="Loading this week" minHeight={48} />;
   if (week.status === 'failed' || week.data === null) return <Text style={styles.body}>{WEEK_FAILED}</Text>;
   // Each event on its first day this week (a season that began earlier, or a weekly market, is not listed by its start).

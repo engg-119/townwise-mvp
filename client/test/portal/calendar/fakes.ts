@@ -213,8 +213,8 @@ export function researchBody(trigger: 'weekly' | 'early' | 'press', status: stri
     on: true, available: true, town: null,
     location: {
       status, finishedAt: status === 'running' ? null : '2026-11-11T14:00:00.000Z', threads: [], counts: { found: added, added, updated: 0, dropped: 0 },
-      trigger, startedAt: '2026-11-11T13:00:00.000Z',
+      id: 'run-1', trigger, startedAt: '2026-11-11T13:00:00.000Z',
     },
-    next: null, gaps: [], entities: [], hidden: [],
+    next: null, pressAt: null, gaps: [], entities: [], hidden: [],
   };
 }

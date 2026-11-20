@@ -24,7 +24,7 @@ import { locationHref } from '../routing';
 import { fetchResearch, updateResearchedEvent, type ResearchedEventChange, type ResearchedEventFields } from '../research/api';
 import { ASK_FOUND_QUERY, handOffAsk } from '../research/ask';
 import { askDraft, BANNER_DISMISS, BANNER_DISMISS_LABEL, BANNER_LINK, bannerWords, EDIT_SHEET, FOUND_NOTICES } from '../research/copy';
-import { bannerShows, markSeen, readSeen } from '../research/seen';
+import { bannerShows, markSeen, readSeen, runMark } from '../research/seen';
 import { fetchRules } from '../rules/api';
 import { useLocation } from '../shell/LocationShell';
 import { CalendarSkeleton } from '../skeleton';
@@ -593,7 +593,7 @@ function CalendarView(): React.JSX.Element {
             accessibilityLabel={BANNER_DISMISS_LABEL}
             onPress={() => {
               if (lastRun === null) return;
-              setSeenRun(lastRun.startedAt ?? 'queued');
+              setSeenRun(runMark(lastRun));
               void markSeen(lastChatStore, me.user.id, location.id, lastRun);
             }}
           />

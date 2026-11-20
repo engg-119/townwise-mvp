@@ -47,7 +47,10 @@ function api() {
 describe('correctionOf', () => {
   test('a correction made is its card, with the change from its input and the change’s id for Undo', () => {
     expect(correctionOf(step('done', { applied: true, code: null, eventId: EVENT_ID, changeId: 'c1', proposed: null }, 'hide')))
-      .toEqual({ id: 'toolu_fix', eventId: EVENT_ID, kind: 'applied', change: 'hide', changeId: 'c1' });
+      .toEqual({ id: 'toolu_fix', eventId: EVENT_ID, kind: 'applied', change: 'hide', changeId: 'c1', fields: null });
+    // A made edit carries the fields it applied, only those present.
+    expect(correctionOf(step('done', { applied: true, code: null, eventId: EVENT_ID, changeId: 'c2', proposed: null, fields: { end: '2026-12-13' } }, 'edit')))
+      .toMatchObject({ kind: 'applied', change: 'edit', fields: { end: '2026-12-13' } });
   });
 
   test('a proposal is its card with only the fields it changes, a null place kept as a change', () => {

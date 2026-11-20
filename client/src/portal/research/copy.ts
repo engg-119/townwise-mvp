@@ -229,11 +229,14 @@ export interface ResearchDone {
   added: number;
   competitors: number | null;
   threadsFailed: number;
+  /** Of `threadsFailed`, those skipped for the month's budget. */
+  threadsBudget: number;
 }
 
 /**
  * The activity's line for a research run: “Researched Hanover: 12 events found, 4 new.”; the location's names how many
- * of its new events are at competitors, and a partial run the topics that didn't finish. `town` is the town's name.
+ * of its new events are at competitors, and a partial run the topics that didn't finish (or, when all of them were,
+ * that they were skipped for budget). `town` is the town's name.
  */
 export function researchDoneLine(item: ResearchDone, town: string): string {
   const subject = item.subject === 'town' ? town : 'your restaurant and nearby';
@@ -247,8 +250,12 @@ export function researchDoneLine(item: ResearchDone, town: string): string {
     : `${formatCount(item.found)} ${item.found === 1 ? 'event' : 'events'} found, ${item.added === 0 ? 'none new' : `${formatCount(item.added)} new`}`;
   const competitors = item.subject === 'location' && item.added > 0 && item.competitors !== null && item.competitors > 0
     ? `, ${formatCount(item.competitors)} of them at competitors` : '';
-  const undone = item.status === 'partial' && item.threadsFailed > 0
-    ? ` ${formatCount(item.threadsFailed)} ${item.threadsFailed === 1 ? 'topic' : 'topics'} didn’t finish.` : '';
+  const topics = (count: number) => `${formatCount(count)} ${count === 1 ? 'topic' : 'topics'}`;
+  // Topics skipped for budget were not tried, so they are not said to have failed.
+  const undone = item.status !== 'partial' || item.threadsFailed === 0 ? ''
+    : item.threadsBudget === item.threadsFailed
+      ? ` ${topics(item.threadsBudget)} ${item.threadsBudget === 1 ? 'was' : 'were'} skipped, little budget left this month.`
+      : ` ${topics(item.threadsFailed)} didn’t finish.`;
   return `Researched ${subject}: ${found}${competitors}.${undone}`;
 }
 
