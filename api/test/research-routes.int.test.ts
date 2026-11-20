@@ -56,7 +56,7 @@ async function tenant(): Promise<Tenant> {
 }
 
 interface ResearchBody {
-  on: boolean; available: boolean; next: string | null; gaps: string[];
+  on: boolean; available: boolean; next: string | null; pressAt: string | null; gaps: string[];
   town: Record<string, unknown> | null; location: Record<string, unknown> | null;
   entities: { id: string; type: string; name: string; events: number }[];
   hidden: { id: string; title: string; start: string; end: string; head: string }[];
@@ -112,7 +112,7 @@ describe('GET /api/org/locations/:locationId/research', () => {
   it('answers a location never researched: on, available, no runs, the next run today, and no place as its gap', async () => {
     const t = await tenant();
     expect(await research(t)).toEqual({
-      on: true, available: true, town: null, location: null, next: '2026-06-01', gaps: ['no_place'], entities: [], hidden: [],
+      on: true, available: true, town: null, location: null, next: '2026-06-01', pressAt: null, gaps: ['no_place'], entities: [], hidden: [],
     });
   });
 
@@ -124,18 +124,19 @@ describe('GET /api/org/locations/:locationId/research', () => {
     if (townRun === null) throw new Error('town run refused');
     await towns.insertThreads(townRun, [{ thread: 'schools', notBefore: now }, { thread: 'sports', notBefore: now }], now);
     await towns.markRunRunning(townRun.id, now);
-    await locationRun(t, { key: 'w:2026-06-01', trigger: 'weekly', ends: { neighborhood: {}, competitors: 'retry' } });
+    const own = await locationRun(t, { key: 'w:2026-06-01', trigger: 'weekly', ends: { neighborhood: {}, competitors: 'retry' } });
     const body = await research(t);
     expect(body.town).toEqual({
       status: 'running', finishedAt: null, counts: { found: 0, added: 0, updated: 0, dropped: 0 },
       threads: [{ thread: 'schools', status: 'queued', code: null }, { thread: 'sports', status: 'queued', code: null }],
     });
     expect(body.location).toEqual({
-      status: 'running', finishedAt: null, trigger: 'weekly', startedAt: now.toISOString(), counts: { found: 0, added: 0, updated: 0, dropped: 0 },
+      id: own.id, status: 'running', finishedAt: null, trigger: 'weekly', startedAt: now.toISOString(), counts: { found: 0, added: 0, updated: 0, dropped: 0 },
       threads: [{ thread: 'neighborhood', status: 'recorded', code: null }, { thread: 'competitors', status: 'queued', code: 'provider_overloaded' }],
     });
-    // A live run: no next run to name.
+    // A live run: no next run to name, and Research now answers research_running rather than a time.
     expect(body.next).toBeNull();
+    expect(body.pressAt).toBeNull();
   });
 
   it('names the next weekly run: next Monday after this week’s run, six days after an early run', async () => {
@@ -238,7 +239,7 @@ describe('POST /api/org/locations/:locationId/research/run (Research now)', () =
     const now = server.clock.now();
     expect(await res.json()).toEqual({
       run: {
-        status: 'queued', finishedAt: null, trigger: 'press', startedAt: null, counts: { found: 0, added: 0, updated: 0, dropped: 0 },
+        id: expect.stringMatching(/^[0-9a-f]{24}$/) as unknown, status: 'queued', finishedAt: null, trigger: 'press', startedAt: null, counts: { found: 0, added: 0, updated: 0, dropped: 0 },
         threads: [{ thread: 'neighborhood', status: 'queued', code: null }, { thread: 'competitors', status: 'queued', code: null }],
       },
     });
@@ -279,8 +280,11 @@ describe('POST /api/org/locations/:locationId/research/run (Research now)', () =
     const collection = server.connection.collection('tw_location_research_runs');
     const hoursAgo = (hours: number) => new Date(server.clock.now().getTime() - hours * 3_600_000);
     await collection.updateOne({ _id: new Types.ObjectId(run.id) }, { $set: { createdAt: hoursAgo(24), finishedAt: hoursAgo(5.9) } });
+    // The research read says when it opens again, so the button can say so up front.
+    expect((await research(t)).pressAt).toBe(new Date(hoursAgo(5.9).getTime() + 6 * 3_600_000).toISOString());
     expect(await errorOf(await press(t))).toEqual({ status: 409, error: 'too_soon' });
     await collection.updateOne({ _id: new Types.ObjectId(run.id) }, { $set: { finishedAt: hoursAgo(6) } });
+    expect((await research(t)).pressAt).toBeNull();
     expect((await press(t)).status).toBe(202);
     expect(await runsOf(t)).toHaveLength(2);
   });
@@ -288,6 +292,7 @@ describe('POST /api/org/locations/:locationId/research/run (Research now)', () =
   it('runs right after a run that ended budget (every thread refused, nothing spent)', async () => {
     const t = await tenant();
     await locationRun(t, { key: 'w:2026-06-01', trigger: 'weekly', ends: { neighborhood: { status: 'budget' }, competitors: { status: 'budget' } }, finish: 'budget' });
+    expect((await research(t)).pressAt).toBeNull();
     expect((await press(t)).status).toBe(202);
     expect(await runsOf(t)).toHaveLength(2);
   });

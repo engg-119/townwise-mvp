@@ -111,15 +111,15 @@ describe('research_done in TownwiseAI’s activity', () => {
     expect(items).toEqual([
       {
         at: minutes(3).toISOString(), kind: 'research_done', subject: 'location', status: 'done', found: 9, added: 3, competitors: 1,
-        threadsFailed: 0, finishedAt: minutes(3).toISOString(),
+        threadsFailed: 0, threadsBudget: 0, finishedAt: minutes(3).toISOString(),
       },
       {
         at: minutes(2).toISOString(), kind: 'research_done', subject: 'town', status: 'done', found: 12, added: 5, competitors: null,
-        threadsFailed: 0, finishedAt: minutes(2).toISOString(),
+        threadsFailed: 0, threadsBudget: 0, finishedAt: minutes(2).toISOString(),
       },
       {
         at: minutes(1).toISOString(), kind: 'research_done', subject: 'location', status: 'partial', found: 4, added: 2, competitors: 0,
-        threadsFailed: 1, finishedAt: minutes(1).toISOString(),
+        threadsFailed: 1, threadsBudget: 0, finishedAt: minutes(1).toISOString(),
       },
     ]);
     expect(JSON.stringify(items)).not.toContain(SENTINEL);

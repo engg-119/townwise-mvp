@@ -26,8 +26,9 @@
 //
 // D66 (openspec change town-research-agent, design decision 15): each research run that ended with an outcome, of the
 // location and of its town (one of the twelve), as `research_done { subject, status, found, added, competitors,
-// threadsFailed, finishedAt }`, dated when it finished. Derived from run rows at read time: the counts the merge stored,
-// `threadsFailed` the topics that ended `failed` or `budget`, and for the location `competitors`, how many of the events
+// threadsFailed, threadsBudget, finishedAt }`, dated when it finished. Derived from run rows at read time: the counts the
+// merge stored, `threadsFailed` the topics that ended `failed` or `budget` and `threadsBudget` those of them that ended
+// `budget` (skipped for the month's budget, not failed: UI review; 0 on a `failed` run, whose line names no topic), and for the location `competitors`, how many of the events
 // it added are competitors' (the location's stored rows the run first found); null for the town. A town run is shared,
 // so its item carries its status and counts only, never what started it. A run ended `off` (research stopped) is left
 // out, and nothing shows while TOWNWISE_RESEARCH or the organization's switch is off, as the calendar reads none then.
@@ -77,7 +78,7 @@ export type ActivityItem =
   }
   | {
     at: string; kind: 'research_done'; subject: 'town' | 'location'; status: ReportedRunStatus; found: number; added: number;
-    competitors: number | null; threadsFailed: number; finishedAt: string;
+    competitors: number | null; threadsFailed: number; threadsBudget: number; finishedAt: string;
   };
 
 export interface ActivityInput {
@@ -226,11 +227,13 @@ export const researchSource: ActivitySource = async ({ ctx, scope, locationId })
   ): Promise<SourceItem[]> => {
     const { status, finishedAt } = run;
     if (!reported(status) || finishedAt === null) return [];
+    const threads = status === 'partial' ? await threadsOf() : [];
     const threadsFailed = status === 'done' ? 0 : status !== 'partial' ? run.threads.length
-      : (await threadsOf()).filter((thread) => thread.status === 'failed' || thread.status === 'budget').length;
+      : threads.filter((thread) => thread.status === 'failed' || thread.status === 'budget').length;
+    const threadsBudget = status === 'budget' ? run.threads.length : threads.filter((thread) => thread.status === 'budget').length;
     return [{
       at: finishedAt.toISOString(), kind: 'research_done', subject, status, found: run.counts.found, added: run.counts.added, competitors,
-      threadsFailed, finishedAt: finishedAt.toISOString(),
+      threadsFailed, threadsBudget, finishedAt: finishedAt.toISOString(),
     }];
   };
   return (await Promise.all([

@@ -71,7 +71,8 @@ export interface TownRunView {
   readonly counts: RunCounts;
 }
 
-export interface RunView extends TownRunView { readonly trigger: RunTrigger; readonly startedAt: string | null }
+/** The location's own run: its id (the Calendar banner's seen mark, client research/seen.ts), trigger and start. */
+export interface RunView extends TownRunView { readonly id: string; readonly trigger: RunTrigger; readonly startedAt: string | null }
 
 export const RESEARCH_GAPS = ['no_place', 'not_researched_town', 'off', 'budget', 'places_off'] as const;
 export type ResearchGap = typeof RESEARCH_GAPS[number];
@@ -93,7 +94,7 @@ function townRunView(run: RunRecordBase, threads: readonly ThreadRecordBase[]): 
 }
 
 function runView(run: LocationRunRecord, threads: readonly ThreadRecordBase[]): RunView {
-  return { ...townRunView(run, threads), trigger: run.trigger, startedAt: run.startedAt?.toISOString() ?? null };
+  return { ...townRunView(run, threads), id: run.id, trigger: run.trigger, startedAt: run.startedAt?.toISOString() ?? null };
 }
 
 /** The entities the upcoming shown events name, most events first, at most WHO_AND_WHERE_MAX. */
@@ -159,6 +160,7 @@ export async function getResearch(ctx: TownwiseContext, req: Request, res: Respo
     town: townRun === null ? null : townRunView(townRun, townThreads),
     location: locationRun === null ? null : runView(locationRun, locationThreads),
     next: automatic && liveRun === null ? nextWeeklyRunDay(locationRun, now, timeZone, location.id) : null,
+    pressAt: pressOpensAt(locationRun, now)?.toISOString() ?? null,
     gaps: RESEARCH_GAPS.filter((gap) => gaps.has(gap)),
     entities: whoAndWhere(upcoming, [...ownEntities, ...townEntities]),
     hidden: views.filter((view) => view.hidden && view.end >= window.from)
@@ -286,6 +288,19 @@ export const PRESS_AFTER_MS = 6 * 3_600_000;
  */
 const LIVE: readonly RunStatus[] = ['queued', 'running', 'merging'];
 
+/**
+ * When Research now opens again after the location's last run: 6 hours from its finish (its creation while it has
+ * none), or null when it is open now, the run is live (409 research_running instead) or it ended `budget`. A run that
+ * ended `budget` had every thread refused before any call, so it spent nothing and sent nothing: Research now, which
+ * the automatic share does not bound, runs right after it (the "Little budget left" scenario). The press route refuses
+ * `too_soon` while this is set, and GET .../research answers it as `pressAt`, so the button says when up front.
+ */
+export function pressOpensAt(last: Pick<RunRecordBase, 'status' | 'finishedAt' | 'createdAt'> | null, now: Date): Date | null {
+  if (last === null || LIVE.includes(last.status) || last.status === 'budget') return null;
+  const opens = (last.finishedAt ?? last.createdAt).getTime() + PRESS_AFTER_MS;
+  return now.getTime() < opens ? new Date(opens) : null;
+}
+
 const pressBody = z.strictObject({});
 /** `orgId`, the organization the page shows, is required in open as admin (D25), as on the other switches. */
 const researchSwitchBody = z.strictObject({ on: z.boolean(), orgId: objectId.optional() });
@@ -306,11 +321,8 @@ export async function pressResearch(ctx: TownwiseContext, req: Request, res: Res
   // A live run is always the location's newest (the index allows no other while it lives), so one read answers both.
   const last = await ctx.stores.researchLocations.lastRun(scope, location.id);
   if (last !== null && LIVE.includes(last.status)) throw researchRunning();
-  // A run that ended `budget` had every thread refused before any call, so it spent nothing and sent nothing: Research
-  // now, which the automatic share does not bound, runs right after it (the "Little budget left" scenario).
-  if (last !== null && last.status !== 'budget' && ctx.now().getTime() - (last.finishedAt ?? last.createdAt).getTime() < PRESS_AFTER_MS) {
-    throw new AppError(409, 'too_soon', 'This location was researched in the last 6 hours');
-  }
+  // Within 6 hours of the last run's finish, unless it ended `budget` (pressOpensAt).
+  if (pressOpensAt(last, ctx.now()) !== null) throw new AppError(409, 'too_soon', 'This location was researched in the last 6 hours');
   const run = await queuePressRun(ctx, scope, location);
   if (run === null) throw researchRunning();
   const threads = await ctx.stores.researchLocations.threadsOf(scope, run.id);

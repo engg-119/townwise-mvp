@@ -417,20 +417,20 @@ describe('research runs in TownwiseAI’s activity (D66)', () => {
     const items = await activityFor(input(ctx, MEMBER), [researchSource]);
     expect(items).toEqual([
       {
-        at: at(5).toISOString(), kind: 'research_done', subject: 'location', status: 'done', found: 9, added: 3, competitors: 2, threadsFailed: 0,
+        at: at(5).toISOString(), kind: 'research_done', subject: 'location', status: 'done', found: 9, added: 3, competitors: 2, threadsFailed: 0, threadsBudget: 0,
         finishedAt: at(5).toISOString(),
       },
       // A town run is shared: its status and counts only, never what started it or when, and no competitors.
       {
-        at: at(4).toISOString(), kind: 'research_done', subject: 'town', status: 'done', found: 9, added: 3, competitors: null, threadsFailed: 0,
+        at: at(4).toISOString(), kind: 'research_done', subject: 'town', status: 'done', found: 9, added: 3, competitors: null, threadsFailed: 0, threadsBudget: 0,
         finishedAt: at(4).toISOString(),
       },
       {
-        at: at(3).toISOString(), kind: 'research_done', subject: 'location', status: 'partial', found: 4, added: 1, competitors: 0, threadsFailed: 1,
+        at: at(3).toISOString(), kind: 'research_done', subject: 'location', status: 'partial', found: 4, added: 1, competitors: 0, threadsFailed: 1, threadsBudget: 0,
         finishedAt: at(3).toISOString(),
       },
       {
-        at: at(2).toISOString(), kind: 'research_done', subject: 'town', status: 'budget', found: 0, added: 0, competitors: null, threadsFailed: 3,
+        at: at(2).toISOString(), kind: 'research_done', subject: 'town', status: 'budget', found: 0, added: 0, competitors: null, threadsFailed: 3, threadsBudget: 3,
         finishedAt: at(2).toISOString(),
       },
     ]);
@@ -456,6 +456,13 @@ describe('research runs in TownwiseAI’s activity (D66)', () => {
     const ctx = researchContext({ townId: null, own: [] }, reads);
     expect(await activityFor(input(ctx, MEMBER), [researchSource])).toEqual([]);
     expect(reads.filter((read) => read.startsWith('town:'))).toEqual([]);
+  });
+
+  it('a partial run whose unfinished topics were all skipped for budget says so apart from failed ones', async () => {
+    const partial = run({ status: 'partial', threads: ['neighborhood', 'competitors', 'town_overview'] });
+    const ctx = researchContext({ own: [partial], threads: { [partial.id]: ['recorded', 'budget', 'budget'] } });
+    const items = await activityFor(input(ctx, MEMBER), [researchSource]);
+    expect(items).toEqual([expect.objectContaining({ status: 'partial', threadsFailed: 2, threadsBudget: 2 })]);
   });
 
   it('a failed run counts every topic as not finished', async () => {

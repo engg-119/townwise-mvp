@@ -17,7 +17,9 @@
 // events]
 //
 // The view keeps the call as the existing `tool` part (no new part type, no stream event): its result view is
-// `{ applied, code, eventId, changeId, proposed }`, from which the client draws the card. Logs carry ids and the
+// `{ applied, code, eventId, changeId, proposed, fields }`, from which the client draws the card; `fields` the edit's
+// fields a made correction applied (null for hide, restore and anything not applied), so its card says what changed as
+// a proposal's does (UI review). Logs carry ids and the
 // outcome only, never a title, a place or the why.
 import { z } from 'zod';
 
@@ -175,7 +177,7 @@ async function correct(tc: ToolContext, request: CorrectionInput, callId: string
   }));
   ctx.logger.info({ orgId: scope.orgId, locationId: location.id, conversationId: tc.conversationId, eventId, outcome }, 'townwise.chat_event_corrected');
   if (outcome === 'applied' && change !== null) {
-    return json({ applied: true, code: null, eventId, changeId: change.id, proposed: null, message: APPLIED });
+    return json({ applied: true, code: null, eventId, changeId: change.id, proposed: null, fields: fieldsJson(fields), message: APPLIED });
   }
   return refused(eventId, outcome === 'conflict' ? 'changed_since' : outcome === 'duplicate' ? 'duplicate' : 'invalid');
 }
@@ -183,6 +185,8 @@ async function correct(tc: ToolContext, request: CorrectionInput, callId: string
 const proposedSchema = z.object({ change: z.enum(CHANGES), fields: z.record(z.string(), z.unknown()).nullable() });
 const resultSchema = z.object({
   applied: z.boolean(), code: z.string().nullable(), eventId: z.string(), changeId: z.string().nullable(), proposed: proposedSchema.nullable(),
+  /** A made edit's fields; absent from a result stored before it was added, and from every refusal. */
+  fields: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 export const correctCalendarEventTool: ChatTool<CorrectionInput> = {
@@ -218,9 +222,10 @@ export const correctCalendarEventTool: ChatTool<CorrectionInput> = {
     return { eventId, change, edit: change === 'edit' ? rest : null, why: trimmed === '' ? null : trimmed };
   },
   inputView: ({ eventId, change }) => ({ eventId, change }),
-  resultView: (content) => viewOf(content, resultSchema, ({ applied, code, eventId, changeId, proposed }) => ({
+  resultView: (content) => viewOf(content, resultSchema, ({ applied, code, eventId, changeId, proposed, fields }) => ({
     applied, code, eventId, changeId,
     proposed: proposed === null ? null : { change: proposed.change, fields: proposed.fields as Readonly<Record<string, JsonValue>> | null },
+    fields: (fields ?? null) as Readonly<Record<string, JsonValue>> | null,
   })),
   run: (tc, request, callId) => correct(tc, request, callId),
 };

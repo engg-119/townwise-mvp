@@ -147,7 +147,7 @@ describe('correct_calendar_event in a clean turn', () => {
     const part = view.messages[1]?.parts.find((each) => each.type === 'tool' && each.name === TOOL);
     expect(part).toEqual({
       type: 'tool', id: expect.any(String) as string, name: TOOL, state: 'done', input: { eventId, change: 'hide' },
-      result: { applied: true, code: null, eventId, changeId, proposed: null },
+      result: { applied: true, code: null, eventId, changeId, proposed: null, fields: null },
     });
 
     const panel = await (await call(server, `/api/org/locations/${t.locationId}/agent`, { session: t.member })).json() as { activity: Record<string, unknown>[] };
@@ -165,7 +165,8 @@ describe('correct_calendar_event in a clean turn', () => {
     const other = await team();
     const eventId = await townEvent('hanover-nh');
     await turn(t, correcting({ eventId, change: 'edit', title: `${SENTINEL} Quiz Night`, start: '2026-06-18', end: '2026-06-18', why }));
-    expect(results()[0]).toMatchObject({ applied: true, eventId });
+    // The made correction says what it changed, so its card can (UI review).
+    expect(results()[0]).toMatchObject({ applied: true, eventId, fields: { title: `${SENTINEL} Quiz Night`, start: '2026-06-18', end: '2026-06-18' } });
     expect(await shown(t, eventId)).toMatchObject({ title: `${SENTINEL} Quiz Night`, start: '2026-06-18', edited: true });
     expect(await shown(other, eventId)).toMatchObject({ title: `${SENTINEL} Trivia Night`, start: '2026-06-17', edited: false });
     // A second correction is appended on the first one's revision.
