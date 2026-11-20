@@ -89,6 +89,12 @@ describe('mentionsDate', () => {
     ['May 16', false],
     ['May 1', false],
     ['Saturday', false],
+    // Fixed patterns compare the captured month and day: a date inside a longer one, another month first, a prefix.
+    ['posted 12/5/15', true],
+    ['June 3 and May 15', true],
+    ['May 150 seats', false],
+    ['May. 15th', true],
+    ['15 June', false],
   ])('%j for 2027-05-15: %s', (quote, expected) => {
     expect(mentionsDate(quote, '2027-05-15', null)).toBe(expected);
   });
@@ -98,6 +104,7 @@ describe('mentionsDate', () => {
     expect(mentionsDate('tues and thurs nights', '2026-11-24', [2, 4])).toBe(true);
     expect(mentionsDate('tuesday nights', '2026-11-24', [2, 4])).toBe(false);
     expect(mentionsDate('every wednesday', '2026-11-25', null)).toBe(false);
+    expect(mentionsDate('sundays and fridays', '2026-11-22', [0, 5])).toBe(true);
   });
 });
 

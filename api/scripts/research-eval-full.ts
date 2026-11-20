@@ -464,8 +464,20 @@ export function precisionSample(town: readonly PlannedInsert[], location: readon
  * digits replaced by 0: a listing's stable id (a review site's `-d422332-`) names the business as surely as its name.
  */
 export function redactor(patterns: readonly string[]): (value: string) => string {
-  const regexes = patterns.map((pattern) => new RegExp(pattern, 'gi'));
-  return (value) => regexes.reduce((out, regex) => out.replace(regex, REDACTED), value)
+  // Each pattern is a literal name matched case-insensitively (no RegExp is built from it, so an argument can't make
+  // one slow); an empty pattern redacts nothing.
+  const names = patterns.map((pattern) => pattern.toLowerCase()).filter((name) => name !== '');
+  const redactName = (value: string, name: string): string => {
+    const lower = value.toLowerCase();
+    let out = '';
+    let from = 0;
+    for (let at = lower.indexOf(name); at !== -1; at = lower.indexOf(name, from)) {
+      out += value.slice(from, at) + REDACTED;
+      from = at + name.length;
+    }
+    return out + value.slice(from);
+  };
+  return (value) => names.reduce(redactName, value)
     .replace(/https?:\/\/[^\s"'<>)\]]+/g, (url) => (url.includes(REDACTED) ? url.replace(/\d{4,}/g, '0') : url));
 }
 

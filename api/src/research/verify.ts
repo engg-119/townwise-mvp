@@ -123,8 +123,25 @@ const WEEKDAY_NAMES: readonly (readonly string[])[] = [
   ['friday', 'fri'], ['saturday', 'sat'],
 ];
 
-function anyOf(names: readonly string[]): string {
-  return `(?:${names.join('|')})`;
+// The date patterns are fixed literals (no pattern is built from a date or from page text, so none can be made slow):
+// each captures a month name or number and a day, and the code compares them with the start date. Month names are
+// listed long form first so "june" never stops at "jun". Run on the lowercased quote.
+const MONTH_DAY = /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sept|sep|october|oct|november|nov|december|dec)\.?\s+0?(\d{1,2})(?:st|nd|rd|th)?\b/g;
+const DAY_MONTH = /\b0?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sept|sep|october|oct|november|nov|december|dec)\b/g;
+/** "5/16": the month, then the day in a lookahead, so "12/5/16" also offers "5/16". */
+const NUMERIC_MONTH_DAY = /\b0?(\d{1,2})\/(?=0?(\d{1,2})\b)/g;
+const WEEKDAY = /\b(sunday|sun|monday|mon|tuesday|tues|tue|wednesday|wed|thursday|thurs|thur|thu|friday|fri|saturday|sat)s?\b/g;
+const MONTH_DAY_YEAR = /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sept|sep|october|oct|november|nov|december|dec)\.?\s+0?(\d{1,2})(?:st|nd|rd|th)?(?:\s*-\s*\d{1,2}(?:st|nd|rd|th)?)?,?\s+((?:19|20)\d{2})\b/g;
+const DAY_MONTH_YEAR = /\b0?(\d{1,2})(?:st|nd|rd|th)?(?:\s*-\s*\d{1,2}(?:st|nd|rd|th)?)?\s+(?:of\s+)?(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sept|sep|october|oct|november|nov|december|dec),?\s+((?:19|20)\d{2})\b/g;
+const NUMERIC_DATE_YEAR = /\b0?(\d{1,2})\/0?(\d{1,2})\/((?:19|20)?\d{2})\b/g;
+
+const MONTH_OF = new Map(MONTHS.flatMap((names, index) => names.map((name) => [name, index + 1] as const)));
+const WEEKDAY_OF = new Map(WEEKDAY_NAMES.flatMap((names, index) => names.map((name) => [name, index] as const)));
+
+/** Whether a captured month name or number and day are the start date's. */
+function isDay(monthText: string | undefined, dayText: string | undefined, month: number, day: number): boolean {
+  const m = monthText === undefined ? undefined : (MONTH_OF.get(monthText) ?? Number(monthText));
+  return m === month && Number(dayText) === day;
 }
 
 /**
@@ -135,16 +152,13 @@ export function mentionsDate(quote: string, startDate: string, weekdays: readonl
   const lower = quote.toLowerCase();
   const month = Number(startDate.slice(5, 7));
   const day = Number(startDate.slice(8, 10));
-  const names = MONTHS[month - 1] ?? [];
-  const d = `0?${String(day)}(?:st|nd|rd|th)?`;
-  const monthDay = [
-    new RegExp(`\\b${anyOf(names)}\\.?\\s+${d}\\b`),
-    new RegExp(`\\b${d}\\s+(?:of\\s+)?${anyOf(names)}\\b`),
-    new RegExp(`\\b0?${String(month)}/0?${String(day)}\\b`),
-  ];
-  if (lower.includes(startDate) || monthDay.some((pattern) => pattern.test(lower))) return true;
+  if (lower.includes(startDate)) return true;
+  for (const match of lower.matchAll(MONTH_DAY)) if (isDay(match[1], match[2], month, day)) return true;
+  for (const match of lower.matchAll(DAY_MONTH)) if (isDay(match[2], match[1], month, day)) return true;
+  for (const match of lower.matchAll(NUMERIC_MONTH_DAY)) if (isDay(match[1], match[2], month, day)) return true;
   if (weekdays === null || weekdays.length === 0) return false;
-  return weekdays.every((weekday) => new RegExp(`\\b${anyOf(WEEKDAY_NAMES[weekday] ?? [])}s?\\b`).test(lower));
+  const named = new Set([...lower.matchAll(WEEKDAY)].map((match) => WEEKDAY_OF.get(match[1] ?? '')));
+  return weekdays.every((weekday) => named.has(weekday));
 }
 
 /**
@@ -154,18 +168,15 @@ export function mentionsDate(quote: string, startDate: string, weekdays: readonl
 function yearsOnDate(quote: string, startDate: string): number[] {
   const month = Number(startDate.slice(5, 7));
   const day = Number(startDate.slice(8, 10));
-  const names = anyOf(MONTHS[month - 1] ?? []);
-  const d = `0?${String(day)}(?:st|nd|rd|th)?(?:\\s*-\\s*\\d{1,2}(?:st|nd|rd|th)?)?`;
-  const year = '((?:19|20)\\d{2})';
-  const patterns = [
-    new RegExp(`\\b${names}\\.?\\s+${d},?\\s+${year}\\b`, 'g'),
-    new RegExp(`\\b${d}\\s+(?:of\\s+)?${names},?\\s+${year}\\b`, 'g'),
-    new RegExp(`\\b0?${String(month)}/0?${String(day)}/((?:19|20)?\\d{2})\\b`, 'g'),
-  ];
-  return patterns.flatMap((pattern) => [...quote.matchAll(pattern)].map((match) => {
-    const value = Number(match[1]);
+  const year = (text: string | undefined): number => {
+    const value = Number(text);
     return value < 100 ? 2000 + value : value;
-  }));
+  };
+  return [
+    ...[...quote.matchAll(MONTH_DAY_YEAR)].filter((m) => isDay(m[1], m[2], month, day)).map((m) => year(m[3])),
+    ...[...quote.matchAll(DAY_MONTH_YEAR)].filter((m) => isDay(m[2], m[1], month, day)).map((m) => year(m[3])),
+    ...[...quote.matchAll(NUMERIC_DATE_YEAR)].filter((m) => isDay(m[1], m[2], month, day)).map((m) => year(m[3])),
+  ];
 }
 
 /** Text as grounding compares it: one form of each character, curly quotes and dashes made plain, spaces collapsed. */
