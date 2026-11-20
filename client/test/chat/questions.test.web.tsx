@@ -7,6 +7,7 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import { resetDrafts } from '../../src/chat/drafts';
+import { lastChatKey } from '../../src/chat/lastChat';
 import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
 import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
@@ -665,6 +666,25 @@ describe('D65: ?panel=activity (the links to a forecast’s runs)', () => {
     renderAt('/locations/l1/agent?panel=activity', chatApi());
     const side = await screen.findByTestId('agent-side');
     expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('What it’s been doing');
+  });
+
+  // An independent QA pass, 2026-11-20: within 5 minutes of leaving a conversation, the link reopened it, and the
+  // panel, which only sits beside the new chat page, never showed.
+  test('a conversation kept from the last 5 minutes does not reopen: the link lands on the panel', async () => {
+    localStorage.setItem(lastChatKey('u1', 'l1', null), JSON.stringify({ conversationId: 'c1', leftAt: Date.now() - 1000 }));
+    const api = chatApi();
+    renderAt('/locations/l1/agent?panel=activity', api);
+    const side = await screen.findByTestId('agent-side');
+    expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('What it’s been doing');
+    expect(screen.getByTestId('chat-landing-column')).toBeTruthy();
+  });
+
+  test('?panel=questions also lands on the panel over a kept conversation', async () => {
+    localStorage.setItem(lastChatKey('u1', 'l1', null), JSON.stringify({ conversationId: 'c1', leftAt: Date.now() - 1000 }));
+    renderAt('/locations/l1/agent?panel=questions', chatApi());
+    const side = await screen.findByTestId('agent-side');
+    await within(side).findByRole('heading', { name: 'Questions for you' });
+    expect(screen.getByTestId('chat-landing-column')).toBeTruthy();
   });
 });
 
