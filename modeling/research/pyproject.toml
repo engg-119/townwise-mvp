@@ -1,0 +1,23 @@
+[project]
+name = "townwise-research"
+version = "0.1.0"
+description = "A LangGraph research agent that scouts events in and around a restaurant's town and stores them in Azure AI Search"
+requires-python = "==3.12.*"
+# Pinned exactly, each release at least seven days old when chosen (the repo's .npmrc rule, applied here by hand).
+dependencies = [
+    "anthropic==2.8.0",
+    "azure-identity==1.27.0",
+    "azure-search-documents==12.1.0",
+    "langgraph==1.2.20",
+    "pydantic==2.14.3",
+]
+
+[dependency-groups]
+dev = ["pytest==9.2.0"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
