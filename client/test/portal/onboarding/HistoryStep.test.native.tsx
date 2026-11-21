@@ -9,6 +9,7 @@ jest.mock('expo-splash-screen', () => ({
 }));
 
 import { cleanup, screen } from 'expo-router/testing-library';
+import { StyleSheet } from 'react-native';
 
 import { STEP } from '../../../src/portal/onboarding/history';
 import type { MeResponse } from '../../../src/portal/schemas';
@@ -89,6 +90,20 @@ test('a running import shows in words: each file’s line, the reasons, and foun
   expect(screen.getByText('Kept, not used: this Word file has no table with dates and sales.')).toBeTruthy();
   expect(screen.getByText('Reading · Estimating')).toBeTruthy();
   expect(screen.getByText('No days yet.')).toBeTruthy();
+});
+
+test('a long upload scrolls in its own box: every file listed, the list capped at about 8 rows', async () => {
+  const names = Array.from({ length: 12 }, (_, i) => `sales_${String(i + 1).padStart(2, '0')}.csv`);
+  const view = importViewOf('i1', {
+    status: 'reading', startedAt: '2026-11-05T17:00:00.000Z',
+    progress: { filesTotal: 12, filesDone: 0, bytesTotal: 120, bytesDone: 0 },
+    files: names.map((name, i) => fileViewOf(`f${String(i + 1)}`, { name, status: 'queued', result: null, etaSeconds: null, queuePosition: i + 1 })),
+  });
+  await renderApp('/locations/l1', portal(meOf(ACCESS.admin), { import: view }));
+  expect(await screen.findByRole('heading', { name: STEP.readingTitle })).toBeTruthy();
+  for (const name of names) expect(screen.getByText(name)).toBeTruthy();
+  const scroll = screen.getByTestId('history-files-scroll');
+  expect(StyleSheet.flatten(scroll.props.style as Parameters<typeof StyleSheet.flatten>[0])).toMatchObject({ maxHeight: 640 });
 });
 
 test('stored files off: the step says where to upload instead', async () => {

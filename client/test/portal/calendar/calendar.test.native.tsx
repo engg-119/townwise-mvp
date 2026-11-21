@@ -7,9 +7,10 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
+import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
-import { ACCESS, fakePortalApi, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import type { LocationSummary } from '../../../src/portal/schemas';
+import { ACCESS, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { townEvent } from '../analytics/fakes';
 import { noteOf } from '../locations/fakes';
@@ -310,6 +311,33 @@ test('an outlook day on native (D52): its cell’s label says outlook, its panel
   expect(within(panel()).getByText('About 212 guests')).toBeTruthy();
   expect(within(panel()).getByText('Likely 150 to 290. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.')).toBeTruthy();
   expect(within(panel()).queryByText(/8 in 10/)).toBeNull();
+});
+
+test('a forecast published while the Calendar is open shows in place, with no reload (D65)', async () => {
+  jest.useFakeTimers({
+    now: new Date(2026, 10, 11, 12, 0, 0),
+    doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance'],
+  });
+  const [main, river] = LOCATIONS;
+  if (main === undefined || river === undefined) throw new Error('LOCATIONS needs two');
+  const HISTORY = { dayCount: 795, firstDate: '2024-09-01', lastDate: '2026-11-10' };
+  const located = (calibration: LocationSummary['calibration']): LocationSummary[] => [{ ...main, calibration }, river];
+  const fake = calendarFake({ events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })] });
+  const me = meOf(ACCESS.member);
+  const api = fakePortalApi({
+    me, org: orgOf('member', located({ state: 'not_calibrated', ...HISTORY, updating: { stage: 'running', since: '2026-11-11T16:30:00.000Z' }, lastRun: null })), fallback: fake,
+  });
+  const forecastReads = (): number => fake.paths.filter((path) => path.startsWith(`${PATH}/forecast?`)).length;
+  await renderApp('/locations/l1/calendar', api);
+  expect(await screen.findByText('Today, Wed, Nov 11')).toBeTruthy();
+  await waitFor(() => { expect(forecastReads()).toBe(1); });
+  expect(screen.queryByLabelText(LABEL)).toBeNull();
+  // The run publishes: the layout's next re-read finds the location calibrated, and the Calendar reads its forecast again.
+  fake.forecasts['2026-11'] = november();
+  api.org = orgOf('member', located({ state: 'calibrated', ...HISTORY, dataThrough: '2026-11-10', newerDays: 0, nextRefresh: '2026-11-16', updating: null }));
+  await act(() => jest.advanceTimersByTimeAsync(30_000));
+  expect(await screen.findByLabelText(LABEL)).toBeTruthy();
+  expect(forecastReads()).toBe(2);
 });
 
 describe('found by research (D66)', () => {
