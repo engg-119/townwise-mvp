@@ -12,7 +12,7 @@ import { dayMonthRange } from '../analytics/week';
 import { MONTH_NAMES } from '../analytics/words';
 import { errorCopy, hasCode } from '../errors';
 import { fetchForecast } from '../estimates/api';
-import { useAction, useBreakpoint, useLoad } from '../hooks';
+import { useAction, useBreakpoint, useLoad, useWhenDone } from '../hooks';
 import { createNote, deleteNote, fetchNotes, fetchSalesDays, updateNote, type NewNoteInput, type Note, type NoteInput } from '../locations/api';
 import { addDays, localToday } from '../locations/dates';
 import { shownLocationName } from '../locations/naming';
@@ -26,6 +26,7 @@ import { ASK_FOUND_QUERY, handOffAsk } from '../research/ask';
 import { askDraft, BANNER_DISMISS, BANNER_DISMISS_LABEL, BANNER_LINK, bannerWords, EDIT_SHEET, FOUND_NOTICES } from '../research/copy';
 import { bannerShows, markSeen, readSeen, runMark } from '../research/seen';
 import { fetchRules } from '../rules/api';
+import { updatingOf } from '../schemas';
 import { useLocation } from '../shell/LocationShell';
 import { CalendarSkeleton } from '../skeleton';
 import { Button } from '../ui/Button';
@@ -285,6 +286,9 @@ function CalendarView(): React.JSX.Element {
     async () => ({ range: { from, to }, window: await fetchForecast(api, location.id, { from, to }) }),
     [api, location.id, from, to],
   ));
+  // When a run of the location this page saw updating ends (D65), the forecast is read again in place, as on Home: the
+  // layout re-reads the organization while it updates, so a first forecast published with the page open shows here.
+  useWhenDone(updatingOf(location.calibration) !== null, forecast.reload);
   const calendars = useKept(useCallback(() => fetchOwnerCalendars(api, location.id), [api, location.id]));
   // The location's research status, for the banner only: a failed read shows no banner.
   const research = useLoad(useCallback(() => fetchResearch(api, location.id), [api, location.id]));
