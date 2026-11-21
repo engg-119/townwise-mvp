@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Easing, Platform, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { AccessibilityInfo, Animated, Easing, Platform, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
 import { theme } from '../../theme';
@@ -474,21 +474,24 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
   const list = rows.length === 0 ? null : (
     <Stack gap={theme.space[3]}>
       {queue.items.length === 0 || queue.overall.files === 0 ? null : <Mono tone="white">{overallLine(queue.overall)}</Mono>}
-      <View role="list" aria-label="Your files" style={styles.list}>
-        {rows.map((row) => (
-          <RowView
-            key={row.key}
-            row={row}
-            locationId={location.id}
-            readOnly={readOnly}
-            queued={row.kind === 'file' ? byFile.get(row.file.id) : undefined}
-            aiLine={row.kind === 'file' ? ai.lines.get(row.file.id) ?? null : null}
-            cancel={queue.cancel}
-            forget={queue.forget}
-            onRemoved={refresh}
-          />
-        ))}
-      </View>
+      {/* A long upload scrolls inside its own box, so the read button and what follows stay in reach. */}
+      <ScrollView nestedScrollEnabled testID="history-files-scroll" style={styles.listScroll}>
+        <View role="list" aria-label="Your files" style={styles.list}>
+          {rows.map((row) => (
+            <RowView
+              key={row.key}
+              row={row}
+              locationId={location.id}
+              readOnly={readOnly}
+              queued={row.kind === 'file' ? byFile.get(row.file.id) : undefined}
+              aiLine={row.kind === 'file' ? ai.lines.get(row.file.id) ?? null : null}
+              cancel={queue.cancel}
+              forget={queue.forget}
+              onRemoved={refresh}
+            />
+          ))}
+        </View>
+      </ScrollView>
     </Stack>
   );
 
@@ -626,6 +629,8 @@ const styles = StyleSheet.create({
   },
   zoneOver: { borderStyle: 'solid', borderColor: c.white, backgroundColor: c.raised },
   optIn: { gap: theme.space[1], maxWidth: 560 },
+  // About 8 rows of files; more scroll in place.
+  listScroll: { maxHeight: 640 },
   list: { borderTopWidth: 1, borderTopColor: c.border },
   row: { gap: theme.space[2], paddingVertical: theme.space[4], borderBottomWidth: 1, borderBottomColor: c.border, minWidth: 0 },
   name: { ...theme.type.ui, color: c.white, flexShrink: 1 },
