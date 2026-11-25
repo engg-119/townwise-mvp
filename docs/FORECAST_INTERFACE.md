@@ -147,7 +147,7 @@ There is no other POS adapter. A different vendor's export would not load.
 
 ## Locality research
 
-The locality features are a checked-in CSV, `modeling/dartmouth_calendar_2025_2026.csv`, not a live research agent. Columns: `event`, `kind`, `start_date`, `end_date`, `source_url`, `confidence`, `notes`. Kinds include `term_classes`, `finals`, and the big-event kinds listed above. Each row has a source URL and a confidence of `high` or `medium`.
+The demand model's locality features are the checked-in CSV `modeling/dartmouth_calendar_2025_2026.csv`. The town research agent (spec D66) writes Calendar findings and does not feed this notebook. Columns: `event`, `kind`, `start_date`, `end_date`, `source_url`, `confidence`, `notes`. Kinds include `term_classes`, `finals`, and the big-event kinds listed above. Each row has a source URL and a confidence of `high` or `medium`.
 
 Private events and shows come from Toast names, not from a bookings calendar. The booking rule file says Kieran's own calendar should override that rule once it exists.
 
