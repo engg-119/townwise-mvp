@@ -43,8 +43,8 @@ Local run (full steps, including generating the auth keys, in `api/README.md`):
 
 ```sh
 docker compose up -d                  # Mongo on 27017, Valkey on 6379, Azurite (blobs) on 10000
-npm run dev -w @townwise/api          # :8080, after az login; Key Vault secrets, .env.local overrides them
-npm start -w @ckeith26/expo-shell     # expo start; web on :8081, the API's CORS origin; reads client/.env.local
+npm run dev -w @townwise/api          # :8080; Key Vault fills secrets .env.local left empty (az login only then)
+npm start -w @ckeith26/expo-shell     # expo start; web on :8081; client id from Key Vault unless .env.local sets it
 ```
 
 Terraform, as CI runs it (no backend, mocked providers), in each of `infra/terraform/bootstrap` and `infra/terraform/production`:
