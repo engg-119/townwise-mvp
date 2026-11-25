@@ -40,7 +40,7 @@ variable "budget_start_date" {
 variable "github_subject_prefix" {
   description = "GitHub's immutable OIDC subject prefix for the repository: repo:OWNER@OWNER-ID/REPO@REPO-ID."
   type        = string
-  default     = "repo:engg-119@343069214/engg-119-mvp@1427161209"
+  default     = "repo:engg-119@343069214/townwise-mvp@1427161209"
 
   validation {
     condition     = can(regex("^repo:[A-Za-z0-9-]+@[0-9]+/[A-Za-z0-9._-]+@[0-9]+$", var.github_subject_prefix))
@@ -51,7 +51,7 @@ variable "github_subject_prefix" {
 variable "github_repository" {
   description = "owner/repository, as it appears in job_workflow_ref."
   type        = string
-  default     = "engg-119/engg-119-mvp"
+  default     = "engg-119/townwise-mvp"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$", var.github_repository))

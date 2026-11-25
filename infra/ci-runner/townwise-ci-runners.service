@@ -1,4 +1,4 @@
-# camo's CI runners for engg-119/engg-119-mvp, started only while camo has compute to spare (infra/README.md,
+# camo's CI runners for engg-119/townwise-mvp, started only while camo has compute to spare (infra/README.md,
 # "CI on camo"). A user unit: install as ~/.config/systemd/user/townwise-ci-runners.service, with this folder copied
 # to ~/townwise-ci-runners. Linger is on for this user, so it runs without a login.
 [Unit]

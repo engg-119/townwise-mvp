@@ -21,7 +21,7 @@ set +x
 set -euo pipefail
 unset GH_DEBUG DEBUG
 
-repo=engg-119/engg-119-mvp
+repo=engg-119/townwise-mvp
 here="$(cd "$(dirname "$0")" && pwd)"
 # Under /Users, which Docker Desktop shares with the VM, so a job folder has the same path on the Mac, in the
 # runner container and in any container a job starts with docker run -v.

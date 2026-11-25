@@ -88,7 +88,7 @@ run "rejects_bad_inputs" {
 
   variables {
     budget_email          = "not-an-email"
-    github_subject_prefix = "repo:engg-119/engg-119-mvp"
+    github_subject_prefix = "repo:engg-119/townwise-mvp"
     budget_start_date     = "2026-11-15T00:00:00Z"
   }
 
@@ -105,7 +105,7 @@ run "github_oidc_exact_subjects" {
   assert {
     condition = (
       keys(azurerm_federated_identity_credential.github) == ["github-main"] &&
-      azurerm_federated_identity_credential.github["github-main"].subject == "repo:engg-119@343069214/engg-119-mvp@1427161209:ref:refs/heads/main:job_workflow_ref:engg-119/engg-119-mvp/.github/workflows/deploy.yml@refs/heads/main" &&
+      azurerm_federated_identity_credential.github["github-main"].subject == "repo:engg-119@343069214/townwise-mvp@1427161209:ref:refs/heads/main:job_workflow_ref:engg-119/townwise-mvp/.github/workflows/deploy.yml@refs/heads/main" &&
       azurerm_federated_identity_credential.github["github-main"].issuer == "https://token.actions.githubusercontent.com" &&
       azurerm_federated_identity_credential.github["github-main"].audience == tolist(["api://AzureADTokenExchange"])
     )
@@ -129,7 +129,7 @@ run "github_oidc_unbound_fallback" {
   }
 
   assert {
-    condition     = azurerm_federated_identity_credential.github["github-main"].subject == "repo:engg-119@343069214/engg-119-mvp@1427161209:ref:refs/heads/main"
+    condition     = azurerm_federated_identity_credential.github["github-main"].subject == "repo:engg-119@343069214/townwise-mvp@1427161209:ref:refs/heads/main"
     error_message = "Without the subject customization, the credential falls back to any workflow on main."
   }
 }
