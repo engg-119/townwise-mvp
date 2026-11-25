@@ -240,20 +240,20 @@ CI and Security run on those pull requests with read-only tokens. Nothing enforc
 **Bind the deploy credential to `deploy.yml` (server side).** By default the OIDC subject names only the repository and the ref, so any workflow pushed to `main` could get a deploy token. Customize the repository's subject to also carry `job_workflow_ref`, which for a job that is not a reusable-workflow call is the running workflow's own `owner/repo/.github/workflows/<file>@<ref>`. GitHub documents the endpoint (repository admin) with no plan or visibility restriction; `owner_id` and `repo_id` stay in the `repo` segment. Run this **before the first deploy**; bootstrap already expects it:
 
 ```sh
-gh api -X PUT repos/engg-119/engg-119-mvp/actions/oidc/customization/sub \
+gh api -X PUT repos/engg-119/townwise-mvp/actions/oidc/customization/sub \
   -F use_default=false -F use_immutable_subject=true \
   -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=context' -f 'include_claim_keys[]=job_workflow_ref'
-gh api repos/engg-119/engg-119-mvp/actions/oidc/customization/sub      # check: use_default false, the three keys
+gh api repos/engg-119/townwise-mvp/actions/oidc/customization/sub      # check: use_default false, the three keys
 ```
 
-The deploy credential's subject is then exactly `repo:engg-119@343069214/engg-119-mvp@1427161209:ref:refs/heads/main:job_workflow_ref:engg-119/engg-119-mvp/.github/workflows/deploy.yml@refs/heads/main`. If the first deploy's `azure/login` fails with `AADSTS700213`, the error shows the subject GitHub actually sent; compare it with `terraform -chdir=infra/terraform/bootstrap state show 'azurerm_federated_identity_credential.github["github-main"]'`. If GitHub refuses the PUT, set `github_bind_deploy_workflow = false` in the bootstrap `terraform.tfvars` and apply: the subject falls back to any workflow on `main`, and the guard is the only check on which workflow asks for a token. Neither control can tell jobs within `deploy.yml` apart; only the guard does that.
+The deploy credential's subject is then exactly `repo:engg-119@343069214/townwise-mvp@1427161209:ref:refs/heads/main:job_workflow_ref:engg-119/townwise-mvp/.github/workflows/deploy.yml@refs/heads/main`. If the first deploy's `azure/login` fails with `AADSTS700213`, the error shows the subject GitHub actually sent; compare it with `terraform -chdir=infra/terraform/bootstrap state show 'azurerm_federated_identity_credential.github["github-main"]'`. If GitHub refuses the PUT, set `github_bind_deploy_workflow = false` in the bootstrap `terraform.tfvars` and apply: the subject falls back to any workflow on `main`, and the guard is the only check on which workflow asks for a token. Neither control can tell jobs within `deploy.yml` apart; only the guard does that.
 
 Invite Azure teammates as Entra B2B guests: Entra admin center, Users, Invite external user. Then add them to `townwise-developers`, and add only the people who rotate secrets to `townwise-secrets-admins`.
 
 Repository variables (repository-level only):
 
 ```sh
-R=engg-119/engg-119-mvp
+R=engg-119/townwise-mvp
 B="$(git rev-parse --show-toplevel)/infra/terraform/bootstrap"
 gh variable set AZURE_TENANT_ID -R $R --body 37acb94f-e2d9-41d9-a697-1bd7a1d60bf1
 gh variable set AZURE_SUBSCRIPTION_ID -R $R --body 2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999
@@ -268,15 +268,15 @@ gh variable set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID -R $R --body "<web client id>"
 gh variable set EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID -R $R --body "<ios client id>"
 ```
 
-**The main-only deploy gate rests on only the owner having write access.** The deploy workflow runs only on `refs/heads/main`, and the deploy identity trusts exactly `repo:engg-119@343069214/engg-119-mvp@1427161209:ref:refs/heads/main`. Anyone given write access later can push to `main` and deploy, and a deploy can read production secrets, because it ships the code that runs with the app's identity. To add branch protection and required reviews, upgrade the organization to GitHub Team, or make the repository public.
+**The main-only deploy gate rests on only the owner having write access.** The deploy workflow runs only on `refs/heads/main`, and the deploy identity trusts exactly `repo:engg-119@343069214/townwise-mvp@1427161209:ref:refs/heads/main`. Anyone given write access later can push to `main` and deploy, and a deploy can read production secrets, because it ships the code that runs with the app's identity. To add branch protection and required reviews, upgrade the organization to GitHub Team, or make the repository public.
 
 There is no plan identity and no pull-request credential: until a plan job exists, nothing but `deploy.yml` on `main` can obtain an Azure token. When one is added, give it its own identity, a `...:pull_request` credential, Reader, and Storage Blob Data Reader on the `tfstate` container only, and plan with `-lock=false`.
 
 ### 13. First deploy, rollback, and the client-IP check
 
 ```sh
-gh variable set DEPLOY_ENABLED -R engg-119/engg-119-mvp --body true
-gh workflow run deploy.yml -R engg-119/engg-119-mvp --ref main && gh run watch -R engg-119/engg-119-mvp
+gh variable set DEPLOY_ENABLED -R engg-119/townwise-mvp --body true
+gh workflow run deploy.yml -R engg-119/townwise-mvp --ref main && gh run watch -R engg-119/townwise-mvp
 curl -sI https://townwise.tech/sign-in | grep -i -E 'content-security|strict-transport|referrer|x-content-type|cross-origin-opener'
 ```
 
@@ -636,9 +636,9 @@ One session runs at a time: a second start refuses while one is running (a lock 
 **Point CI at it, and switch back:**
 
 ```sh
-gh variable set CI_RUNS_ON -R engg-119/engg-119-mvp --body '["self-hosted","townwise-ci"]'      # the laptop or camo
-gh variable set CI_RUNS_ON -R engg-119/engg-119-mvp --body '["self-hosted","townwise-laptop"]'  # the laptop only
-gh variable delete CI_RUNS_ON -R engg-119/engg-119-mvp    # back to ubuntu-24.04
+gh variable set CI_RUNS_ON -R engg-119/townwise-mvp --body '["self-hosted","townwise-ci"]'      # the laptop or camo
+gh variable set CI_RUNS_ON -R engg-119/townwise-mvp --body '["self-hosted","townwise-laptop"]'  # the laptop only
+gh variable delete CI_RUNS_ON -R engg-119/townwise-mvp    # back to ubuntu-24.04
 ```
 
 Every job in the three workflows has `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}` (GitHub allows the `vars` context in `runs-on`), so the value must be JSON: a list of labels or a quoted string. A change applies to workflow runs started after it. A job waiting for a laptop runner that never comes is canceled after 24 hours in the queue.
@@ -646,11 +646,11 @@ Every job in the three workflows has `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '
 **Stop** with Ctrl-C. It removes every runner container (a job still running fails; re-run it), the job folders, and every registration of the session still on GitHub, then exits with status 130. A second Ctrl-C exits at once, and the next start removes what is left. Delete `CI_RUNS_ON` too if the runner stays off, or new runs queue for it. To check nothing is left:
 
 ```sh
-gh api repos/engg-119/engg-119-mvp/actions/runners --jq '.runners[] | "\(.id) \(.name) \(.status)"'
+gh api repos/engg-119/townwise-mvp/actions/runners --jq '.runners[] | "\(.id) \(.name) \(.status)"'
 docker ps -a --filter label=townwise-ci-session
 ```
 
-Remove a leftover registration with `gh api -X DELETE repos/engg-119/engg-119-mvp/actions/runners/<id>`.
+Remove a leftover registration with `gh api -X DELETE repos/engg-119/townwise-mvp/actions/runners/<id>`.
 
 **Security:**
 
@@ -701,7 +701,7 @@ While GitHub-hosted runners are blocked (CI on the laptop runner, above), `deplo
 - **What it means (the owner accepted it, choosing camo as `ckeith` over an isolated user):** camo's other runners (coffee-chats-mvp's twelve) run as the same user with the same Docker. A job of theirs running during a Townwise deploy could read the deploy job's environment, including its OIDC token request, and deploy to Townwise production. The deploy job keeps its Azure CLI session and registry login in the job's temp folder (`AZURE_CONFIG_DIR`, `DOCKER_CONFIG`), never in `~/.azure` or `~/.docker`, and its last step signs out and removes them whatever happened.
 - **Builds share the deploy runner (the owner accepted it too, 2026-11-19, over moving builds off camo):** `build-web`, `build-api` and `build-lab` run npm and repository code (`npm ci`, the Expo export, `docker build`) on the same runner, as the same user, with the same Docker as the deploy job, and that runner is not reset between jobs. A malicious dependency in a build could leave something behind (a process, a changed file in `~/townwise-runner`, an image or build-cache entry) that the next deploy job runs with its OIDC token. On GitHub-hosted runners each job gets a fresh VM and this path does not exist. What limits it here: `.npmrc` sets `ignore-scripts` and a 7-day `min-release-age`, every dependency and image is pinned, and only the owner can push to `main`. It is no wider than the coffee-chats risk above, which already gives other CI code the same reach. Moving the deploy job to a runner under a user of its own (no sudo, no shared Docker), with the builds left on `ckeith`'s, is the stronger setup and closes both; going back to GitHub-hosted runners is putting `ubuntu-24.04` back on each job once billing works.
 - **Per service:** the `changes` job compares the push with the last successful run of `deploy.yml` on `main` and builds and deploys only what changed: the web for `client/` or `infra/web/`, the API (and the weekly worker, which runs its image) for `api/`, the lab for `modeling/lab/`, and all three for the root package files, `.nvmrc`, `.npmrc`, `tsconfig.base.json` or `deploy.yml` itself. A failed run leaves its base, so its services deploy on the next push. A manual run (`gh workflow run deploy.yml --ref main`) deploys all three.
-- **Re-register** (a removed runner, a new machine): `gh api -X POST repos/engg-119/engg-119-mvp/actions/runners/registration-token -q .token`, then in `~/townwise-runner`: `./config.sh --unattended --url https://github.com/engg-119/engg-119-mvp --token <token> --name camo-townwise-deploy --labels townwise-deploy --work _work --replace` and `systemctl --user restart townwise-runner`.
+- **Re-register** (a removed runner, a new machine): `gh api -X POST repos/engg-119/townwise-mvp/actions/runners/registration-token -q .token`, then in `~/townwise-runner`: `./config.sh --unattended --url https://github.com/engg-119/townwise-mvp --token <token> --name camo-townwise-deploy --labels townwise-deploy --work _work --replace` and `systemctl --user restart townwise-runner`.
 
 ## Production operations from a laptop
 
