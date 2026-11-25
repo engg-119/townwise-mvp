@@ -13,14 +13,16 @@
 // With TOWNWISE_LAB_RUNNER=local the job a pass starts calls back to the API at TOWNWISE_LAB_API_URL, so the API and the
 // worker must share TOWNWISE_LAB_LOCAL_SECRET (development only, like the local runner). PATH and HOME go only to a
 // local job; IDENTITY_ENDPOINT, IDENTITY_HEADER and AZURE_CLIENT_ID only to the Azure runner's managed identity.
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { parseArgs } from 'node:util';
+import { parseArgs, parseEnv } from 'node:util';
 
 import { configSchema as mongoSchema, connectMongo, ensureIndexes } from '@ckeith26/mongo';
 import { ConfigError, configSchema as serverSchema, createLogger, loadEnv } from '@ckeith26/server-core';
 import { z } from 'zod';
 
 import { createAzureCliTokenSource, createManagedIdentityTokenSource, resolveManagedIdentity, usesAzureCli } from '../azure-identity.ts';
+import { DevSecretsError, developmentEnv, loadDeveloperSecrets } from '../dev-secrets.ts';
 import { createAnthropicChatModel, type ChatModel } from '../chat/model.ts';
 import { configSchema as townwiseSchema, labRunnerOf, resolveTownwiseConfig } from '../config.ts';
 import { createForecastSchedule } from '../lab/schedule.ts';
@@ -142,6 +144,25 @@ export async function runWeeklyForecastsWorker(deps: WorkerDeps): Promise<number
 }
 
 if (import.meta.main) {
+  // Production's job already has its environment. A development run reads api/.env.local and fills only the
+  // developer secrets that file left empty, from Key Vault when az login is present.
+  if (process.env.NODE_ENV !== 'production') {
+    let file: Record<string, string> = {};
+    try {
+      file = parseEnv(readFileSync(new URL('../../.env.local', import.meta.url), 'utf8'));
+    } catch {
+      // No local file. Key Vault fills whatever the environment left empty, when this is a development run.
+    }
+    if ((process.env.NODE_ENV ?? file.NODE_ENV) === 'development') {
+      try {
+        const secrets = await loadDeveloperSecrets({ target: 'server', local: [file, process.env] });
+        for (const [key, value] of Object.entries(developmentEnv(file, process.env, secrets))) process.env[key] = value;
+      } catch (err) {
+        console.error(err instanceof DevSecretsError ? err.message : 'Could not load developer secrets from Azure.');
+        process.exit(1);
+      }
+    }
+  }
   const stop = new AbortController();
   for (const name of ['SIGINT', 'SIGTERM'] as const) process.once(name, () => { stop.abort(); });
   process.exit(await runWeeklyForecastsWorker({ argv: process.argv.slice(2), env: process.env, signal: stop.signal }));

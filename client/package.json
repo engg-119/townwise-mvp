@@ -4,7 +4,7 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
-    "start": "expo start",
+    "start": "node scripts/dev-start.mts",
     "start:prod": "node scripts/prod-proxy.mts",
     "typecheck": "tsc -p . --noEmit",
     "test": "jest --ci",
