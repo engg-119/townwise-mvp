@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --env-file=.env.local --watch src/main.ts",
+    "dev": "node scripts/dev.ts",
     "dev:prod-copy": "node scripts/dev-prod-copy.ts",
     "start": "node src/main.ts",
     "worker:forecasts": "node src/workers/weekly-forecasts.ts",

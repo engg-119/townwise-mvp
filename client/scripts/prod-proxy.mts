@@ -11,6 +11,7 @@
 // out. --write forwards everything, so an edit on localhost changes production. Requests from any origin but
 // http://localhost:8081 are refused. --no-expo runs the proxy alone; --port <n> and --upstream <url> move it (tests).
 import { spawn } from 'node:child_process';
+import { googleWebClientId } from './azure-dev.mts';
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { createConnection } from 'node:net';
@@ -105,9 +106,17 @@ server.listen(PORT, '127.0.0.1', () => {
       return;
     }
     const client = join(dirname(fileURLToPath(import.meta.url)), '..');
-    const expo = spawn('npx', ['expo', 'start', '--port', '8081', '--clear'], {
-      cwd: client, stdio: 'inherit', env: { ...process.env, EXPO_PUBLIC_API_URL: `http://localhost:${String(PORT)}`, EXPO_PUBLIC_WEB_URL: LOCAL_WEB },
+    void googleWebClientId().then((clientId) => {
+      if (clientId === null) {
+        server.close();
+        process.exitCode = 1;
+        return;
+      }
+      const expo = spawn('npx', ['expo', 'start', '--port', '8081', '--clear'], {
+        cwd: client, stdio: 'inherit',
+        env: { ...process.env, EXPO_PUBLIC_API_URL: `http://localhost:${String(PORT)}`, EXPO_PUBLIC_WEB_URL: LOCAL_WEB, EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: clientId },
+      });
+      expo.on('exit', (code) => { server.close(); process.exitCode = code ?? 0; });
     });
-    expo.on('exit', (code) => { server.close(); process.exitCode = code ?? 0; });
   });
 });

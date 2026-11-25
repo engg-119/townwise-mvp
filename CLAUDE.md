@@ -43,7 +43,7 @@ Local run (full steps, including generating the auth keys, in `api/README.md`):
 
 ```sh
 docker compose up -d                  # Mongo on 27017, Valkey on 6379, Azurite (blobs) on 10000
-npm run dev -w @townwise/api          # :8080, reads api/.env.local (from api/.env.example)
+npm run dev -w @townwise/api          # :8080, after az login; Key Vault secrets, .env.local overrides them
 npm start -w @ckeith26/expo-shell     # expo start; web on :8081, the API's CORS origin; reads client/.env.local
 ```
 

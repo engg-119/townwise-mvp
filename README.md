@@ -136,11 +136,14 @@ docker compose up -d        # MongoDB on 27017, Valkey (Redis) on 6379 and Azuri
 grep -v -E '^AUTH_(JWT|ENCRYPTION)_KEYS=' api/.env.example > api/.env.local
 printf 'AUTH_JWT_KEYS=k1:%s\nAUTH_ENCRYPTION_KEYS=e1:%s\n' "$(openssl rand -base64 32)" "$(openssl rand -base64 32)" >> api/.env.local
 
-npm run dev -w @townwise/api          # API on http://localhost:8080
+az login                         # required; the API and the web app refuse to start without it
+npm run dev -w @townwise/api          # API on http://localhost:8080; developer secrets come from Key Vault
 curl localhost:8080/healthz           # {"status":"ok"}
 ```
 
 A non-interactive shell may start on an older Node. If `node --version` is not 24, run `. "$HOME/.nvm/nvm.sh" && nvm use` first.
+
+`az login` has to succeed before the API listens. The dev script reads the developer Key Vault secrets (the Google web client id, the calendar client secret, the calendar key, the shared Anthropic key, and the Places and map secrets) into the process. A non-empty value in `api/.env.local` replaces the Key Vault value for that name, and that secret is not read. The script does not write the Key Vault values into the file. If the sign-in is missing, or a required secret cannot be read and the file does not already set it, it prints the reason and exits. The two `AUTH_*_KEYS` lines stay in `api/.env.local`: they are throwaway local keys, not the production ones.
 
 For the app, copy `client/.env.example` to `client/.env.local` and set `EXPO_PUBLIC_API_URL=http://localhost:8080` and `EXPO_PUBLIC_WEB_URL=http://localhost:8081`, then:
 
@@ -148,9 +151,9 @@ For the app, copy `client/.env.example` to `client/.env.local` and set `EXPO_PUB
 npm start -w @ckeith26/expo-shell     # press w to open the web app on http://localhost:8081
 ```
 
-Signing in locally needs a Google OAuth web client with `http://localhost:8081` as an authorized JavaScript origin. Put its client ID in `AUTH_GOOGLE_CLIENT_IDS` (in `api/.env.local`) and in `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (in `client/.env.local`). Use `localhost`, not `127.0.0.1`: the browser treats them as different sites, and the session cookie will not carry over. The `.env.local` files are gitignored; never commit them.
+`npm start` makes the same Azure sign-in check and loads the public Google web client id from Key Vault into `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` for that process. A non-empty `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` in `client/.env.local` replaces it. The client secret is not loaded. The OAuth client still needs `http://localhost:8081` as an authorized JavaScript origin in Google Cloud. Use `localhost`, not `127.0.0.1`: the browser treats them as different sites, and the session cookie will not carry over. The `.env.local` files are gitignored; never commit them.
 
-The optional services stay off until their settings are filled in: TownwiseAI needs `ANTHROPIC_API_KEY`, stored files need `FILES_BLOB_ACCOUNT_URL` (and, locally, `FILES_AZURITE_CONNECTION_STRING` for Azurite), the Places search needs `GOOGLE_PLACES_API_KEY`, calendar links need `TOWNWISE_CALENDAR_KEY`, Google calendars need it plus `TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID` and `TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET`, and the forecast lab and its weekly refresh need `TOWNWISE_LAB_RUNNER`. TownwiseAI working on its own (`TOWNWISE_AGENT_AUTO`), the weekly refresh (`TOWNWISE_WEEKLY_FORECASTS`) and weekly suggestions (`TOWNWISE_WEEKLY_SUGGESTIONS`) default to on once the services they need are set. [`api/README.md`](api/README.md) has the full local setup (staff addresses, two-step sign-in, email) and every environment variable.
+The optional services stay off until their Key Vault secrets exist: TownwiseAI needs `anthropic-dev-key`, stored files need `FILES_BLOB_ACCOUNT_URL` (and, locally, `FILES_AZURITE_CONNECTION_STRING` for Azurite, which stays in `api/.env.local`), the Places search needs its three secrets, calendar links need `townwise-calendar-key`, Google calendars need that plus `google-web-client-id` and `townwise-google-calendar-secret`, and the forecast lab and its weekly refresh need `TOWNWISE_LAB_RUNNER`. The dev script loads the secrets that are present. A required one that is missing stops the start. TownwiseAI working on its own (`TOWNWISE_AGENT_AUTO`), the weekly refresh (`TOWNWISE_WEEKLY_FORECASTS`) and weekly suggestions (`TOWNWISE_WEEKLY_SUGGESTIONS`) default to on once the services they need are set. [`api/README.md`](api/README.md) has the full local setup (staff addresses, two-step sign-in, email) and every environment variable.
 
 ## Tests and checks
 

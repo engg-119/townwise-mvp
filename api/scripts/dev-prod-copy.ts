@@ -6,12 +6,20 @@ import { readFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { parseEnv } from 'node:util';
 
+import { DevSecretsError, developmentEnv, loadDeveloperSecrets } from '../src/dev-secrets.ts';
 import { PROD_COPY_DB, prodCopyEnv } from './prod-copy-env.ts';
 
 const api = new URL('..', import.meta.url);
 const file = parseEnv(readFileSync(new URL('.env.local', api), 'utf8'));
-// As with --env-file, a variable already in the environment wins over the file.
-const env = prodCopyEnv({ ...file, ...process.env });
+let secrets: Record<string, string>;
+try {
+  secrets = await loadDeveloperSecrets({ target: 'server', local: [file, process.env] });
+} catch (err) {
+  console.error(err instanceof DevSecretsError ? err.message : 'Could not load developer secrets from Azure.');
+  process.exit(1);
+}
+// .env.local replaces Key Vault for a name it sets. prodCopyEnv then turns calendars, files and email off.
+const env = prodCopyEnv(developmentEnv(file, process.env, secrets));
 const port = Number(env.PORT ?? '8080');
 
 function inUse(): Promise<boolean> {

@@ -40,6 +40,14 @@ import { createStaticMapSigner, signingSecretSchema } from './places/static-map.
 import { researchRuns } from './research/plan.ts';
 import { createResearchPlaces } from './research/places.ts';
 import { createResearchRunner } from './research/runner.ts';
+import { AZURE_SIGNIN_MESSAGE, DEV_SECRETS_ENV } from './dev-secrets.ts';
+
+// Development refuses to boot unless scripts/dev.ts (or dev-prod-copy.ts) loaded the Key Vault secrets and set this.
+// Production's NODE_ENV is production, so Container Apps never takes this path.
+if (process.env.NODE_ENV === 'development' && process.env[DEV_SECRETS_ENV] !== '1') {
+  console.error(`${AZURE_SIGNIN_MESSAGE} Start the API with npm run dev -w @townwise/api.`);
+  process.exit(1);
+}
 
 // ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat, the file reader's AI column
 // step and reading with TownwiseAI, or the Places proxy, are off. Each goes no further than the clients built here. IDENTITY_ENDPOINT and IDENTITY_HEADER are set by Container Apps for the
