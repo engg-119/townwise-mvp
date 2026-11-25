@@ -46,8 +46,8 @@ locals {
     # token in production's database, so a laptop holding it is as sensitive as that database. Scoped to the secret.
     developers_calendar_key = { group = "developers", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.KeyVault/vaults/kv-townwise-${local.suffix}/secrets/townwise-calendar-key", role = "Key Vault Secrets User" }
     # The public Google web client id and the calendar client secret. Local `npm run dev` and `npm start` read
-    # these (and the secrets above) after `az login` and do not store them in .env.local. Seed google-web-client-id
-    # before applying; the calendar secret is the one step 22 of the runbook seeds for the Container App.
+    # these (and the secrets above) from Key Vault when .env.local left them empty, and do not write them back.
+    # Seed google-web-client-id before applying; the calendar secret is the one step 22 of the runbook seeds.
     developers_google_web_client_id = { group = "developers", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.KeyVault/vaults/kv-townwise-${local.suffix}/secrets/google-web-client-id", role = "Key Vault Secrets User" }
     developers_google_calendar_secret = { group = "developers", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.KeyVault/vaults/kv-townwise-${local.suffix}/secrets/townwise-google-calendar-secret", role = "Key Vault Secrets User" }
     # The event scout's search service (production/search.tf): read and write documents in its indexes, on that
